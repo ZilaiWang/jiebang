@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/learner_profile_snapshot.schema.json",
+  "title": "B to C Learner Profile Snapshot",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "profile_version", "learner_id", "level", "known_concepts", "weak_concepts", "goal", "preferred_contexts", "accommodations"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "profile_id": { "type": "string", "minLength": 1 },
+    "profile_version": { "type": "string", "minLength": 1 },
+    "learner_id": { "type": "string", "minLength": 1 },
+    "level": { "enum": ["beginner", "basic", "intermediate", "integrated"] },
+    "known_concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "weak_concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "goal": { "type": "string", "minLength": 1 },
+    "preferred_contexts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "accommodations": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "provenance_ref": { "type": "string" }
+  },
+  "additionalProperties": false
+}

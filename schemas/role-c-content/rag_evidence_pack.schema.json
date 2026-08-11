@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/rag_evidence_pack.schema.json",
+  "title": "A to C Canonical RAG Evidence Pack",
+  "$comment": "Backend-internal: quiz_seeds may contain answers and must not be sent to learner-facing clients.",
+  "type": "object",
+  "required": ["schema_version", "retrieval_id", "query", "top_k", "match_status", "kb_version", "rag_version", "results"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "retrieval_id": { "type": "string", "minLength": 1 },
+    "query": { "type": "string", "minLength": 1 },
+    "learner_level": { "enum": ["beginner", "basic", "intermediate", "integrated"] },
+    "top_k": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "match_status": { "enum": ["strong", "weak", "no_match"] },
+    "kb_version": { "type": "string", "minLength": 1 },
+    "rag_version": { "type": "string", "minLength": 1 },
+    "results": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/result" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "match_status": { "const": "no_match" } }, "required": ["match_status"] },
+      "then": { "properties": { "results": { "maxItems": 0 } } },
+      "else": { "properties": { "results": { "minItems": 1 } } }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "required": ["source_id", "fact_id", "content"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+        "content": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "example": {
+      "type": "object",
+      "required": ["title", "code", "explanation"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "explanation": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "quiz_seed": {
+      "type": "object",
+      "required": ["level", "type", "question", "answer", "source_id", "fact_id"],
+      "properties": {
+        "level": { "type": "integer", "minimum": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "question": { "type": "string", "minLength": 1 },
+        "options": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "answer": { "type": "string", "minLength": 1 },
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" }
+      },
+      "additionalProperties": false
+    },
+    "score_breakdown": {
+      "type": "object",
+      "required": ["keyword", "title", "facts", "practice_tasks", "difficulty", "bonus"],
+      "properties": {
+        "keyword": { "type": "number" },
+        "title": { "type": "number" },
+        "facts": { "type": "number" },
+        "practice_tasks": { "type": "number" },
+        "difficulty": { "type": "number" },
+        "bonus": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "retrieval_trace": {
+      "type": "object",
+      "required": ["matched_keywords", "matched_fields", "difficulty_match", "score_breakdown"],
+      "properties": {
+        "matched_keywords": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "matched_fields": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "difficulty_match": { "type": "boolean" },
+        "score_breakdown": { "$ref": "#/$defs/score_breakdown" }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": ["source_id", "title", "difficulty", "rank_score", "match_reason", "snippet", "facts", "examples", "practice_tasks", "quiz_seeds", "source_file", "retrieval_trace"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "difficulty": { "enum": ["beginner", "basic", "intermediate", "integrated"] },
+        "rank_score": { "type": "number" },
+        "match_reason": { "type": "string", "minLength": 1 },
+        "snippet": { "type": "string" },
+        "facts": { "type": "array", "items": { "$ref": "#/$defs/fact" } },
+        "examples": { "type": "array", "items": { "$ref": "#/$defs/example" } },
+        "practice_tasks": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "quiz_seeds": { "type": "array", "items": { "$ref": "#/$defs/quiz_seed" } },
+        "source_file": { "type": "string", "minLength": 1 },
+        "retrieval_trace": { "$ref": "#/$defs/retrieval_trace" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

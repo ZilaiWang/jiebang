@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/dynamic_feedback_delivery.schema.json",
+  "title": "Role C Dynamic Feedback Delivery",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "delivery_kind",
+    "delivery_id",
+    "feedback"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "delivery_kind": { "const": "dynamic_feedback" },
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "feedback": {
+      "$ref": "dynamic_feedback_result.schema.json"
+    }
+  },
+  "additionalProperties": false
+}

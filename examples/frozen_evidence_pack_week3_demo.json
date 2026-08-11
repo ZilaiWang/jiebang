@@ -1,0 +1,246 @@
+{
+  "schema_version": "1.0",
+  "retrieval_id": "RAG-WEEK3-FROZEN-DEMO",
+  "query": "初学者，不会循环，需要完成成绩统计程序",
+  "learner_level": "beginner",
+  "top_k": 3,
+  "match_status": "strong",
+  "kb_version": "python-basic@0.2.0",
+  "rag_version": "rule-rag@0.1",
+  "results": [
+    {
+      "source_id": "K007",
+      "title": "for 循环",
+      "difficulty": "beginner",
+      "rank_score": 31,
+      "match_reason": "query 命中关键词：循环",
+      "snippet": "for 循环常用于遍历序列中的元素。",
+      "facts": [
+        {
+          "source_id": "K007",
+          "fact_id": "F001",
+          "content": "for 循环常用于遍历序列中的元素。"
+        },
+        {
+          "source_id": "K007",
+          "fact_id": "F002",
+          "content": "for 循环适合对列表、字符串等对象逐个处理。"
+        },
+        {
+          "source_id": "K007",
+          "fact_id": "F003",
+          "content": "range 可生成整数序列配合 for 重复执行固定次数。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "遍历成绩列表",
+          "code": "scores = [80, 90, 75]\nfor score in scores:\n    print(score)",
+          "explanation": "for 循环会依次取出列表中的每个成绩，适合重复处理。"
+        }
+      ],
+      "practice_tasks": [
+        "遍历列表并打印每个元素",
+        "用 for 计算 1 到 10 的和"
+      ],
+      "quiz_seeds": [
+        {
+          "level": 1,
+          "type": "choice",
+          "question": "for 循环最适合用于什么场景？",
+          "options": [
+            "遍历序列",
+            "定义变量",
+            "捕获异常",
+            "导入模块"
+          ],
+          "answer": "遍历序列",
+          "source_id": "K007",
+          "fact_id": "F001"
+        },
+        {
+          "level": 2,
+          "type": "practice",
+          "question": "请完成一个与“for 循环”相关的小练习。",
+          "answer": "能正确运用该知识点并解释关键步骤。",
+          "source_id": "K007",
+          "fact_id": "F002"
+        }
+      ],
+      "source_file": "knowledge_base/python_basic/K007_for_loop.md",
+      "retrieval_trace": {
+        "matched_keywords": [
+          "循环"
+        ],
+        "matched_fields": [
+          "keywords",
+          "difficulty",
+          "taskIntent"
+        ],
+        "difficulty_match": true,
+        "score_breakdown": {
+          "keyword": 10,
+          "title": 0,
+          "facts": 0,
+          "practice_tasks": 0,
+          "difficulty": 3,
+          "bonus": 18
+        }
+      }
+    },
+    {
+      "source_id": "K018",
+      "title": "成绩统计器综合项目",
+      "difficulty": "integrated",
+      "rank_score": 30,
+      "match_reason": "query 命中关键词：成绩统计、循环",
+      "snippet": "成绩统计项目可综合练习列表、循环和函数。",
+      "facts": [
+        {
+          "source_id": "K018",
+          "fact_id": "F001",
+          "content": "成绩统计项目可综合练习列表、循环和函数。"
+        },
+        {
+          "source_id": "K018",
+          "fact_id": "F002",
+          "content": "成绩列表可以用 for 循环逐项累计求和。"
+        },
+        {
+          "source_id": "K018",
+          "fact_id": "F003",
+          "content": "把统计逻辑封装为函数可提升复用性。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "成绩统计器最小项目",
+          "code": "def average(scores):\n    return sum(scores) / len(scores)\n\nscores = [80, 90, 75]\nprint(max(scores), min(scores), average(scores))",
+          "explanation": "成绩统计项目把列表、循环/聚合和函数组合成完整任务。"
+        }
+      ],
+      "practice_tasks": [
+        "实现成绩平均分函数",
+        "输出最高分、最低分和平均分"
+      ],
+      "quiz_seeds": [
+        {
+          "level": 1,
+          "type": "short",
+          "question": "成绩统计器综合项目通常至少组合哪些知识？",
+          "answer": "列表、循环和函数",
+          "source_id": "K018",
+          "fact_id": "F001"
+        },
+        {
+          "level": 2,
+          "type": "practice",
+          "question": "请完成一个与“成绩统计器综合项目”相关的小练习。",
+          "answer": "能正确运用该知识点并解释关键步骤。",
+          "source_id": "K018",
+          "fact_id": "F002"
+        }
+      ],
+      "source_file": "knowledge_base/python_basic/K018_score_project.md",
+      "retrieval_trace": {
+        "matched_keywords": [
+          "成绩统计",
+          "循环"
+        ],
+        "matched_fields": [
+          "keywords",
+          "taskIntent"
+        ],
+        "difficulty_match": false,
+        "score_breakdown": {
+          "keyword": 20,
+          "title": 0,
+          "facts": 0,
+          "practice_tasks": 0,
+          "difficulty": 0,
+          "bonus": 10
+        }
+      }
+    },
+    {
+      "source_id": "K009",
+      "title": "列表",
+      "difficulty": "basic",
+      "rank_score": 28,
+      "match_reason": "query 命中关键词：成绩",
+      "snippet": "列表可用于保存多个有序元素。",
+      "facts": [
+        {
+          "source_id": "K009",
+          "fact_id": "F001",
+          "content": "列表可用于保存多个有序元素。"
+        },
+        {
+          "source_id": "K009",
+          "fact_id": "F002",
+          "content": "列表元素可以通过索引访问。"
+        },
+        {
+          "source_id": "K009",
+          "fact_id": "F003",
+          "content": "append 可向列表末尾添加元素。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "保存多名学生成绩",
+          "code": "scores = [80, 90, 75]\nscores.append(88)\nprint(scores)",
+          "explanation": "列表适合保存多个有序数据，append 可追加新元素。"
+        }
+      ],
+      "practice_tasks": [
+        "创建成绩列表并计算长度",
+        "向列表追加一个新成绩"
+      ],
+      "quiz_seeds": [
+        {
+          "level": 1,
+          "type": "choice",
+          "question": "向列表末尾添加元素常用哪个方法？",
+          "options": [
+            "append",
+            "split",
+            "return",
+            "import"
+          ],
+          "answer": "append",
+          "source_id": "K009",
+          "fact_id": "F001"
+        },
+        {
+          "level": 2,
+          "type": "practice",
+          "question": "请完成一个与“列表”相关的小练习。",
+          "answer": "能正确运用该知识点并解释关键步骤。",
+          "source_id": "K009",
+          "fact_id": "F002"
+        }
+      ],
+      "source_file": "knowledge_base/python_basic/K009_list.md",
+      "retrieval_trace": {
+        "matched_keywords": [
+          "成绩"
+        ],
+        "matched_fields": [
+          "keywords",
+          "difficulty",
+          "taskIntent"
+        ],
+        "difficulty_match": true,
+        "score_breakdown": {
+          "keyword": 10,
+          "title": 0,
+          "facts": 0,
+          "practice_tasks": 0,
+          "difficulty": 2,
+          "bonus": 16
+        }
+      }
+    }
+  ]
+}

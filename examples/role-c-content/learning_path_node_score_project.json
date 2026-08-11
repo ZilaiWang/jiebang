@@ -1,0 +1,36 @@
+{
+  "node_id": "PATH-PY-SCORE-01",
+  "schema_version": "1.0",
+  "target_source_ids": ["K007", "K009", "K018"],
+  "prerequisite_source_ids": ["K002", "K006"],
+  "goal": "理解循环与列表，并完成一个成绩统计程序",
+  "assessment_blueprint": {
+    "tier_1_count": 2,
+    "tier_2_count": 2,
+    "tier_3_count": 1,
+    "required_modalities": ["mcq", "trace", "code"]
+  },
+  "objectives": [
+    {
+      "objective_id": "O1",
+      "source_id": "K007",
+      "required_fact_ids": ["F001"],
+      "observable_behavior": "trace",
+      "importance": "core"
+    },
+    {
+      "objective_id": "O2",
+      "source_id": "K009",
+      "required_fact_ids": ["F001"],
+      "observable_behavior": "apply",
+      "importance": "core"
+    },
+    {
+      "objective_id": "O3",
+      "source_id": "K018",
+      "required_fact_ids": ["F001"],
+      "observable_behavior": "create",
+      "importance": "core"
+    }
+  ]
+}

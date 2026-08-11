@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/profile_drift_suggestion.schema.json",
+  "title": "C to B Profile Drift Suggestion",
+  "type": "object",
+  "required": ["schema_version", "suggestion_id", "learner_id_hash", "profile_version", "conflicting_objective_ids", "reason_codes", "confidence", "action"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "suggestion_id": { "type": "string", "minLength": 1 }, "learner_id_hash": { "type": "string", "minLength": 1 },
+    "profile_version": { "type": "string", "minLength": 1 },
+    "conflicting_objective_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "reason_codes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "action": { "const": "reprofile" }
+  },
+  "additionalProperties": false
+}

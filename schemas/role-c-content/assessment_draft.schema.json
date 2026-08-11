@@ -1,0 +1,342 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/assessment_draft.schema.json",
+  "title": "Role C Assessment Provider Draft",
+  "type": "object",
+  "required": ["public_draft", "secure_draft"],
+  "properties": {
+    "public_draft": {
+      "type": "object",
+      "required": ["payload"],
+      "properties": { "payload": { "$ref": "#/$defs/public_payload" } },
+      "additionalProperties": false
+    },
+    "secure_draft": {
+      "type": "object",
+      "required": ["payload"],
+      "properties": { "payload": { "$ref": "#/$defs/secure_payload" } },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "citation": {
+      "type": "object",
+      "required": ["source_id", "fact_id", "relation"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+        "relation": { "enum": ["supports", "derived_from", "prerequisite"] }
+      },
+      "additionalProperties": false
+    },
+    "public_option": {
+      "type": "object",
+      "required": ["option_id", "label", "text"],
+      "properties": {
+        "option_id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "pattern": "^[A-D]$" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 500 }
+      },
+      "additionalProperties": false
+    },
+    "public_author_payload": {
+      "type": "object",
+      "required": ["title", "items"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["prompt", "options", "starter_code"],
+            "properties": {
+              "prompt": { "type": "string", "minLength": 1, "maxLength": 3000 },
+              "options": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+                  },
+                  { "type": "null" }
+                ]
+              },
+              "starter_code": {
+                "oneOf": [
+                  { "type": "string", "minLength": 1, "maxLength": 20000 },
+                  { "type": "null" }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "public_item": {
+      "type": "object",
+      "required": ["item_id", "family_id", "variant_id", "display_no", "objective_id", "tier", "modality", "prompt", "max_score", "citations"],
+      "properties": {
+        "item_id": { "type": "string", "minLength": 1 },
+        "family_id": { "type": "string", "minLength": 1 },
+        "variant_id": { "type": "string", "minLength": 1 },
+        "display_no": { "type": "integer", "minimum": 1 },
+        "objective_id": { "type": "string", "minLength": 1 },
+        "tier": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "modality": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] },
+        "prompt": { "type": "string", "minLength": 1, "maxLength": 3000 },
+        "options": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "$ref": "#/$defs/public_option" } },
+        "starter_code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "max_score": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "citations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/citation" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "modality": { "enum": ["mcq", "true_false"] } }, "required": ["modality"] },
+          "then": { "required": ["options"] },
+          "else": { "not": { "required": ["options"] } }
+        },
+        {
+          "if": { "properties": { "modality": { "const": "code" } }, "required": ["modality"] },
+          "then": { "required": ["starter_code"] },
+          "else": { "not": { "required": ["starter_code"] } }
+        }
+      ],
+      "not": {
+        "anyOf": [
+          { "required": ["answer"] },
+          { "required": ["answer_spec"] },
+          { "required": ["correct_option_id"] },
+          { "required": ["hidden_tests"] },
+          { "required": ["reference_solution"] }
+        ]
+      },
+      "additionalProperties": false
+    },
+    "objective_coverage_public": {
+      "type": "object",
+      "required": ["objective_id", "item_ids", "modalities"],
+      "properties": {
+        "objective_id": { "type": "string", "minLength": 1 },
+        "item_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "modalities": { "type": "array", "minItems": 1, "items": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] } }
+      },
+      "additionalProperties": false
+    },
+    "routing_rule": {
+      "type": "object",
+      "required": ["route_id", "min_anchor_score_ratio", "max_anchor_score_ratio", "action", "reveal_tiers"],
+      "properties": {
+        "route_id": { "type": "string", "minLength": 1 },
+        "min_anchor_score_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_anchor_score_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "action": { "enum": ["remediate", "reinforce", "advance"] },
+        "reveal_tiers": { "type": "array", "minItems": 1, "items": { "type": "integer", "minimum": 1, "maximum": 3 } }
+      },
+      "additionalProperties": false
+    },
+    "public_payload": {
+      "type": "object",
+      "required": ["form_id", "title", "objective_ids", "items", "submission_policy", "routing", "objective_coverage", "used_evidence"],
+      "properties": {
+        "form_id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "objective_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "items": { "type": "array", "minItems": 1, "maxItems": 30, "items": { "$ref": "#/$defs/public_item" } },
+        "submission_policy": {
+          "type": "object",
+          "required": ["max_attempts", "formative"],
+          "properties": {
+            "max_attempts": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "formative": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "routing": {
+          "type": "object",
+          "required": ["anchor_item_ids", "rules"],
+          "properties": {
+            "anchor_item_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+            "rules": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/routing_rule" } }
+          },
+          "additionalProperties": false
+        },
+        "objective_coverage": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/objective_coverage_public" } },
+        "used_evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/citation" } }
+      },
+      "additionalProperties": false
+    },
+    "rubric_criterion": {
+      "type": "object",
+      "required": ["criterion_id", "description", "weight", "required_evidence"],
+      "properties": {
+        "criterion_id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "required_evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    },
+    "answer_spec": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "accepted", "normalization"],
+          "properties": {
+            "kind": { "const": "exact_set" },
+            "accepted": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+            "normalization": { "type": "array", "uniqueItems": true, "items": { "enum": ["trim", "casefold", "unicode", "collapse_whitespace"] } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "target", "abs_tolerance", "rel_tolerance"],
+          "properties": {
+            "kind": { "const": "numeric" },
+            "target": { "type": "number" },
+            "abs_tolerance": { "type": "number", "minimum": 0 },
+            "rel_tolerance": { "type": "number", "minimum": 0 },
+            "unit": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "criteria", "contradictions"],
+          "properties": {
+            "kind": { "const": "concept_rubric" },
+            "criteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/rubric_criterion" } },
+            "contradictions": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "test_suite_id"],
+          "properties": {
+            "kind": { "const": "code" },
+            "test_suite_id": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "secure_item": {
+      "type": "object",
+      "required": ["item_id", "objective_id", "tier", "modality", "max_score", "answer_spec", "misconception_by_option", "evidence_weight"],
+      "properties": {
+        "item_id": { "type": "string", "minLength": 1 },
+        "objective_id": { "type": "string", "minLength": 1 },
+        "tier": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "modality": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] },
+        "max_score": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "answer_spec": { "$ref": "#/$defs/answer_spec" },
+        "correct_option_id": { "type": "string", "minLength": 1 },
+        "misconception_by_option": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
+        "evidence_weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "code_test_suite": {
+      "type": "object",
+      "required": ["test_suite_id", "execution_contract", "reference_solution", "hidden_tests"],
+      "properties": {
+        "test_suite_id": { "type": "string", "minLength": 1 },
+        "execution_contract": { "$ref": "code_lab_draft.schema.json#/$defs/execution_contract" },
+        "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "hidden_tests": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "code_lab_draft.schema.json#/$defs/hidden_test" } }
+      },
+      "additionalProperties": false
+    },
+    "objective_coverage_secure": {
+      "type": "object",
+      "required": ["objective_id", "item_ids", "answer_kinds"],
+      "properties": {
+        "objective_id": { "type": "string", "minLength": 1 },
+        "item_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "answer_kinds": { "type": "array", "minItems": 1, "items": { "enum": ["exact_set", "numeric", "concept_rubric", "code"] } }
+      },
+      "additionalProperties": false
+    },
+    "secure_author_payload": {
+      "type": "object",
+      "required": ["items", "code_test_suites"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["answer_spec", "correct_option_id", "misconception_by_option"],
+            "properties": {
+              "answer_spec": {
+                "oneOf": [
+                  { "$ref": "#/$defs/answer_spec" },
+                  { "type": "null" }
+                ]
+              },
+              "correct_option_id": {
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  { "type": "null" }
+                ]
+              },
+              "misconception_by_option": {
+                "type": "object",
+                "additionalProperties": { "type": "string", "minLength": 1 }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "code_test_suites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["execution_contract", "reference_solution", "hidden_tests"],
+            "properties": {
+              "execution_contract": { "$ref": "code_lab_draft.schema.json#/$defs/execution_contract" },
+              "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+              "hidden_tests": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "required": ["input", "expected", "comparison"],
+                  "properties": {
+                    "input": {},
+                    "expected": {},
+                    "comparison": { "$ref": "code_lab_draft.schema.json#/$defs/test_comparison" }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "secure_payload": {
+      "type": "object",
+      "required": ["form_id", "items", "option_order_seed", "code_test_suites", "objective_coverage"],
+      "properties": {
+        "form_id": { "type": "string", "minLength": 1 },
+        "items": { "type": "array", "minItems": 1, "maxItems": 30, "items": { "$ref": "#/$defs/secure_item" } },
+        "option_order_seed": { "type": "integer" },
+        "code_test_suites": { "type": "array", "items": { "$ref": "#/$defs/code_test_suite" } },
+        "objective_coverage": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/objective_coverage_secure" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

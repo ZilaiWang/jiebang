@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/review_recovery_result.schema.json",
+  "title": "Role C D-Safe Review Recovery Result",
+  "$comment": "A public recovery projection for D. Reviewed public artifacts are delivered separately through reviewed_release_delivery; backend-only profile, evidence and secure context are excluded.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "result_kind",
+    "run_id",
+    "spec_id",
+    "pipeline_input_hash",
+    "generation_spec_hash",
+    "pipeline_status",
+    "pipeline_state",
+    "review_policy_version",
+    "recovery",
+    "recovery_history"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "result_kind": { "const": "review_recovery" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "spec_id": { "type": "string", "minLength": 1 },
+    "pipeline_input_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "generation_spec_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "pipeline_status": {
+      "enum": ["ready", "blocked", "failed"]
+    },
+    "pipeline_state": {
+      "enum": [
+        "PLANNED",
+        "GENERATING",
+        "VALIDATING",
+        "REVISING",
+        "READY",
+        "BLOCKED",
+        "FAILED"
+      ]
+    },
+    "review_policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recovery": {
+      "$ref": "review_recovery_status.schema.json"
+    },
+    "recovery_history": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": [
+          "attempt_no",
+          "action",
+          "input_spec_id",
+          "input_run_id"
+        ],
+        "properties": {
+          "attempt_no": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2
+          },
+          "action": {
+            "enum": ["new_evidence", "new_spec"]
+          },
+          "input_spec_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input_run_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path_request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_spec_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_run_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dependentRequired": {
+          "output_spec_id": ["output_run_id"],
+          "output_run_id": ["output_spec_id"]
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "pipeline_status": { "const": "ready" }
+        },
+        "required": ["pipeline_status"]
+      },
+      "then": {
+        "properties": {
+          "pipeline_state": { "const": "READY" },
+          "recovery": {
+            "allOf": [
+              { "$ref": "review_recovery_status.schema.json" },
+              {
+                "type": "object",
+                "properties": {
+                  "code": { "const": "READY" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "recovery": {
+            "allOf": [
+              { "$ref": "review_recovery_status.schema.json" },
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": ["BLOCKED", "UNSUPPORTED_TARGET"]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "pipeline_status": { "const": "blocked" }
+        },
+        "required": ["pipeline_status"]
+      },
+      "then": {
+        "properties": {
+          "pipeline_state": { "const": "BLOCKED" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "pipeline_status": { "const": "failed" }
+        },
+        "required": ["pipeline_status"]
+      },
+      "then": {
+        "properties": {
+          "pipeline_state": { "const": "FAILED" }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

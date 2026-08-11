@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/artifact_envelope.schema.json",
+  "title": "C Artifact Envelope",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "artifact_id",
+    "artifact_type",
+    "agent",
+    "status",
+    "versions",
+    "seed",
+    "input_refs",
+    "citations",
+    "quality",
+    "payload",
+    "trace_ref"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "artifact_type": {
+      "enum": [
+        "concept_lesson",
+        "code_lab_public",
+        "code_lab_secure",
+        "assessment_public",
+        "assessment_secure",
+        "grade_result"
+      ]
+    },
+    "agent": { "enum": ["concept-tutor", "code-lab", "tiered-evaluator"] },
+    "status": { "enum": ["ready", "blocked", "failed"] },
+    "blocked_reason": { "$ref": "#/$defs/blocked_reason" },
+    "failure_reason": { "$ref": "#/$defs/failure_reason" },
+    "versions": { "$ref": "#/$defs/versions" },
+    "seed": { "type": "integer" },
+    "input_refs": { "type": "array", "items": { "type": "string" } },
+    "citations": { "type": "array", "items": { "$ref": "#/$defs/citation" } },
+    "quality": { "$ref": "#/$defs/quality" },
+    "payload": {},
+    "trace_ref": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "citation": {
+      "type": "object",
+      "required": ["source_id", "fact_id", "relation"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+        "relation": { "enum": ["supports", "derived_from", "prerequisite"] }
+      },
+      "additionalProperties": false
+    },
+    "versions": {
+      "type": "object",
+      "required": [
+        "profile_version",
+        "kb_version",
+        "rag_version",
+        "prompt_version",
+        "model_config_hash",
+        "schema_version"
+      ],
+      "properties": {
+        "profile_version": { "type": "string", "minLength": 1 },
+        "kb_version": { "type": "string", "minLength": 1 },
+        "rag_version": { "type": "string", "minLength": 1 },
+        "prompt_version": { "type": "string", "minLength": 1 },
+        "model_config_hash": { "type": "string", "minLength": 1 },
+        "schema_version": { "const": "1.0" },
+        "runner_image_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "required": ["schema_ok", "citation_coverage", "objective_coverage", "alignment_score"],
+      "properties": {
+        "schema_ok": { "type": "boolean" },
+        "citation_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "objective_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "alignment_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "execution_verified": { "type": "boolean" },
+        "answer_key_verified": { "type": "boolean" },
+        "mutation_kill_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "verified_test_count": { "type": "integer", "minimum": 0 },
+        "verified_item_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "blocked_reason": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "BLOCKED_MISSING_EVIDENCE",
+            "BLOCKED_WEAK_EVIDENCE",
+            "BLOCKED_EVIDENCE_CONFLICT",
+            "BLOCKED_INVALID_CITATION",
+            "BLOCKED_PUBLIC_SECURE_LEAK",
+            "BLOCKED_ALIGNMENT_FAILURE",
+            "BLOCKED_CONTENT_REVIEW",
+            "BLOCKED_EXECUTION_UNVERIFIED",
+            "BLOCKED_ANSWER_KEY_UNVERIFIED",
+            "BLOCKED_PROVIDER_UNAVAILABLE",
+            "UNSUPPORTED_TARGET",
+            "BLOCKED_INVALID_OUTPUT"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "details": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "failure_reason": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["PROVIDER_ERROR", "SECURE_STORE_ERROR"] },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

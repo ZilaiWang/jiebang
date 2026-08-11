@@ -1,0 +1,50 @@
+{
+  "name": "opencode-learning-workflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --isolate ./tests",
+    "check": "bun run typecheck && bun run test && bun run role-d:v2:verify",
+    "demo:role-c": "bun scripts/role-c-content-demo.ts",
+    "demo:role-c:lab": "bun scripts/role-c-code-lab-demo.ts",
+    "demo:role-c:full": "bun scripts/role-c-full-demo.ts",
+    "eval:role-c:week3": "bun scripts/role-c-week3-evaluation.ts",
+    "smoke:role-c:model": "bun scripts/role-c-real-model-smoke.ts",
+    "role-d:v2:dev": "vite --config src/role-d-ui-v2/vite.config.ts",
+    "role-d:v2:test": "bun test --isolate src/role-d-ui-v2/src/*.test.ts",
+    "role-d:v2:build": "vite build --config src/role-d-ui-v2/vite.config.ts",
+    "role-d:v2:verify": "bun run role-d:v2:test && bun x tsc -p src/role-d-ui-v2/tsconfig.json --noEmit && bun run role-d:v2:build",
+    "docker:role-c:build": "docker build --pull --tag knowbalance-role-c-python-runner:1.0.0 ./docker/role-c-python-runner",
+    "docker:role-c:doctor": "bun scripts/role-c-docker-doctor.ts",
+    "test:role-c:docker": "bun scripts/role-c-docker-smoke.ts && bun scripts/role-c-code-lab-demo.ts && bun scripts/role-c-full-demo.ts",
+    "test:role-c:real": "bun scripts/role-c-real-model-smoke.ts",
+    "test:role-c:regenerate": "bun -e \"import { clearRoleCFixtureCache } from \"./tests/helpers/role-c-fixture-cache\"; clearRoleCFixtureCache(); console.log(\"fixture cache cleared\")\""
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.17.20",
+    "@opencode-ai/sdk": "1.17.20",
+    "ajv": "8.20.0",
+    "docx": "^9.7.1",
+    "lucide-react": "0.468.0",
+    "prismjs": "^1.30.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "react-simple-code-editor": "^0.14.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.8.0",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
+    "@types/bun": "latest",
+    "@types/prismjs": "^1.26.6",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "6.0.3",
+    "jsdom": "29.1.1",
+    "typescript": "latest",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}

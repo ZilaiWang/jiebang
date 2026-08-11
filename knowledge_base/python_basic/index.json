@@ -1,0 +1,315 @@
+{
+  "module": "Python基础",
+  "version": "0.2.0",
+  "updated_at": "2026-07-31",
+  "sources": [
+    "Python 官方文档",
+    "KnowBalance 自编教学切片"
+  ],
+  "items": [
+    {
+      "source_id": "K001",
+      "title": "Python 是什么",
+      "difficulty": "beginner",
+      "file": "K001_intro.md",
+      "keywords": [
+        "Python",
+        "编程",
+        "解释器",
+        "脚本"
+      ],
+      "prerequisites": []
+    },
+    {
+      "source_id": "K002",
+      "title": "变量与赋值",
+      "difficulty": "beginner",
+      "file": "K002_variables.md",
+      "keywords": [
+        "变量",
+        "赋值",
+        "variable",
+        "assignment",
+        "保存数据"
+      ],
+      "prerequisites": [
+        "K001"
+      ]
+    },
+    {
+      "source_id": "K003",
+      "title": "基本数据类型",
+      "difficulty": "beginner",
+      "file": "K003_data_types.md",
+      "keywords": [
+        "数据类型",
+        "int",
+        "float",
+        "str",
+        "bool",
+        "数字",
+        "字符串"
+      ],
+      "prerequisites": [
+        "K002"
+      ]
+    },
+    {
+      "source_id": "K004",
+      "title": "输入输出",
+      "difficulty": "beginner",
+      "file": "K004_input_output.md",
+      "keywords": [
+        "input",
+        "print",
+        "输入",
+        "输出",
+        "交互"
+      ],
+      "prerequisites": [
+        "K002",
+        "K003"
+      ]
+    },
+    {
+      "source_id": "K005",
+      "title": "运算符",
+      "difficulty": "beginner",
+      "file": "K005_operators.md",
+      "keywords": [
+        "运算符",
+        "加减乘除",
+        "比较",
+        "逻辑",
+        "operator"
+      ],
+      "prerequisites": [
+        "K003"
+      ]
+    },
+    {
+      "source_id": "K006",
+      "title": "条件判断",
+      "difficulty": "beginner",
+      "file": "K006_conditionals.md",
+      "keywords": [
+        "if",
+        "elif",
+        "else",
+        "条件",
+        "判断",
+        "分支"
+      ],
+      "prerequisites": [
+        "K003",
+        "K005"
+      ]
+    },
+    {
+      "source_id": "K007",
+      "title": "for 循环",
+      "difficulty": "beginner",
+      "file": "K007_for_loop.md",
+      "keywords": [
+        "for",
+        "循环",
+        "遍历",
+        "重复执行",
+        "序列"
+      ],
+      "prerequisites": [
+        "K002",
+        "K003"
+      ]
+    },
+    {
+      "source_id": "K008",
+      "title": "while 循环",
+      "difficulty": "beginner",
+      "file": "K008_while_loop.md",
+      "keywords": [
+        "while",
+        "循环",
+        "条件循环",
+        "重复执行"
+      ],
+      "prerequisites": [
+        "K006"
+      ]
+    },
+    {
+      "source_id": "K009",
+      "title": "列表",
+      "difficulty": "basic",
+      "file": "K009_list.md",
+      "keywords": [
+        "列表",
+        "list",
+        "数组",
+        "成绩",
+        "一组数据",
+        "保存多个"
+      ],
+      "prerequisites": [
+        "K002",
+        "K003"
+      ]
+    },
+    {
+      "source_id": "K010",
+      "title": "字典",
+      "difficulty": "basic",
+      "file": "K010_dict.md",
+      "keywords": [
+        "字典",
+        "dict",
+        "键值对",
+        "姓名",
+        "查成绩",
+        "映射"
+      ],
+      "prerequisites": [
+        "K002",
+        "K003"
+      ]
+    },
+    {
+      "source_id": "K011",
+      "title": "元组与集合",
+      "difficulty": "basic",
+      "file": "K011_tuple_set.md",
+      "keywords": [
+        "元组",
+        "tuple",
+        "集合",
+        "set",
+        "去重"
+      ],
+      "prerequisites": [
+        "K003",
+        "K009"
+      ]
+    },
+    {
+      "source_id": "K012",
+      "title": "字符串常用操作",
+      "difficulty": "basic",
+      "file": "K012_string.md",
+      "keywords": [
+        "字符串",
+        "str",
+        "切片",
+        "split",
+        "join",
+        "文本"
+      ],
+      "prerequisites": [
+        "K003"
+      ]
+    },
+    {
+      "source_id": "K013",
+      "title": "函数定义与调用",
+      "difficulty": "basic",
+      "file": "K013_function.md",
+      "keywords": [
+        "函数",
+        "def",
+        "调用",
+        "复用",
+        "function"
+      ],
+      "prerequisites": [
+        "K002",
+        "K006",
+        "K007"
+      ]
+    },
+    {
+      "source_id": "K014",
+      "title": "参数与返回值",
+      "difficulty": "basic",
+      "file": "K014_params_return.md",
+      "keywords": [
+        "参数",
+        "返回值",
+        "return",
+        "函数输入",
+        "函数输出"
+      ],
+      "prerequisites": [
+        "K013"
+      ]
+    },
+    {
+      "source_id": "K015",
+      "title": "文件读写",
+      "difficulty": "intermediate",
+      "file": "K015_file_io.md",
+      "keywords": [
+        "文件",
+        "读取",
+        "写入",
+        "open",
+        "read",
+        "write",
+        "文本文件"
+      ],
+      "prerequisites": [
+        "K003",
+        "K012"
+      ]
+    },
+    {
+      "source_id": "K016",
+      "title": "异常处理",
+      "difficulty": "intermediate",
+      "file": "K016_exception.md",
+      "keywords": [
+        "异常",
+        "报错",
+        "try",
+        "except",
+        "错误处理"
+      ],
+      "prerequisites": [
+        "K006"
+      ]
+    },
+    {
+      "source_id": "K017",
+      "title": "模块导入",
+      "difficulty": "intermediate",
+      "file": "K017_import.md",
+      "keywords": [
+        "import",
+        "模块",
+        "导入",
+        "库",
+        "复用代码"
+      ],
+      "prerequisites": [
+        "K013"
+      ]
+    },
+    {
+      "source_id": "K018",
+      "title": "成绩统计器综合项目",
+      "difficulty": "integrated",
+      "file": "K018_score_project.md",
+      "keywords": [
+        "成绩统计",
+        "综合项目",
+        "循环",
+        "列表",
+        "函数",
+        "平均分"
+      ],
+      "prerequisites": [
+        "K007",
+        "K009",
+        "K013"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/role_b_path_planning_request.schema.json",
+  "title": "Role C to B Recovery Path Planning Request",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "run_id",
+    "current_spec_id",
+    "profile_snapshot",
+    "current_path_node",
+    "failed_dimensions",
+    "missing_prerequisite_source_ids",
+    "required_action",
+    "fix_scope",
+    "review_instruction_ids"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "request_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "current_spec_id": { "type": "string", "minLength": 1 },
+    "profile_snapshot": {
+      "$ref": "learner_profile_snapshot.schema.json"
+    },
+    "current_path_node": {
+      "$ref": "learning_path_node.schema.json"
+    },
+    "failed_dimensions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "missing_prerequisite_source_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+    },
+    "required_action": { "const": "replan_path" },
+    "fix_scope": { "const": "new_spec" },
+    "recommended_level": {
+      "enum": ["beginner", "basic", "intermediate", "integrated"]
+    },
+    "review_instruction_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "additionalProperties": false
+}

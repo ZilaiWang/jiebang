@@ -1,0 +1,13 @@
+{
+  "artifactId": "role-c-example-missing-citation",
+  "query": "初学者，不会循环，需要完成成绩统计程序",
+  "learnerLevel": "beginner",
+  "topK": 3,
+  "blocks": [
+    {
+      "blockId": "claim-1",
+      "text": "for 循环可以帮助学习者处理重复任务。",
+      "citations": []
+    }
+  ]
+}

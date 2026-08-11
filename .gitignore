@@ -1,0 +1,19 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.opencode/
+.tmp/
+*.log
+.DS_Store
+opencode.json
+.env.role-c.local
+
+.opencode
+
+# Hermes 桌面附件（不入库）
+.hermes/
+
+# 工具内部目录(不入库)
+.claude/
+.workbuddy/

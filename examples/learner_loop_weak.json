@@ -1,0 +1,14 @@
+{
+  "learner_id": "demo_loop_weak_001",
+  "level": "beginner",
+  "known_concepts": [
+    "变量",
+    "数据类型",
+    "条件判断"
+  ],
+  "weak_concepts": [
+    "循环",
+    "列表"
+  ],
+  "goal": "理解重复执行并能遍历一组数据"
+}

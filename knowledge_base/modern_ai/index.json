@@ -1,0 +1,116 @@
+{
+  "module": "现代人工智能基础",
+  "version": "0.1.0",
+  "updated_at": "2026-08-05",
+  "sources": [
+    "KnowBalance 自编教学切片",
+    "教师指定 AI 培训方向"
+  ],
+  "items": [
+    {
+      "source_id": "AI001",
+      "title": "人工智能、机器学习与深度学习",
+      "difficulty": "beginner",
+      "file": "AI001_ai_ml_dl.md",
+      "keywords": [
+        "人工智能",
+        "机器学习",
+        "深度学习",
+        "生成式AI",
+        "AI",
+        "ML",
+        "DL"
+      ],
+      "prerequisites": []
+    },
+    {
+      "source_id": "AI002",
+      "title": "数据集、特征与标签",
+      "difficulty": "beginner",
+      "file": "AI002_dataset_feature_label.md",
+      "keywords": [
+        "数据集",
+        "特征",
+        "标签",
+        "样本",
+        "训练数据",
+        "测试数据"
+      ],
+      "prerequisites": [
+        "AI001"
+      ]
+    },
+    {
+      "source_id": "AI003",
+      "title": "训练集、测试集与过拟合",
+      "difficulty": "basic",
+      "file": "AI003_train_test_overfit.md",
+      "keywords": [
+        "训练集",
+        "测试集",
+        "验证集",
+        "过拟合",
+        "泛化",
+        "评估"
+      ],
+      "prerequisites": [
+        "AI002"
+      ]
+    },
+    {
+      "source_id": "AI004",
+      "title": "分类、回归与聚类任务",
+      "difficulty": "basic",
+      "file": "AI004_ml_tasks.md",
+      "keywords": [
+        "分类",
+        "回归",
+        "聚类",
+        "预测",
+        "类别",
+        "连续数值"
+      ],
+      "prerequisites": [
+        "AI002"
+      ]
+    },
+    {
+      "source_id": "AI005",
+      "title": "大语言模型、提示词与 RAG",
+      "difficulty": "intermediate",
+      "file": "AI005_llm_prompt_rag.md",
+      "keywords": [
+        "大语言模型",
+        "LLM",
+        "提示词",
+        "prompt",
+        "RAG",
+        "检索增强生成",
+        "幻觉",
+        "上下文"
+      ],
+      "prerequisites": [
+        "AI001",
+        "AI002"
+      ]
+    },
+    {
+      "source_id": "AI006",
+      "title": "多智能体协作与事实审核",
+      "difficulty": "intermediate",
+      "file": "AI006_multi_agent_audit.md",
+      "keywords": [
+        "多智能体",
+        "Agent",
+        "协作",
+        "事实审核",
+        "角色分工",
+        "辩论",
+        "纠偏"
+      ],
+      "prerequisites": [
+        "AI005"
+      ]
+    }
+  ]
+}

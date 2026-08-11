@@ -1,0 +1,9 @@
+﻿KnowBalance 队友版
+
+1. 先打开 docs\KnowBalance部署说明.docx
+2. 安装并打开 Docker Desktop
+3. 双击 启动KnowBalance.bat
+4. 打开 http://127.0.0.1:4175/
+5. 在首页右上角 API设置 中填写自己的 API Key
+
+本压缩包不包含任何人的 API Key、运行会话和本地缓存。

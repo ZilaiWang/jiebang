@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/role_b_path_planning_result.schema.json",
+  "title": "Role B to C Recovery Path Planning Result",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/ready_result" },
+    { "$ref": "#/$defs/blocked_result" }
+  ],
+  "$defs": {
+    "ready_result": {
+      "type": "object",
+      "required": ["status", "request_id", "path_draft"],
+      "properties": {
+        "status": { "const": "ready" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "path_draft": {
+          "$ref": "role_b_path_draft.schema.json"
+        },
+        "profile_snapshot": {
+          "$ref": "learner_profile_snapshot.schema.json"
+        }
+      },
+      "additionalProperties": false
+    },
+    "blocked_result": {
+      "type": "object",
+      "required": [
+        "status",
+        "request_id",
+        "code",
+        "reason",
+        "failed_dimensions",
+        "missing_prerequisite_source_ids",
+        "can_recover"
+      ],
+      "properties": {
+        "status": { "const": "blocked" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "code": { "enum": ["BLOCKED", "UNSUPPORTED_TARGET"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "failed_dimensions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "missing_prerequisite_source_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+        },
+        "recommended_level": {
+          "enum": ["beginner", "basic", "intermediate", "integrated"]
+        },
+        "can_recover": { "const": false }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "stage": "code_lab",
+  "status": "completed",
+  "summary": "executed:code-lab",
+  "artifacts": {
+    "received_input": "TypeScript generics basics experiment comparing any vs generics",
+    "directory": "typescript-generics-experiment",
+    "experiment_files": {
+      "experiment.ts": "8 sections demonstrating generics concepts with detailed comments",
+      "exercises.ts": "7 hands-on exercises with solutions",
+      "tsconfig.json": "TypeScript configuration for experiment",
+      "tsconfig.exercises.json": "TypeScript configuration for exercises",
+      "package.json": "Project setup with npm scripts",
+      "README.md": "Learning instructions and overview"
+    },
+    "sections_in_experiment": [
+      "Part 1: The Problem with `any` (lines 1-30)",
+      "Part 2: Generics - The Solution (lines 32-55)",
+      "Part 3: Array Operations (lines 57-80)",
+      "Part 4: Generic Constraints (lines 82-100)",
+      "Part 5: Multiple Type Parameters (lines 102-125)",
+      "Part 6: Generic Interfaces and Classes (lines 127-165)",
+      "Part 7: Generic Utility Types (lines 167-185)",
+      "Part 8: Real-World Patterns (lines 187-215)"
+    ],
+    "exercises": [
+      {
+        "number": 1,
+        "title": "Fix the function",
+        "skill": "Convert any to generics"
+      },
+      {
+        "number": 2,
+        "title": "Create generic pair",
+        "skill": "Multiple type parameters"
+      },
+      {
+        "number": 3,
+        "title": "Generic interface",
+        "skill": "Type-safe key-value store"
+      },
+      {
+        "number": 4,
+        "title": "Generic class",
+        "skill": "Stack implementation with generics"
+      },
+      {
+        "number": 5,
+        "title": "Generic constraints",
+        "skill": "Using extends keyword"
+      },
+      {
+        "number": 6,
+        "title": "Generic utility",
+        "skill": "Wrapper function with metadata"
+      },
+      {
+        "number": 7,
+        "title": "Challenge: Generic reducer",
+        "skill": "Advanced generic function"
+      }
+    ],
+    "how_to_run": {
+      "install": "npm install",
+      "experiment": "npm run run:experiment",
+      "exercises": "npx tsc --project tsconfig.exercises.json && node dist_exercises/exercises.js",
+      "typecheck": "npm run typecheck"
+    },
+    "compilation_status": "success",
+    "key_learning_points": [
+      "`any` loses all type information - avoid it!",
+      "Generics preserve type information through <T> syntax",
+      "TypeScript infers types from function arguments",
+      "Use `extends` keyword for generic constraints",
+      "Generic classes maintain type safety",
+      "Real-world patterns include API response wrappers"
+    ]
+  },
+  "next": "run_assessment"
+}

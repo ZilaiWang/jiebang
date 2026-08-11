@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/role_b_path_draft.schema.json",
+  "title": "B Path Planning Draft for C Recovery",
+  "$comment": "A draft may leave required_fact_ids empty. C must bind facts from refreshed A evidence and validate the result as a formal LearningPathNode before building a GenerationSpec.",
+  "type": "object",
+  "required": ["schema_version", "node_id", "target_source_ids", "prerequisite_source_ids", "goal", "objectives", "assessment_blueprint"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "node_id": { "type": "string", "minLength": 1 },
+    "target_source_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+    },
+    "prerequisite_source_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+    },
+    "goal": { "type": "string", "minLength": 1 },
+    "objectives": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["objective_id", "source_id", "required_fact_ids", "observable_behavior", "importance"],
+        "properties": {
+          "objective_id": { "type": "string", "minLength": 1 },
+          "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "required_fact_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^F[0-9]{3}$" }
+          },
+          "observable_behavior": {
+            "enum": ["recognize", "explain", "trace", "apply", "debug", "create"]
+          },
+          "importance": { "enum": ["core", "supporting"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "assessment_blueprint": {
+      "type": "object",
+      "required": ["tier_1_count", "tier_2_count", "tier_3_count", "required_modalities"],
+      "properties": {
+        "tier_1_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "tier_2_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "tier_3_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "required_modalities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["mcq", "true_false", "trace", "short_answer", "code"]
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/delivery_ack.schema.json",
+  "title": "Role C Delivery Acknowledgement",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "delivery_kind",
+    "delivery_id",
+    "status"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "delivery_kind": {
+      "enum": [
+        "learning_progress",
+        "reviewed_release",
+        "dynamic_feedback",
+        "review_recovery_status",
+        "learning_session"
+      ]
+    },
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "duplicate"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

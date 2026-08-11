@@ -1,0 +1,14 @@
+{
+  "learner_id": "demo_project_goal_001",
+  "level": "basic",
+  "known_concepts": [
+    "变量",
+    "列表",
+    "函数"
+  ],
+  "weak_concepts": [
+    "循环综合应用",
+    "项目组织"
+  ],
+  "goal": "完成成绩统计程序"
+}

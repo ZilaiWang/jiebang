@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/agent_trace_event.schema.json",
+  "title": "C to D Agent Trace Event",
+  "type": "object",
+  "required": ["schema_version", "seq", "event_type", "run_id", "status", "input_refs", "summary"],
+  "properties": {
+    "schema_version": { "const": "1.0" }, "seq": { "type": "integer", "minimum": 1 },
+    "event_type": { "enum": ["c.spec.ready", "c.agent.started", "c.agent.ready", "c.validation.failed", "c.review.revision_requested", "c.review.passed", "c.pipeline.blocked", "c.pipeline.failed", "c.pipeline.ready"] },
+    "run_id": { "type": "string", "minLength": 1 },
+    "agent": { "enum": ["concept-tutor", "code-lab", "tiered-evaluator"] },
+    "status": { "enum": ["started", "success", "blocked", "failed"] },
+    "input_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "output_ref": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string", "minLength": 1 },
+    "occurred_at": { "type": "string", "minLength": 1 },
+    "duration_ms": { "type": "number", "minimum": 0 },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "retry_kind": { "enum": ["transport", "format_repair", "tool", "semantic_revision", "resume"] },
+    "validator_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["validator", "ok", "issue_count"],
+        "properties": {
+          "validator": { "type": "string", "minLength": 1 },
+          "ok": { "type": "boolean" },
+          "issue_count": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "versions": { "$ref": "artifact_envelope.schema.json#/$defs/versions" }
+  },
+  "additionalProperties": false
+}

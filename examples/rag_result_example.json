@@ -1,0 +1,76 @@
+{
+  "query": "学习者水平：beginner；已掌握：变量、数据类型、条件判断；薄弱点：循环、列表；学习目标：理解重复执行并能遍历一组数据",
+  "learnerLevel": "beginner",
+  "topK": 3,
+  "results": [
+    {
+      "sourceId": "K007",
+      "source_id": "K007",
+      "title": "for 循环",
+      "difficulty": "beginner",
+      "score": 35,
+      "reason": "query 命中关键词：循环",
+      "snippet": "for 循环适合用于遍历一组数据，例如列表、字符串或 range 生成的数字序列。",
+      "facts": [
+        {
+          "sourceId": "K007",
+          "source_id": "K007",
+          "factId": "F001",
+          "fact_id": "F001",
+          "content": "for 循环常用于遍历序列或重复执行固定次数的任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "遍历成绩列表",
+          "code": "scores = [80, 95, 72]\nfor score in scores:\n    print(score)",
+          "explanation": "for 循环会依次取出列表中的每个成绩。"
+        }
+      ],
+      "practiceTasks": ["遍历一个成绩列表并打印每个成绩"],
+      "quizItems": [
+        {
+          "level": 1,
+          "type": "choice",
+          "question": "for score in scores 中，score 表示什么？",
+          "options": [
+            "当前循环取到的一个元素",
+            "整个 scores 列表",
+            "列表元素的数量",
+            "循环执行的总次数"
+          ],
+          "answer": "当前循环取到的一个元素",
+          "sourceId": "K007",
+          "factId": "F001"
+        }
+      ],
+      "file": "knowledge_base/python_basic/K007_for_loop.md",
+      "retrievalTrace": {
+        "matchedKeywords": ["循环"],
+        "matchedFields": ["keywords", "difficulty", "taskIntent"],
+        "difficultyMatch": true,
+        "scoreBreakdown": {
+          "keyword": 10,
+          "title": 0,
+          "facts": 0,
+          "practiceTasks": 0,
+          "difficulty": 3,
+          "bonus": 22
+        }
+      },
+      "retrieval_trace": {
+        "matched_keywords": ["循环"],
+        "matched_fields": ["keywords", "difficulty", "taskIntent"],
+        "difficulty_match": true,
+        "score_breakdown": {
+          "keyword": 10,
+          "title": 0,
+          "facts": 0,
+          "practiceTasks": 0,
+          "difficulty": 3,
+          "bonus": 22
+        }
+      }
+    }
+  ]
+}

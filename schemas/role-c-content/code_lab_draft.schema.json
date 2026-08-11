@@ -1,0 +1,541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/code_lab_draft.schema.json",
+  "title": "C Code Lab Provider Draft",
+  "type": "object",
+  "required": ["public_draft", "secure_draft"],
+  "properties": {
+    "public_draft": {
+      "type": "object",
+      "required": ["payload"],
+      "properties": { "payload": { "$ref": "#/$defs/public_payload" } },
+      "additionalProperties": false
+    },
+    "secure_draft": {
+      "type": "object",
+      "required": ["payload"],
+      "properties": { "payload": { "$ref": "#/$defs/secure_payload" } },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "public_safety_repair_patch": {
+      "type": "object",
+      "required": [
+        "starter_code",
+        "instruction_texts",
+        "public_test_descriptions",
+        "public_test_expected_behaviors",
+        "hint_texts",
+        "reflection_questions"
+      ],
+      "properties": {
+        "starter_code": { "type": "string", "minLength": 1 },
+        "instruction_texts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "public_test_descriptions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "public_test_expected_behaviors": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "hint_texts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "reflection_questions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "citation": {
+      "type": "object",
+      "required": ["source_id", "fact_id", "relation"],
+      "properties": {
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+        "relation": { "enum": ["supports", "derived_from", "prerequisite"] }
+      },
+      "additionalProperties": false
+    },
+    "citation_list": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/citation" }
+    },
+    "claim": {
+      "type": "object",
+      "required": ["claim_id", "text", "citations"],
+      "properties": {
+        "claim_id": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "citations": { "$ref": "#/$defs/citation_list" }
+      },
+      "additionalProperties": false
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/claim" }
+    },
+    "paragraph_block": {
+      "type": "object",
+      "required": ["block_id", "block_type", "text", "claims"],
+      "properties": {
+        "block_id": { "type": "string", "minLength": 1 },
+        "block_type": { "const": "paragraph" },
+        "text": { "type": "string", "minLength": 1 },
+        "claims": { "$ref": "#/$defs/claims" }
+      },
+      "additionalProperties": false
+    },
+    "code_block": {
+      "type": "object",
+      "required": ["block_id", "block_type", "language", "code", "claims"],
+      "properties": {
+        "block_id": { "type": "string", "minLength": 1 },
+        "block_type": { "const": "code" },
+        "language": { "const": "python" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "caption": { "type": "string" },
+        "claims": { "$ref": "#/$defs/claims" }
+      },
+      "additionalProperties": false
+    },
+    "callout_block": {
+      "type": "object",
+      "required": ["block_id", "block_type", "tone", "title", "text", "claims"],
+      "properties": {
+        "block_id": { "type": "string", "minLength": 1 },
+        "block_type": { "const": "callout" },
+        "tone": { "enum": ["info", "warning", "tip"] },
+        "title": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 },
+        "claims": { "$ref": "#/$defs/claims" }
+      },
+      "additionalProperties": false
+    },
+    "instruction_block": {
+      "oneOf": [
+        { "$ref": "#/$defs/paragraph_block" },
+        { "$ref": "#/$defs/code_block" },
+        { "$ref": "#/$defs/callout_block" }
+      ]
+    },
+    "hint_ladder": {
+      "type": "object",
+      "required": ["objective_id", "hints"],
+      "properties": {
+        "objective_id": { "type": "string", "minLength": 1 },
+        "hints": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["hint_level", "text", "citations"],
+            "properties": {
+              "hint_level": { "type": "integer", "minimum": 1, "maximum": 3 },
+              "text": { "type": "string", "minLength": 1 },
+              "citations": { "$ref": "#/$defs/citation_list" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution_contract": {
+      "type": "object",
+      "required": ["language", "execution_mode", "allowed_imports", "input_contract", "output_contract", "resource_limits"],
+      "properties": {
+        "language": { "const": "python" },
+        "execution_mode": { "enum": ["function", "stdin_stdout"] },
+        "entry_point": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+        "allowed_imports": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["bisect", "collections", "datetime", "decimal", "enum", "fractions", "functools", "heapq", "itertools", "io", "json", "math", "operator", "random", "re", "statistics", "string"]
+          }
+        },
+        "input_contract": {
+          "type": "object",
+          "required": ["type", "constraints"],
+          "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          },
+          "additionalProperties": false
+        },
+        "output_contract": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "kind": { "enum": ["string", "number", "array", "object", "boolean"] },
+            "type": { "type": "string", "minLength": 1 },
+            "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          },
+          "additionalProperties": false
+        },
+        "resource_limits": {
+          "type": "object",
+          "required": ["timeout_ms", "memory_mb", "max_output_bytes"],
+          "properties": {
+            "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 5000 },
+            "memory_mb": { "type": "integer", "minimum": 32, "maximum": 512 },
+            "max_output_bytes": { "type": "integer", "minimum": 256, "maximum": 100000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "execution_mode": { "const": "function" } } },
+          "then": { "required": ["entry_point"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "public_test": {
+      "type": "object",
+      "required": ["test_id", "objective_id", "description", "input", "expected_behavior", "citations"],
+      "properties": {
+        "test_id": { "type": "string", "minLength": 1 },
+        "objective_id": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "input": {},
+        "expected_behavior": { "type": "string", "minLength": 1 },
+        "citations": { "$ref": "#/$defs/citation_list" }
+      },
+      "additionalProperties": false
+    },
+    "public_coverage": {
+      "type": "object",
+      "required": ["objective_id", "instruction_block_ids", "public_test_ids"],
+      "properties": {
+        "objective_id": { "type": "string", "minLength": 1 },
+        "instruction_block_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "public_test_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "public_author_payload": {
+      "type": "object",
+      "required": ["title", "execution_contract", "starter_code", "objectives"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "execution_contract": { "$ref": "#/$defs/execution_contract" },
+        "starter_code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "instruction_text",
+              "public_test",
+              "hints",
+              "reflection_question"
+            ],
+            "properties": {
+              "instruction_text": { "type": "string", "minLength": 1 },
+              "public_test": {
+                "type": "object",
+                "required": ["description", "input", "expected_behavior"],
+                "properties": {
+                  "description": { "type": "string", "minLength": 1 },
+                  "input": {},
+                  "expected_behavior": { "type": "string", "minLength": 1 }
+                },
+                "additionalProperties": false
+              },
+              "hints": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "reflection_question": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "public_payload": {
+      "type": "object",
+      "required": ["lab_id", "title", "objective_ids", "instructions", "execution_contract", "starter_code", "public_tests", "hint_ladders", "reflection_questions", "objective_coverage", "used_evidence"],
+      "properties": {
+        "lab_id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "objective_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "instructions": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/instruction_block" }
+        },
+        "execution_contract": { "$ref": "#/$defs/execution_contract" },
+        "starter_code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "public_tests": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/public_test" }
+        },
+        "hint_ladders": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/hint_ladder" }
+        },
+        "reflection_questions": {
+          "type": "array", "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "objective_coverage": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/public_coverage" }
+        },
+        "used_evidence": { "$ref": "#/$defs/citation_list" }
+      },
+      "additionalProperties": false
+    },
+    "test_comparison": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": { "kind": { "const": "exact" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "abs_tolerance", "rel_tolerance"],
+          "properties": {
+            "kind": { "const": "numeric" },
+            "abs_tolerance": { "type": "number", "minimum": 0 },
+            "rel_tolerance": { "type": "number", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "hidden_test": {
+      "type": "object",
+      "required": ["test_id", "input", "expected", "objective_id", "weight", "comparison"],
+      "properties": {
+        "test_id": { "type": "string", "minLength": 1 },
+        "input": {},
+        "expected": {},
+        "objective_id": { "type": "string", "minLength": 1 },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "comparison": { "$ref": "#/$defs/test_comparison" }
+      },
+      "additionalProperties": false
+    },
+    "scoring_group": {
+      "type": "object",
+      "required": ["group_id", "objective_id", "test_ids", "weight"],
+      "properties": {
+        "group_id": { "type": "string", "minLength": 1 },
+        "objective_id": { "type": "string", "minLength": 1 },
+        "test_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "mutation_variant": {
+      "type": "object",
+      "required": ["mutation_id", "code", "objective_ids", "misconception_tag", "must_fail_test_ids"],
+      "properties": {
+        "mutation_id": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "objective_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "misconception_tag": { "type": "string", "minLength": 1 },
+        "must_fail_test_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "secure_coverage": {
+      "type": "object",
+      "required": ["objective_id", "hidden_test_ids", "scoring_group_ids", "mutation_ids"],
+      "properties": {
+        "objective_id": { "type": "string", "minLength": 1 },
+        "hidden_test_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "scoring_group_ids": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "mutation_ids": {
+          "type": "array", "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution_repair_patch": {
+      "type": "object",
+      "required": ["reference_solution", "hidden_test_repairs", "mutation_repairs"],
+      "properties": {
+        "reference_solution": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 20000 },
+            { "type": "null" }
+          ]
+        },
+        "hidden_test_repairs": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["test_id", "input", "expected"],
+            "properties": {
+              "test_id": { "type": "string", "minLength": 1 },
+              "input": {},
+              "expected": {},
+              "comparison": { "$ref": "#/$defs/lenient_test_comparison" }
+            }
+          }
+        },
+        "mutation_repairs": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {
+            "type": "object",
+            "required": ["mutation_id", "code"],
+            "properties": {
+              "mutation_id": { "type": "string", "minLength": 1 },
+              "code": { "type": "string", "minLength": 1, "maxLength": 20000 }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    "starter_repair_patch": {
+      "type": "object",
+      "required": ["starter_code"],
+      "properties": {
+        "starter_code": { "type": "string", "minLength": 1, "maxLength": 20000 }
+      },
+      "additionalProperties": false
+    },
+    "lenient_test_comparison": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string" },
+        "abs_tolerance": { "type": "number" },
+        "rel_tolerance": { "type": "number" },
+        "tolerance": { "type": "number" }
+      }
+    },
+    "secure_author_payload": {
+      "type": "object",
+      "required": ["reference_solution", "hidden_tests", "mutation_variants"],
+      "properties": {
+        "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "hidden_tests": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["input", "expected", "misconception_tag"],
+            "properties": {
+              "input": {},
+              "expected": {},
+              "comparison": { "$ref": "#/$defs/lenient_test_comparison" },
+              "misconception_tag": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "mutation_variants": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["code", "misconception_tag"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+              "misconception_tag": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "secure_payload": {
+      "type": "object",
+      "required": ["lab_id", "test_suite_id", "execution_contract", "reference_solution", "hidden_tests", "scoring_groups", "misconception_map", "mutation_variants", "objective_coverage"],
+      "properties": {
+        "lab_id": { "type": "string", "minLength": 1 },
+        "test_suite_id": { "type": "string", "minLength": 1 },
+        "execution_contract": { "$ref": "#/$defs/execution_contract" },
+        "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "hidden_tests": {
+          "type": "array", "minItems": 1, "maxItems": 64,
+          "items": { "$ref": "#/$defs/hidden_test" }
+        },
+        "scoring_groups": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/scoring_group" }
+        },
+        "misconception_map": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["failed_test_id", "misconception_tag"],
+            "properties": {
+              "failed_test_id": { "type": "string", "minLength": 1 },
+              "misconception_tag": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "mutation_variants": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mutation_variant" }
+        },
+        "objective_coverage": {
+          "type": "array", "minItems": 1,
+          "items": { "$ref": "#/$defs/secure_coverage" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
