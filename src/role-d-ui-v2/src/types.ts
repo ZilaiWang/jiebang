@@ -125,6 +125,7 @@ export interface PublicSessionFixture {
   code_execution?: {
     status: "passed" | "failed" | "timeout" | "blocked"
     itemId?: string
+    labId?: string
     passedChecks?: number
     totalChecks?: number
     scoreRatio?: number
@@ -133,6 +134,13 @@ export interface PublicSessionFixture {
   } | null
   feedback?: unknown
   blocked_reason?: string | null
+  terminal_outcome?: {
+    kind: "completed_mastered" | "unsupported_goal" | "insufficient_evidence" | "planning_failed" | "learning_support_required"
+    code: "PATH_MASTERED" | "UNSUPPORTED_GOAL" | "INSUFFICIENT_EVIDENCE" | "PATH_PLANNING_FAILED" | "LEARNING_SUPPORT_REQUIRED"
+    message: string
+    recommended_actions: string[]
+    evidence_refs: string[]
+  } | null
   /** 与后端 InteractiveEvent 对齐：event_id/event_type/stage/worker/message/timestamp。 */
   events: Array<{
     event_id: string

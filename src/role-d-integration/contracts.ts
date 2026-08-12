@@ -1,4 +1,4 @@
-import type { NextRoundGenerationContext } from "../role-c-content/agents/types"
+import type { NextRoundGenerationContext, PriorAssessmentItem } from "../role-c-content/agents/types"
 import type { RagResult } from "../rag/retriever"
 import type { LearnerProfile } from "../role-b-profile/types"
 import type {
@@ -166,6 +166,8 @@ export type RoleCForRoleDResult =
       artifacts: RoleDGeneratedArtifact[]
       workflow: RoleDWorkflowEvent[]
       runId: string
+      /** Exact GenerationSpec identity that produced the published round. */
+      specId: string
       learningSession: {
         sessionId: string
         formId: string
@@ -205,6 +207,8 @@ export interface GenerateRoleCForRoleDInput {
   profile_version?: string
   /** 本轮相对上一轮的决策与反馈上下文（主 Agent 传入，C 用于定向生成与 adaptation 回传）。 */
   next_round_context?: NextRoundGenerationContext
+  /** Previously published answer-free questions for AI anti-repetition. */
+  prior_assessment_items?: PriorAssessmentItem[]
 }
 
 export interface SubmitRoleCAssessmentInput {
@@ -285,6 +289,7 @@ export type RunRoleCCodeLabResult =
   | {
       status: "blocked"
       executionId: string
+      labId: string
       code:
         | "INVALID_REQUEST"
         | "SESSION_NOT_FOUND"

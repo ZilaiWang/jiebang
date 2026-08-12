@@ -25,7 +25,7 @@ import {
   claimTextMatchesFact,
   normalizeGroundedClaimText,
 } from "../validators/claim-grounding"
-import type { CodeLabRequest, ConceptTutorRequest } from "../agents/types"
+import type { CodeLabRequest, ConceptTutorRequest, PriorAssessmentItem } from "../agents/types"
 
 export interface ConceptSegmentRequest extends ConceptTutorRequest {
   segment_index: number
@@ -278,6 +278,7 @@ export function validateConceptSegmentAuthorAgainstRequest(
 function withMicroCheckAnswer(
   authored: ConceptSegmentAuthorPayload["objectives"][number],
   identity: { spec_id: string; objective_id: string; source_id: string },
+  evidenceText: string,
 ): { answer_option_id: string; answer_explanation: string } | Record<string, never> {
   const optionIndex = authored.micro_check_options.findIndex((option) =>
     option.trim().toLocaleLowerCase()
@@ -288,7 +289,7 @@ function withMicroCheckAnswer(
       ...identity,
       option_index: optionIndex,
     }),
-    answer_explanation: authored.micro_check_explanation.trim(),
+    answer_explanation: `可依据本轮事实判断：${evidenceText}。`,
   }
 }
 
@@ -337,8 +338,23 @@ export function materializeConceptSegmentAuthorPayload(
     }))
     const evidenceText = citations
       .map((citation) => facts.get(`${citation.source_id}:${citation.fact_id}`) ?? "")
+      .map((fact) => fact.trim().replace(/[。；;]+$/u, ""))
       .filter(Boolean)
       .join("；")
+    const evidenceItem = request.evidence_pack.results.find((entry) =>
+      entry.source_id === target.source_id)
+    const evidenceExample = evidenceItem?.examples[0]
+    const groundedExplanation = `本轮先逐条掌握这些可核对事实：${evidenceText}。学习和作答时，以这些事实为边界。`
+    const groundedWorkedExample = evidenceExample
+      ? [
+          `证据示例：${evidenceExample.title}`,
+          evidenceExample.code,
+          evidenceExample.explanation,
+          `这个示例用于观察本轮事实所描述的基本行为。`,
+        ].filter(Boolean).join("\n")
+      : `围绕“${request.generation_spec.path_node.goal}”完成一个基础观察，并逐条对照以下事实：${evidenceText}。`
+    const groundedMisconception = `可能的误解是把本轮结论缩小成单一情形，或扩大成证据未说明的能力。正确做法是只确认：${evidenceText}。自查时逐条核对，不把未提供证据的用途或结论当作已掌握事实。`
+    const groundedSummary = `本轮可确认的结论：${evidenceText}。`
     const explanationId = stableId("CONCEPT-EXPLANATION", identity)
     const workedExampleId = stableId("CONCEPT-EXAMPLE", identity)
     const checkId = stableId("CONCEPT-CHECK", identity)
@@ -346,18 +362,18 @@ export function materializeConceptSegmentAuthorPayload(
     explanationBlocks.push({
       block_id: explanationId,
       block_type: "paragraph",
-      text: `${authored.explanation.trim()}\n证据事实：${evidenceText}`,
+      text: groundedExplanation,
       claims: claims("explanation"),
     })
     workedExamples.push({
       block_id: workedExampleId,
       block_type: "paragraph",
-      text: `${authored.worked_example.trim()}\n证据事实：${evidenceText}`,
+      text: groundedWorkedExample,
       claims: claims("worked-example"),
     })
     misconceptions.push({
       misconception_tag: stableId("CONCEPT-MISCONCEPTION", identity),
-      explanation: `${authored.misconception.trim()}\n证据事实：${evidenceText}`,
+      explanation: groundedMisconception,
       objective_id: target.objective_id,
       citations: structuredClone(citations),
     })
@@ -374,7 +390,7 @@ export function materializeConceptSegmentAuthorPayload(
         label: String.fromCharCode(65 + optionIndex),
         text: text.trim(),
       })),
-      ...withMicroCheckAnswer(authored, identity),
+      ...withMicroCheckAnswer(authored, identity, evidenceText),
       citations: citations.map((citation) => ({
         ...citation,
         relation: "derived_from" as const,
@@ -394,7 +410,7 @@ export function materializeConceptSegmentAuthorPayload(
     summary.push({
       block_id: summaryId,
       block_type: "paragraph",
-      text: `${authored.summary.trim()}\n证据事实：${evidenceText}`,
+      text: groundedSummary,
       claims: claims("summary"),
     })
     objectiveCoverage.push({
@@ -1118,17 +1134,25 @@ export function assessmentStarterIsIncomplete(starter: string | null | undefined
   return false
 }
 
-/** 确定性修复：从已有 starter_code 中提取函数签名，替换为未完成骨架。 */
-export function deterministicAssessmentStarterRepair(starter: string | null | undefined): string {
+/** 确定性修复：保留已有或题面约定的函数签名，替换为未完成骨架。 */
+export function deterministicAssessmentStarterRepair(
+  starter: string | null | undefined,
+  prompt?: string | null,
+): string {
   const source = starter?.trim() ?? ""
-  if (!source) return "def solve(data):\n    # TODO: 补全你的代码实现\n    pass\n"
   const lines = source.split(/\r?\n/)
   // 提取函数签名行（def 行 + 可能的装饰器）
   const sigIndex = lines.findIndex((line) => /^\s*def\s+\w+\s*\(/.test(line))
-  if (sigIndex === -1) return "def solve(data):\n    # TODO: 补全你的代码实现\n    pass\n"
-  const sig = lines[sigIndex]!
+  const promptSignature = prompt?.match(/\bdef\s+([A-Za-z_]\w*)\s*\(([^)\n]*)\)\s*(?:->\s*[^：:，。\n]+)?/u)
+    ?? prompt?.match(/函数\s*[`'“"]?([A-Za-z_]\w*)[`'”"]?\s*\(([^)\n]*)\)/u)
+  const sig = sigIndex >= 0
+    ? lines[sigIndex]!
+    : promptSignature
+      ? `def ${promptSignature[1]}(${promptSignature[2]}):`
+      : "def solve(data):"
   const indent = sig.match(/^(\s*)/)?.[1] ?? ""
-  return `${sig}\n${indent}    # TODO: 补全你的代码实现\n${indent}    pass\n`
+  const normalizedSig = sig.trimEnd().endsWith(":") ? sig.trimEnd() : `${sig.trimEnd()}:`
+  return `${normalizedSig}\n${indent}    # TODO: 补全你的代码实现\n${indent}    pass\n`
 }
 
 export function assessmentCompositionForBehavior(_behavior: GenerationSpec["targets"][number]["observable_behavior"]): AssessmentItemPublic["modality"][] {
@@ -1220,6 +1244,79 @@ export function validateAssessmentPublicAuthorAgainstPlan(
     }
   })
   return issues
+}
+
+/**
+ * Rejects a verbatim or cosmetically reformatted reuse of an already published
+ * public question. Similar questions are allowed, but an objective identity
+ * change cannot make an otherwise identical public task new.
+ */
+export function validateAssessmentNovelty(
+  payload: Pick<AssessmentPublicPayload, "items">,
+  history: PriorAssessmentItem[],
+): string[] {
+  const issues: string[] = []
+  const priorByPrompt = new Map(history.map((item) => [
+    assessmentPromptSignature(item),
+    `${item.form_id}:${item.item_id}`,
+  ]))
+  const priorBySignature = new Map(history.map((item) => [
+    assessmentItemSignature(item),
+    `${item.form_id}:${item.item_id}`,
+  ]))
+  const currentPrompts = new Map<string, number>()
+  const current = new Map<string, number>()
+  payload.items.forEach((item, index) => {
+    const promptSignature = assessmentPromptSignature(item)
+    const signature = assessmentItemSignature({
+      objective_id: item.objective_id,
+      modality: item.modality,
+      prompt: item.prompt,
+      options: item.options?.map((option) => option.text) ?? [],
+      starter_code: item.starter_code,
+    })
+    const priorIdentity = priorByPrompt.get(promptSignature) ?? priorBySignature.get(signature)
+    if (priorIdentity) {
+      issues.push(`items[${index}] 与已发布题目 ${priorIdentity} 重复，必须由模型重新命制题面和任务材料`)
+    }
+    const samePromptIndex = currentPrompts.get(promptSignature)
+    const sameFormIndex = current.get(signature)
+    if (samePromptIndex !== undefined || sameFormIndex !== undefined) {
+      issues.push(`items[${index}] 与本卷 items[${samePromptIndex ?? sameFormIndex}] 重复`)
+    } else {
+      currentPrompts.set(promptSignature, index)
+      current.set(signature, index)
+    }
+  })
+  return issues
+}
+
+function assessmentPromptSignature(item: {
+  modality: string
+  prompt: string
+}): string {
+  return [item.modality, normalizeAssessmentSurface(item.prompt)].join("\u0000")
+}
+
+function assessmentItemSignature(item: {
+  objective_id: string
+  modality: string
+  prompt: string
+  options: string[]
+  starter_code?: string
+}): string {
+  const options = item.options.map(normalizeAssessmentSurface).sort()
+  return [
+    item.modality,
+    normalizeAssessmentSurface(item.prompt),
+    options.join("|"),
+    normalizeAssessmentSurface(item.starter_code ?? ""),
+  ].join("\u0000")
+}
+
+function normalizeAssessmentSurface(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase()
+    .replace(/[\s，,。！？；：“”"'、`()\[\]{}\-_]+/g, "")
 }
 
 export function materializeAssessmentPublicAuthorPayload(

@@ -14,6 +14,8 @@
     "match_status": { "enum": ["strong", "weak", "no_match"] },
     "kb_version": { "type": "string", "minLength": 1 },
     "rag_version": { "type": "string", "minLength": 1 },
+    "retrieval_context": { "$ref": "#/$defs/retrieval_context" },
+    "objective_coverage": { "type": "array", "items": { "$ref": "#/$defs/objective_coverage" } },
     "results": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/result" } }
   },
   "allOf": [
@@ -25,6 +27,35 @@
   ],
   "additionalProperties": false,
   "$defs": {
+    "retrieval_context": {
+      "type": "object",
+      "required": ["request_id", "request_hash", "retrieval_mode", "focus_objective_ids", "resource_needs"],
+      "properties": {
+        "request_id": { "type": "string", "minLength": 1 },
+        "request_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "retrieval_mode": { "enum": ["semantic_discovery", "identity_hydration", "evidence_repair"] },
+        "parent_retrieval_id": { "type": "string", "minLength": 1 },
+        "action": { "enum": ["remediate", "reinforce", "advance", "reprofile"] },
+        "focus_objective_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "resource_needs": { "type": "array", "uniqueItems": true, "items": { "enum": ["fact", "prerequisite", "example", "practice_task"] } }
+      },
+      "additionalProperties": false
+    },
+    "objective_coverage": {
+      "type": "object",
+      "required": ["objective_id", "source_id", "importance", "status", "required_fact_ids", "available_fact_ids", "missing_fact_ids", "reasons"],
+      "properties": {
+        "objective_id": { "type": "string", "minLength": 1 },
+        "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+        "importance": { "enum": ["core", "supporting"] },
+        "status": { "enum": ["strong", "weak", "no_match"] },
+        "required_fact_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^F[0-9]{3}$" } },
+        "available_fact_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^F[0-9]{3}$" } },
+        "missing_fact_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^F[0-9]{3}$" } },
+        "reasons": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    },
     "fact": {
       "type": "object",
       "required": ["source_id", "fact_id", "content"],

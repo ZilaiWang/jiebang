@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import type { WorkerName } from "./types"
+import type { PriorAssessmentItem } from "../role-c-content/agents/types"
 
 export interface LearnerMemorySnapshot {
   schema_version: "1.0"
@@ -11,6 +12,8 @@ export interface LearnerMemorySnapshot {
   weak_source_ids: string[]
   completed_sessions: string[]
   recent_errors: Array<{ source_id: string; pattern: string; count: number }>
+  /** Answer-free public forms retained for lifetime duplicate detection. */
+  recent_assessment_items?: PriorAssessmentItem[]
   updated_at: string
 }
 
@@ -116,6 +119,7 @@ function emptyMemory(learnerId: string): LearnerMemorySnapshot {
     weak_source_ids: [],
     completed_sessions: [],
     recent_errors: [],
+    recent_assessment_items: [],
     updated_at: "",
   }
 }

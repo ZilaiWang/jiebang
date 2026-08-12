@@ -3,7 +3,10 @@ import { createHash, randomUUID } from "node:crypto"
 import { join } from "node:path"
 import { loadKnowledgeBase } from "../knowledge/loader"
 import { resolveLearningGoalSpec } from "../knowledge/curriculum"
-import { selectDiagnosticItems } from "../knowledge/diagnostic-selector"
+import {
+  selectDiagnosticEvidenceTargets,
+  type DiagnosticEvidenceTarget,
+} from "../knowledge/diagnostic-selector"
 import { loadLearnerMemory, saveLearnerMemory, appendPersistenceEvents, type PersistenceEvent } from "./learner-memory"
 import { createScaffoldWorkerInvocation, runWorkerAdapter } from "./worker-adapters"
 import { ORCHESTRATION_WORKER_SEQUENCE } from "./state-machine"
@@ -11,16 +14,17 @@ import { validateWorkerResult } from "./worker-contract"
 import type { LearnerRequest, OrchestrationMode, WorkerName } from "./types"
 import type { BackgroundEvidence, DiagnosisItem, ObjectiveDiagnosisEvidence, SelfAssessmentEvidence } from "../role-b-profile/types"
 import type { SubmissionAnswer } from "../role-c-content/contracts/artifacts"
-import type { NextRoundGenerationContext } from "../role-c-content/agents/types"
+import type { NextRoundGenerationContext, PriorAssessmentItem } from "../role-c-content/agents/types"
 import type { RoleCAdaptationInfo } from "../role-c-content/contracts/external-api"
 import type { DynamicFeedbackResult, ObjectiveRoundResult } from "../role-c-content/contracts/dynamic-feedback"
 import { DEFAULT_ROUND_ACTION_POLICY } from "../role-c-content/contracts/dynamic-feedback"
 import type { RagResult } from "../rag/retriever"
-import { retrieveStructuredEvidenceFromKnowledgeBase } from "../rag/structured-evidence"
+import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import {
   createAtomicRoleCLearningPersistence,
   generateRoleCForRoleDWithRuntime,
   runRoleCAssessmentCode,
+  runRoleCCodeLab,
   submitRoleCAssessment,
   createRoleCRecoveryEvidenceRefreshPort,
   type RoleCForRoleDRuntimeOptions,
@@ -28,17 +32,31 @@ import {
 import { roleCGenerationBudgets, shouldRetryWholeGenerationReason } from "../role-d-integration/generation-budget"
 import type { LearnerProfile } from "../role-b-profile/types"
 import type { LearningPathNode } from "../role-c-content/contracts/profile-adapter"
-import { buildFormalPath, advanceToNextNode, type FormalLearningPath } from "../role-b-profile/teaching-audit/formal-path"
+import { buildFormalPath, advanceToNextNode, isFormalPathMastered, startPath, type FormalLearningPath } from "../role-b-profile/teaching-audit/formal-path"
 import { RoleBLearningProgressAdapter } from "../role-b-profile/teaching-audit/learning-progress-adapter"
 import { createLocalBPathPlanningPort } from "../role-c-content/review/local-b-path-planning-port"
 import type { KnowledgeBase } from "../knowledge/types"
 import type { LearnerProfileSnapshot } from "../role-c-content/contracts/profile-adapter"
+import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/model-gateway"
+import {
+  ModelDiagnosticQuestionAuthor,
+  type DiagnosticQuestionAuthorPort,
+} from "./diagnostic-question-author"
 
 export type InteractiveSessionStatus = "waiting_for_user" | "running" | "completed" | "blocked" | "failed"
 export type InteractiveStage = "objective_diagnosis" | "assessment" | "completed" | "blocked" | "failed"
 
 /** 会话锁超过该时长（毫秒）视为陈旧：持有进程可能已崩溃，允许接管。 */
 const STALE_LOCK_MS = 60_000
+export const LEARNING_SUPPORT_REQUIRED = "LEARNING_SUPPORT_REQUIRED"
+
+export interface LearningTerminalOutcome {
+  kind: "completed_mastered" | "unsupported_goal" | "insufficient_evidence" | "planning_failed" | "learning_support_required"
+  code: "PATH_MASTERED" | "UNSUPPORTED_GOAL" | "INSUFFICIENT_EVIDENCE" | "PATH_PLANNING_FAILED" | "LEARNING_SUPPORT_REQUIRED"
+  message: string
+  recommended_actions: Array<"return_home" | "change_goal" | "expand_knowledge_base" | "retry_retrieval" | "retry_planning" | "reprofile">
+  evidence_refs: string[]
+}
 
 export interface PublicWorkerLedgerEntry {
   worker: WorkerName
@@ -90,10 +108,12 @@ export interface InteractiveSessionRecord {
   assessment: unknown | null
   /** 本轮生成相对上一轮的适配信息（remediate/reinforce 时存在）。 */
   adaptation: unknown | null
-  /** 最近一次正式测评代码运行的公开摘要；不含隐藏测试、参考答案或私有套件。 */
+  /** 最近一次代码实验或正式测评代码运行的公开摘要；不含隐藏测试、参考答案或私有套件。 */
   code_execution: unknown | null
   feedback: unknown | null
   blocked_reason: string | null
+  /** 正式课程终态；临时生成/运行故障保持为 null。 */
+  terminal_outcome: LearningTerminalOutcome | null
   events: InteractiveEvent[]
   processed_commands: Record<string, { request_hash: string; response: InteractiveSessionPublicView }>
   private: {
@@ -103,6 +123,8 @@ export interface InteractiveSessionRecord {
     upstream_artifacts: Record<string, unknown>
     /** 评分后暂存给后台生成的下一轮上下文；生成完成即清空。 */
     next_round_context: NextRoundGenerationContext | null
+    /** 全部已发布的纯公开题面历史；确定性防重使用全量，模型只接收最近 200 道。 */
+    assessment_history: PriorAssessmentItem[]
     role_c_generation_attempt: number
     /** 画像纪元：初始 0，reprofile 重建画像时 +1，作为 profile_version 的一部分，
      *  使新画像的 mastery 状态不与旧画像累积串扰（旧画像 evidence 不污染新画像）。 */
@@ -115,6 +137,8 @@ export interface InteractiveSessionRecord {
       data_directory: string
       session_id: string
       run_id: string
+      /** GenerationSpec identity for parent/child round lineage. Missing on legacy sessions. */
+      spec_id?: string
       learner_id: string
       form_id: string
       attempt_no: number
@@ -136,12 +160,18 @@ export interface CreateInteractiveSessionInput {
   owner_id: string
 }
 
+export interface InteractiveSessionStoreOptions {
+  diagnostic_question_author?: DiagnosticQuestionAuthorPort
+  model_environment?: Record<string, string | undefined>
+}
+
 export interface InteractiveSessionCommand {
   command_id: string
-  type: "submit_diagnosis_answers" | "submit_assessment_answers" | "run_assessment_code" | "retry"
+  type: "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "retry"
   payload?: {
     answers?: Record<string, string> | SubmissionAnswer[]
     item_id?: string
+    lab_id?: string
     code?: string
   }
 }
@@ -150,7 +180,17 @@ export class InteractiveSessionStore {
   private readonly commandQueues = new Map<string, Promise<unknown>>()
   private readonly createQueues = new Map<string, Promise<InteractiveSessionRecord>>()
 
-  constructor(readonly data_root: string) {}
+  constructor(
+    readonly data_root: string,
+    private readonly options: InteractiveSessionStoreOptions = {},
+  ) {}
+
+  private diagnosticQuestionAuthor(): DiagnosticQuestionAuthorPort {
+    return this.options.diagnostic_question_author
+      ?? new ModelDiagnosticQuestionAuthor(createRoleCModelGatewayFromEnv(
+        this.options.model_environment ?? process.env,
+      ))
+  }
 
   async create(input: CreateInteractiveSessionInput): Promise<InteractiveSessionRecord> {
     const sessionId = safeId(input.session_id ?? `SESSION-${randomUUID()}`)
@@ -182,23 +222,31 @@ export class InteractiveSessionStore {
     const learnerId = input.learner_request.learner_id ?? sessionId
     const learnerMemory = await loadLearnerMemory(this.data_root, learnerId)
     const targetItems = knowledgeBase.items.filter((item) => goalSpec.mapped_source_ids.includes(item.sourceId))
-    const selection = selectDiagnosticItems({
+    const targets = selectDiagnosticEvidenceTargets({
       knowledgeBase,
       target_source_ids: goalSpec.mapped_source_ids,
       prerequisite_source_ids: [...new Set(targetItems.flatMap((item) => item.prerequisites))],
       learner_memory: learnerMemory,
       max_items: 5,
     })
-    const diagnosisItems: PublicDiagnosisItem[] = selection.items.map((item, index) => ({
-      item_id: `DIAG-${index + 1}-${item.source_id}`,
-      source_id: item.source_id,
-      fact_id: item.fact_id,
-      concept: item.concept,
-      difficulty: item.difficulty,
-      question: item.question,
-      options: item.options ? [...item.options] : undefined,
-    }))
-    const answerKey = Object.fromEntries(selection.items.map((item, index) => [diagnosisItems[index]!.item_id, item.answer]))
+    let diagnosis: Awaited<ReturnType<typeof authorDiagnosisForm>>
+    try {
+      diagnosis = await authorDiagnosisForm(
+        this.diagnosticQuestionAuthor(),
+        sessionId,
+        input.learner_request.goal,
+        targets,
+        learnerMemory.recent_assessment_items ?? [],
+      )
+    } catch (error) {
+      throw new InteractiveSessionError(
+        "DIAGNOSTIC_GENERATION_FAILED",
+        error instanceof Error ? error.message : "AI 诊断题生成失败",
+        503,
+      )
+    }
+    const diagnosisItems = diagnosis.items
+    const answerKey = diagnosis.answerKey
     const events: InteractiveEvent[] = [
       event(sessionId, "session_created", "objective_diagnosis", "learning-orchestrator created a persistent session", now),
       event(sessionId, "worker_completed", "objective_diagnosis", "background-collector accepted learner background", now, "background-collector"),
@@ -232,13 +280,19 @@ export class InteractiveSessionStore {
       adaptation: null,
       feedback: null,
       blocked_reason: null,
+      terminal_outcome: null,
       events,
       processed_commands: {},
-      private: { diagnosis_answer_key: answerKey, diagnosis_answers: null, diagnosis_items: diagnosisItems, upstream_artifacts: {}, next_round_context: null, role_c_generation_attempt: 0, profile_epoch: 0, node_remediate_rounds: 0, node_reinforce_rounds: 0, role_c: null },
+      private: { diagnosis_answer_key: answerKey, diagnosis_answers: null, diagnosis_items: diagnosisItems, upstream_artifacts: {}, next_round_context: null, assessment_history: mergeAssessmentHistory(learnerMemory.recent_assessment_items ?? [], diagnosis.history), role_c_generation_attempt: 0, profile_epoch: 0, node_remediate_rounds: 0, node_reinforce_rounds: 0, role_c: null },
       code_execution: null,
       created_at: now,
       updated_at: now,
     }
+    await saveLearnerMemory(this.data_root, {
+      ...learnerMemory,
+      recent_assessment_items: record.private.assessment_history,
+      updated_at: now,
+    })
     await this.save(record, null)
     return record
   }
@@ -291,7 +345,7 @@ export class InteractiveSessionStore {
         await this.save(current)
         return
       }
-      applyFormalRoleCRound(current, next)
+      await applyFormalRoleCRound(current, next, this.data_root)
       current.updated_at = new Date().toISOString()
       await this.save(current)
     } catch (error) {
@@ -335,6 +389,18 @@ export class InteractiveSessionStore {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for diagnosis answers", 409)
       }
       updated = await continueAfterDiagnosis(record, command, this.data_root)
+    } else if (command.type === "run_code_lab") {
+      if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
+        throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session does not have a published code lab", 409)
+      }
+      const labId = command.payload?.lab_id
+      const code = command.payload?.code
+      const roleC = record.private.role_c
+      if (!roleC || !labId || !code) throw new InteractiveSessionError("INVALID_COMMAND", "run_code_lab requires lab_id and code", 400)
+      const result = await runRoleCCodeLab({ executionId: `EXEC-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id, runId: roleC.run_id, learnerId: roleC.learner_id, labId, code }, roleCRuntime(this.data_root))
+      record.code_execution = result
+      record.updated_at = new Date().toISOString()
+      updated = record
     } else if (command.type === "run_assessment_code") {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for assessment code", 409)
@@ -351,7 +417,12 @@ export class InteractiveSessionStore {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for assessment answers", 409)
       }
-      updated = await continueAfterAssessment(record, command, this.data_root)
+      updated = await continueAfterAssessment(
+        record,
+        command,
+        this.data_root,
+        this.diagnosticQuestionAuthor(),
+      )
       // 评分已返回；下一轮内容后台生成，完成后写回会话（前端轮询状态）。
       if (updated.status === "running" && updated.private.next_round_context) {
         // 先由本方法保存 running 检查点，再启动后台任务，避免后台读取到旧快照。
@@ -362,6 +433,25 @@ export class InteractiveSessionStore {
         return response
       }
     } else {
+      if (record.blocked_reason?.startsWith("DIAGNOSTIC_GENERATION_FAILED:")) {
+        try {
+          updated = await resetToDiagnosisPhase(
+            record,
+            this.data_root,
+            this.diagnosticQuestionAuthor(),
+          )
+        } catch (error) {
+          throw new InteractiveSessionError(
+            "DIAGNOSTIC_GENERATION_FAILED",
+            error instanceof Error ? error.message : "AI 诊断题生成失败",
+            503,
+          )
+        }
+        const response = publicSessionView(updated)
+        updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
+        await this.save(updated)
+        return response
+      }
       const resumableNextRound = Boolean(record.private.next_round_context && record.formal_path && record.current_path_node)
       // running 会话的后台生成进程可能随服务重启中断（nrc 为 null 但 checkpoint 完整）：
       // 允许这类会话进入 retryInteractiveSession，由其按当前节点重新生成或恢复等待。
@@ -478,7 +568,7 @@ export class InteractiveSessionStore {
         await this.save(record)
         return
       }
-      applyFormalRoleCRound(record, next)
+      await applyFormalRoleCRound(record, next, this.data_root)
       record.private.next_round_context = null
       record.updated_at = new Date().toISOString()
       record.events.push(event(
@@ -659,12 +749,14 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
     revision: Number.isSafeInteger(record.revision) && record.revision >= 0 ? record.revision : 0,
     code_execution: record.code_execution ?? null,
     adaptation: record.adaptation ?? null,
+    terminal_outcome: record.terminal_outcome ?? null,
     private: {
       diagnosis_answer_key: record.private?.diagnosis_answer_key ?? {},
       diagnosis_answers: record.private?.diagnosis_answers ?? null,
       diagnosis_items: record.private?.diagnosis_items ?? [],
       upstream_artifacts: record.private?.upstream_artifacts ?? {},
       next_round_context: record.private?.next_round_context ?? null,
+      assessment_history: record.private?.assessment_history ?? [],
       role_c_generation_attempt: record.private?.role_c_generation_attempt ?? 0,
       profile_epoch: record.private?.profile_epoch ?? 0,
       node_remediate_rounds: record.private?.node_remediate_rounds ?? 0,
@@ -695,16 +787,24 @@ async function retryInteractiveSession(
   dataRoot: string,
 ): Promise<InteractiveSessionRecord> {
   const record = structuredClone(original)
+  if (record.blocked_reason?.startsWith(`${LEARNING_SUPPORT_REQUIRED}:`)) {
+    throw new InteractiveSessionError(
+      LEARNING_SUPPORT_REQUIRED,
+      "当前目标尚未掌握，需要重新诊断或调整学习目标",
+      409,
+    )
+  }
   record.blocked_reason = null
+  record.terminal_outcome = null
   if (feedbackDecisionAction(record.feedback) === "advance") {
     const path = record.formal_path as FormalLearningPath | null
     const node = record.current_path_node as LearningPathNode | null
     if (!path || !node) {
-      record.status = "completed"
-      record.current_stage = "completed"
-      record.waiting_for = null
-      record.updated_at = new Date().toISOString()
-      return record
+      throw new InteractiveSessionError(
+        "RETRY_CHECKPOINT_MISSING",
+        "推进后的下一路径节点缺失，不能把缺少检查点解释为课程完成",
+        409,
+      )
     }
     // 重试生成：递增尝试序号避免 run_id 碰撞，并携带暂存的下一轮上下文。
     record.private.role_c_generation_attempt = (record.private.role_c_generation_attempt ?? 0) + 1
@@ -720,7 +820,7 @@ async function retryInteractiveSession(
       record.updated_at = new Date().toISOString()
       return record
     }
-    applyFormalRoleCRound(record, next)
+    await applyFormalRoleCRound(record, next, dataRoot)
     record.private.next_round_context = null
     record.updated_at = new Date().toISOString()
     return record
@@ -754,7 +854,7 @@ async function retryInteractiveSession(
       record.updated_at = new Date().toISOString()
       return record
     }
-    applyFormalRoleCRound(record, next)
+    await applyFormalRoleCRound(record, next, dataRoot)
     record.private.next_round_context = null
     record.updated_at = new Date().toISOString()
     return record
@@ -782,7 +882,7 @@ async function retryInteractiveSession(
       record.updated_at = new Date().toISOString()
       return record
     }
-    applyFormalRoleCRound(record, next)
+    await applyFormalRoleCRound(record, next, dataRoot)
     markReviewedRoleCWorkers(record)
     record.updated_at = new Date().toISOString()
     return record
@@ -802,6 +902,7 @@ async function continueAfterAssessment(
   original: InteractiveSessionRecord,
   command: InteractiveSessionCommand,
   dataRoot: string,
+  diagnosticQuestionAuthor: DiagnosticQuestionAuthorPort,
 ): Promise<InteractiveSessionRecord> {
   const answers = command.payload?.answers
   if (!assertSubmissionAnswers(answers, "submit_assessment_answers")) {
@@ -816,6 +917,17 @@ async function continueAfterAssessment(
   }
 
   const submissionId = `SUB-${record.session_id}-R${record.round_no}-${command.command_id}`
+  const knowledgeBase = await loadKnowledgeBase()
+  const profileVersion = `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`
+  const progressAdapter = new RoleBLearningProgressAdapter({
+    knowledgeBase,
+    learners: [{
+      learnerIdHash: roleC.learner_id,
+      currentProfile: record.profile as LearnerProfile,
+      profileVersion,
+      profileRevision: Math.max(0, record.round_no - 1),
+    }],
+  })
   let outcome: Awaited<ReturnType<typeof submitRoleCAssessment>>
   try {
     outcome = await submitRoleCAssessment({
@@ -826,7 +938,10 @@ async function continueAfterAssessment(
       attemptNo: roleC.attempt_no,
       submissionId,
       answers,
-    }, roleCRuntime(dataRoot))
+    }, {
+      ...roleCRuntime(dataRoot),
+      learningProgressPort: progressAdapter,
+    })
   } catch (error) {
     // 评分服务异常（Docker runner、文件存储、并发冲突等）：转为可恢复的
     // blocked 并落盘原因，避免裸抛 500 且会话时间线无痕迹。
@@ -864,46 +979,146 @@ async function continueAfterAssessment(
       code_response: answer.code_response ?? null,
     })),
   }
+  // submitRoleCAssessment 已通过 C 的正式 LearningEvidenceEvent 端口把本轮
+  // 题目级证据交给 B。这里持久化 B 返回的真实画像和快照；不再在主 Agent
+  // 里把所有题目伪装成 mcq 后二次投递。
+  const updatedBState = progressAdapter.getCurrentState(roleC.learner_id)
+  if (!updatedBState) {
+    throw new InteractiveSessionError("ROLE_B_PROGRESS_STATE_MISSING", "B did not retain the accepted learning progress", 500)
+  }
+  record.profile = updatedBState.currentProfile
   // 评分证据写回 learner-memory：跨会话学习记忆必须随真实作答更新，
   // 否则同一 learner 新会话诊断永远读不到历史掌握情况（此前交互流程只读不写）。
   await persistMasteryToLearnerMemory(record, outcome.feedback, dataRoot)
-  // 通知 B 本轮评分结果：B 侧画像随 formal assessment 更新，
-  // 确保 reprofile 决策和下一会话诊断基于最新学习进展。
-  await reportProgressToBAfterGrading(record, outcome.feedback, dataRoot)
   record.events.push(event(record.session_id, "command_received", "assessment", "Role C accepted and graded assessment answers", new Date().toISOString(), "tiered-evaluator"))
   // 画像漂移：不推进路径、不生成下一轮，回到诊断阶段重建学习者画像。
   if (outcome.feedback.final_decision.action === "reprofile") {
-    return resetToDiagnosisPhase(record, dataRoot)
+    try {
+      return await resetToDiagnosisPhase(record, dataRoot, diagnosticQuestionAuthor)
+    } catch (error) {
+      record.status = "blocked"
+      record.current_stage = "blocked"
+      record.waiting_for = null
+      record.blocked_reason = `DIAGNOSTIC_GENERATION_FAILED: ${error instanceof Error ? error.message : "AI 诊断题生成失败"}`
+      record.events.push(event(
+        record.session_id,
+        "session_blocked",
+        "blocked",
+        record.blocked_reason,
+        new Date().toISOString(),
+        "objective-diagnostician",
+      ))
+      record.updated_at = new Date().toISOString()
+      return record
+    }
   }
 
-  // 轮次上限保护：同一节点内 remediate/reinforce 各有一个上限，超过后
-  // 强制 advance（即使准确率未达标），避免学习者无限循环在同一节点。
-  let decisionAction = outcome.feedback.final_decision.action
+  // 同一教学变式反复无效时，交给 B 按最新画像重新规划。
+  // 轮次限制只触发策略变化，永远不得改写 C 的掌握决策。
+  const decisionAction = outcome.feedback.final_decision.action
+  let supportLimitReached = false
   if (decisionAction === "remediate") {
     record.private.node_remediate_rounds = (record.private.node_remediate_rounds ?? 0) + 1
-    if (record.private.node_remediate_rounds > MAX_REMEDIATE_ROUNDS_PER_NODE) {
-      decisionAction = "advance"
-      record.events.push(event(record.session_id, "session_updated", "assessment", `remediate 轮次达到上限(${MAX_REMEDIATE_ROUNDS_PER_NODE})，强制推进下一节点`, new Date().toISOString(), "tiered-evaluator"))
-    }
+    supportLimitReached = record.private.node_remediate_rounds >= MAX_REMEDIATE_ROUNDS_PER_NODE
   } else if (decisionAction === "reinforce") {
     record.private.node_reinforce_rounds = (record.private.node_reinforce_rounds ?? 0) + 1
-    if (record.private.node_reinforce_rounds > MAX_REINFORCE_ROUNDS_PER_NODE) {
-      decisionAction = "advance"
-      record.events.push(event(record.session_id, "session_updated", "assessment", `reinforce 轮次达到上限(${MAX_REINFORCE_ROUNDS_PER_NODE})，强制推进下一节点`, new Date().toISOString(), "tiered-evaluator"))
+    supportLimitReached = record.private.node_reinforce_rounds >= MAX_REINFORCE_ROUNDS_PER_NODE
+  }
+  if (supportLimitReached) {
+    const recovery = await replanAfterLearningStall(
+      record,
+      currentNode,
+      updatedBState.currentProfile,
+      updatedBState.currentSnapshot,
+    )
+    if (!recovery.ok) {
+      record.status = "blocked"
+      record.current_stage = "blocked"
+      record.waiting_for = null
+      record.private.next_round_context = null
+      record.blocked_reason = `${LEARNING_SUPPORT_REQUIRED}: ${recovery.reason}`
+      record.terminal_outcome = {
+        kind: "learning_support_required",
+        code: "LEARNING_SUPPORT_REQUIRED",
+        message: recovery.reason,
+        recommended_actions: ["reprofile", "change_goal"],
+        evidence_refs: [outcome.feedback.feedback_id, currentNode.node_id],
+      }
+      record.events.push(event(
+        record.session_id,
+        "session_blocked",
+        "blocked",
+        record.blocked_reason,
+        new Date().toISOString(),
+        "path-planner",
+      ))
+      record.updated_at = new Date().toISOString()
+      return record
     }
+    record.formal_path = recovery.path
+    record.current_path_node = recovery.nextPathNode
+    record.private.node_remediate_rounds = 0
+    record.private.node_reinforce_rounds = 0
+    record.private.role_c_generation_attempt = 0
+    record.round_no += 1
+    const replannedObjectiveIds = recovery.nextPathNode.objectives.map((objective) => objective.objective_id)
+    record.private.next_round_context = buildNextRoundContext(
+      outcome.feedback,
+      roleC.spec_id ?? roleC.run_id,
+      `NRC-${record.session_id}-R${record.round_no}`,
+      replannedObjectiveIds,
+      replannedObjectiveIds,
+    ) ?? null
+    record.status = "running"
+    record.current_stage = "assessment"
+    record.waiting_for = null
+    record.events.push(event(
+      record.session_id,
+      "session_updated",
+      "assessment",
+      "B 已根据连续低掌握证据调整支持路径",
+      new Date().toISOString(),
+      "path-planner",
+    ))
+    record.updated_at = new Date().toISOString()
+    return record
   }
   const advance = advanceToNextNode({
     path,
-    updatedProfileSnapshot: path.profile_snapshot,
+    updatedProfileSnapshot: updatedBState.currentSnapshot,
     decisionAction,
   })
   record.formal_path = advance.path
-  if (advance.pathCompleted || !advance.nextPathNode) {
+  if (advance.pathCompleted && isFormalPathMastered(advance.path)) {
     record.current_path_node = null
     record.status = "completed"
     record.current_stage = "completed"
     record.waiting_for = null
+    record.terminal_outcome = {
+      kind: "completed_mastered",
+      code: "PATH_MASTERED",
+      message: "正式学习路径中的全部节点均已通过测评",
+      recommended_actions: ["return_home"],
+      evidence_refs: [outcome.feedback.feedback_id, ...advance.path.nodes.map((node) => node.node_id)],
+    }
     record.events.push(event(record.session_id, "session_completed", "completed", "formal learning path completed", new Date().toISOString()))
+    record.updated_at = new Date().toISOString()
+    return record
+  }
+  if (!advance.nextPathNode) {
+    record.current_path_node = null
+    record.status = "blocked"
+    record.current_stage = "blocked"
+    record.waiting_for = null
+    record.blocked_reason = "PATH_PLANNING_FAILED: 路径没有下一节点，但尚未满足正式完成条件"
+    record.terminal_outcome = {
+      kind: "planning_failed",
+      code: "PATH_PLANNING_FAILED",
+      message: "路径没有下一节点，但尚未满足正式完成条件",
+      recommended_actions: ["retry_planning", "change_goal"],
+      evidence_refs: [outcome.feedback.feedback_id, advance.path.path_id],
+    }
+    record.events.push(event(record.session_id, "session_blocked", "blocked", record.blocked_reason, new Date().toISOString(), "path-planner"))
     record.updated_at = new Date().toISOString()
     return record
   }
@@ -919,7 +1134,7 @@ async function continueAfterAssessment(
     .filter((objectiveId): objectiveId is string => Boolean(objectiveId))
   const nextRoundContext = buildNextRoundContext(
     outcome.feedback,
-    roleC.run_id,
+    roleC.spec_id ?? roleC.run_id,
     `NRC-${record.session_id}-R${record.round_no}`,
     nextNodeObjectives,
   )
@@ -939,71 +1154,6 @@ async function continueAfterAssessment(
     "tiered-evaluator",
   ))
   return record
-}
-
-// 通知 B 本轮评分结果：B 侧画像随 formal assessment 更新，
-// 确保 reprofile 决策和下一会话诊断基于最新学习进展。
-async function reportProgressToBAfterGrading(
-  record: InteractiveSessionRecord,
-  feedback: DynamicFeedbackResult,
-  dataRoot: string,
-): Promise<void> {
-  try {
-    const learnerId = record.learner_request.learner_id ?? record.session_id
-    const node = record.current_path_node as LearningPathNode | null
-    if (!node) return
-    const knowledgeBase = await loadKnowledgeBase()
-    const progressPort = new RoleBLearningProgressAdapter({
-      knowledgeBase,
-      learners: [{
-        learnerIdHash: learnerId,
-        currentProfile: record.profile as LearnerProfile,
-        profileVersion: `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`,
-        profileRevision: record.round_no,
-      }],
-    })
-    const events: Array<import("../role-c-content/contracts/learning-evidence-event").LearningEvidenceEvent> = []
-    for (const result of feedback.objective_results) {
-      const objective = node.objectives.find((obj) => obj.objective_id === result.objective_id)
-      if (!objective) continue
-      events.push({
-        schema_version: "1.0" as const,
-        event_id: `EVID-${record.session_id}-R${record.round_no}-${result.objective_id}`,
-        learner_id_hash: learnerId,
-        profile_version: `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`,
-        path_node_id: node.node_id,
-        objective_id: result.objective_id,
-        source_id: objective.source_id,
-        evidence: {
-          modality: "mcq" as const,
-          raw_score: result.raw_score,
-          evidence_score: result.evidence_score,
-          grader_confidence: 1,
-          hint_level: 0,
-          attempt_no: record.round_no,
-        },
-        misconceptions: result.misconception_tags ?? [],
-        recommendation: {
-          action: feedback.final_decision.action,
-          confidence: 1,
-          reason_codes: [...feedback.final_decision.reason_codes],
-        },
-        provenance: {
-          artifact_id: feedback.grade_result.artifact_id,
-          idempotency_key: `sha256:${createHash("sha256").update(`INTERACTIVE-${record.session_id}-R${record.round_no}-${result.objective_id}`).digest("hex")}`,
-          item_id: result.objective_id,
-          grader_version: "interactive-v1",
-        },
-      })
-    }
-    if (events.length === 0) return
-    const { deliverRoleCToB } = await import("../role-c-content/contracts/external-api")
-    await deliverRoleCToB(progressPort, events)
-  } catch (error) {
-    // B 进度投递失败不阻断用户交互：D 侧 learner-memory 已写入，
-    // 且下一次生成/评估时可补偿。
-    console.warn(`[orchestrator] B 进度投递非致命失败：${error instanceof Error ? error.message : String(error)}`)
-  }
 }
 
 /**
@@ -1035,15 +1185,21 @@ async function persistMasteryToLearnerMemory(
         evidence: `formal assessment round ${record.round_no}`,
       }]
     })
-  if (events.length === 0) return
   const memory = await loadLearnerMemory(dataRoot, learnerId)
   const updated = appendPersistenceEvents(memory, events)
+  // Persist the complete answer-free public history for lifetime duplicate
+  // detection. Model inputs take only the latest 200 items.
+  updated.recent_assessment_items = mergeAssessmentHistory(
+    memory.recent_assessment_items ?? [],
+    record.private.assessment_history,
+  )
   await saveLearnerMemory(dataRoot, updated)
 }
 
 interface FormalRoleCRound {
   ok: true
   run_id: string
+  spec_id: string
   learning_session: {
     session_id: string
     form_id: string
@@ -1069,9 +1225,8 @@ export const REMEDIATE_ACCURACY_THRESHOLD = DEFAULT_ROUND_ACTION_POLICY.remediat
 export const REINFORCE_ACCURACY_THRESHOLD = DEFAULT_ROUND_ACTION_POLICY.advance_at_least
 
 /**
- * 单节点内补救/巩固的最大轮次。超过后即使分数未达标也强制 advance，
- * 避免学习者在同一节点无限循环「补救→再测评→强化→再测评」。
- * 上限防止：连续低分永不 advance 导致会话永不结束、round_no/events 无限膨胀。
+ * 同一节点连续使用同类教学变式的上限。达到上限后由 B 重新规划
+ * 先修或更小支持路径；无可用方案则诚实暂停为未掌握。
  */
 export const MAX_REMEDIATE_ROUNDS_PER_NODE = 3
 export const MAX_REINFORCE_ROUNDS_PER_NODE = 2
@@ -1108,15 +1263,24 @@ export function buildNextRoundContext(
   parentSpecId: string,
   requestId: string,
   fallbackObjectiveIds: string[] = [],
+  replannedObjectiveIds: string[] = [],
 ): NextRoundGenerationContext | undefined {
   const action = feedback.final_decision.action
   if (action === "reprofile") return undefined
-  const focus = focusObjectivesForNextRound(feedback.objective_results, action)
+  // final_decision is the single source of truth for the objectives selected by
+  // C's scoring policy. Do not independently reapply thresholds in the main
+  // Agent, otherwise policy changes can make the next round focus disagree with
+  // the action and rationale already published to B/D.
+  const focus = action === "advance"
+    ? feedback.objective_results.map((result) => result.objective_id)
+    : [...feedback.final_decision.target_objective_ids]
   // C 合同要求 focus_objective_ids 非空、不重复且属于当前 GenerationSpec。
   // advance 表示已掌握本节点、进入下一节点：focus 必须是下一（当前）节点目标，
   // 上一轮 feedback.objective_results 里的旧节点目标不能透传给 C；
   // remediate/reinforce 时 focus 是当前节点子集，空则回落到当前节点目标。
-  const effectiveFocus = action === "advance"
+  const effectiveFocus = replannedObjectiveIds.length > 0
+    ? replannedObjectiveIds
+    : action === "advance"
     ? (fallbackObjectiveIds.length > 0 ? fallbackObjectiveIds : focus)
     : (focus.length > 0 ? focus : fallbackObjectiveIds)
   const misconceptionTags = focus.length > 0
@@ -1133,9 +1297,102 @@ export function buildNextRoundContext(
     trigger_grade_artifact_id: feedback.grade_result.artifact_id,
     action,
     focus_objective_ids: effectiveFocus,
-    reason_codes: [...feedback.final_decision.reason_codes],
+    reason_codes: [
+      ...feedback.final_decision.reason_codes,
+      ...(replannedObjectiveIds.length > 0 ? ["b_path_replanned_after_learning_stall"] : []),
+    ],
     ...(misconceptionTags.length > 0 ? { misconception_tags: misconceptionTags } : {}),
   }
+}
+
+async function replanAfterLearningStall(
+  record: InteractiveSessionRecord,
+  currentNode: LearningPathNode,
+  learnerProfile: LearnerProfile,
+  profileSnapshot: LearnerProfileSnapshot,
+): Promise<
+  | { ok: true; path: FormalLearningPath; nextPathNode: LearningPathNode }
+  | { ok: false; reason: string }
+> {
+  const knowledgeBase = await loadKnowledgeBase()
+  const priorRag = record.rag_result as RagResult | null
+  const discovery = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+    run_id: `${record.run_id}-SUPPORT-PATH-R${record.round_no}`,
+    retrieval_mode: "semantic_discovery",
+    learner_profile: {
+      profile_version: profileSnapshot.profile_version,
+      level: learnerProfile.level,
+      known_concepts: [...learnerProfile.known_concepts],
+      weak_concepts: [...learnerProfile.weak_concepts],
+      goal: learnerProfile.goal,
+    },
+    planning_context: {
+      current_node_id: currentNode.node_id,
+      current_goal: currentNode.goal,
+      observable_behaviors: currentNode.objectives.map((item) => item.observable_behavior),
+      excluded_source_ids: [...currentNode.target_source_ids],
+    },
+    learning_context: {
+      action: "remediate",
+      focus_objective_ids: currentNode.objectives.map((item) => item.objective_id),
+      misconception_tags: [],
+      reason_codes: ["learning_stall_path_replan"],
+    },
+    resource_needs: ["fact", "prerequisite", "example"],
+    parent_retrieval_id: priorRag?.retrieval_id ?? priorRag?.retrieval_context?.request_id,
+    top_k: 8,
+  }), knowledgeBase)
+  if (discovery.results.length === 0) {
+    return {
+      ok: false,
+      reason: "A 未发现可供 B 规划支持路径的相关知识来源；当前节点保持未掌握",
+    }
+  }
+  const replanned = buildFormalPath({
+    learnerProfile,
+    knowledgeBase,
+    profileSnapshot,
+    goalSourceIds: discovery.results.map((item) => item.source_id ?? item.sourceId),
+  })
+  const started = startPath(replanned)
+  if (!started.nextPathNode || started.pathCompleted) {
+    return {
+      ok: false,
+      reason: "B 未能为当前薄弱目标找到可用的支持路径；当前节点保持未掌握",
+    }
+  }
+  const sameTarget = sameStringsUnordered(
+    started.nextPathNode.target_source_ids,
+    currentNode.target_source_ids,
+  )
+  const samePrerequisites = sameStringsUnordered(
+    started.nextPathNode.prerequisite_source_ids,
+    currentNode.prerequisite_source_ids,
+  )
+  if (sameTarget && samePrerequisites) {
+    return {
+      ok: false,
+      reason: "B 重新规划后未产生新的先修或更小支持路径；请重新诊断或调整学习目标",
+    }
+  }
+  record.events.push(event(
+    record.session_id,
+    "worker_completed",
+    "assessment",
+    `B 将支持路径调整为 ${started.nextPathNode.target_source_ids.join("、")}`,
+    new Date().toISOString(),
+    "path-planner",
+  ))
+  // 下一节点精确取证以本次语义发现为父级，形成完整检索血缘。
+  record.rag_result = discovery
+  return { ok: true, path: started.path, nextPathNode: started.nextPathNode }
+}
+
+function sameStringsUnordered(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  const sortedLeft = [...left].sort()
+  const sortedRight = [...right].sort()
+  return sortedLeft.every((value, index) => value === sortedRight[index])
 }
 
 export function interactiveSessionProductionBoundary() {
@@ -1170,20 +1427,44 @@ async function generateFormalRoleCRound(
 ): Promise<FormalRoleCRoundResult> {
   const ragResult = record.rag_result as RagResult | null
   if (!ragResult) return { ok: false, reason: "A RAG result is missing for Role C generation" }
-  // 每轮必须以B当前节点为唯一目标来源。旧会话/恢复流程可能把上一轮的RAG结果带入，
-  // 且路径推进到后续节点时首轮快照可能不含新节点证据（advance 后从未刷新）。
-  // 这里先按当前节点 target + prerequisite 补全缺失的 A 证据（按 source_id 从知识库
-  // 结构化读取，非文本检索），再过滤绑定，避免 C 依据旧 K001 讲义生成 K002 轮次，
-  // 也避免 advance 到新节点时因证据缺失而阻塞。
-  const ensured = await ensureCurrentNodeEvidence(ragResult, node)
-  if (!ensured.ok) {
-    return { ok: false, reason: `A 证据刷新失败：${ensured.missingSources.join("、")}` }
-  }
-  const currentRagResult = filterRagToCurrentNode(ensured.ragResult, node)
-  const requiredSources = [...new Set([...node.target_source_ids, ...(node.prerequisite_source_ids ?? [])])]
-  const missingSources = requiredSources.filter((sourceId) => !currentRagResult.results.some((item) => (item.source_id ?? item.sourceId) === sourceId))
-  if (missingSources.length > 0) {
-    return { ok: false, reason: `A 知识库缺少当前节点或先修证据：${missingSources.join("、")}` }
+  // B 已冻结当前路径节点后，A 按 source/fact 身份创建本轮独立取证结果。
+  // 不追加或改写旧 RAG；旧结果只作为检索谱系的 parent。
+  const profile = record.profile as LearnerProfile
+  const action = nextRoundContext?.action ?? "advance"
+  const currentRagResult = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+    run_id: `${record.run_id}-ROUND-${record.round_no}`,
+    retrieval_mode: "identity_hydration",
+    learner_profile: {
+      profile_version: `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`,
+      level: profile.level,
+      known_concepts: [...profile.known_concepts],
+      weak_concepts: [...profile.weak_concepts],
+      goal: profile.goal,
+    },
+    path_context: node,
+    learning_context: {
+      action,
+      focus_objective_ids: [...(nextRoundContext?.focus_objective_ids
+        ?? node.objectives.map((objective) => objective.objective_id))],
+      misconception_tags: [...(nextRoundContext?.misconception_tags ?? [])],
+      reason_codes: [...(nextRoundContext?.reason_codes ?? ["path_node_activated"])],
+    },
+    resource_needs: action === "remediate"
+      ? ["fact", "prerequisite", "example"]
+      : action === "reinforce"
+        ? ["fact", "example", "practice_task"]
+        : ["fact", "prerequisite", "example", "practice_task"],
+    parent_retrieval_id: ragResult.retrieval_id ?? ragResult.retrieval_context?.request_id,
+    top_k: Math.max(1, node.target_source_ids.length + node.prerequisite_source_ids.length),
+  }))
+  if (currentRagResult.match_status !== "strong") {
+    const gaps = (currentRagResult.objective_coverage ?? [])
+      .filter((entry) => entry.status !== "strong")
+      .flatMap((entry) => entry.reasons)
+    return {
+      ok: false,
+      reason: `${currentRagResult.match_status === "no_match" ? "A_RAG_NO_MATCH" : "A_RAG_WEAK_MATCH"}：${gaps.join("；") || "当前节点证据不足"}`,
+    }
   }
   const boundPathNode = bindPathNodeFactsForRoleC(node, currentRagResult)
   // C 的 GenerationSpec 必须使用绑定了 A 真实事实 ID 的节点；原始 B 节点可能只有 source_id，
@@ -1197,7 +1478,7 @@ async function generateFormalRoleCRound(
   for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
     const runId = roleCRoundRunId(record.run_id, record.round_no, baseAttempt + attempt)
     const result = await generateRoleCForRoleDWithRuntime({
-      profile: record.profile as LearnerProfile,
+      profile,
       ragResult: currentRagResult,
       kbVersion: await resolveRoleCKnowledgeBaseVersion(),
       runId,
@@ -1208,6 +1489,9 @@ async function generateFormalRoleCRound(
       profile_version: `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`,
       pathNode: boundPathNode,
       ...(nextRoundContext ? { next_round_context: nextRoundContext } : {}),
+      ...(record.private.assessment_history.length > 0
+        ? { prior_assessment_items: record.private.assessment_history }
+        : {}),
     }, roleCRuntime(dataRoot))
     if (result.status === "ready") {
       if (!result.reviewedRelease) return { ok: false, reason: "Role C ready result omitted reviewed public release" }
@@ -1216,6 +1500,7 @@ async function generateFormalRoleCRound(
       return {
         ok: true,
         run_id: result.runId,
+        spec_id: result.specId,
         learning_session: {
           session_id: result.learningSession.sessionId,
           form_id: result.learningSession.formId,
@@ -1226,7 +1511,7 @@ async function generateFormalRoleCRound(
         assessment,
         // 持久化完整刷新结果（含按需补全的节点证据），供后续轮次复用，
         // 而非仅当前节点过滤后的子集。
-        rag_result: ensured.ragResult,
+        rag_result: currentRagResult,
         adaptation: result.reviewedRelease.adaptation,
       }
     }
@@ -1237,16 +1522,40 @@ async function generateFormalRoleCRound(
   return { ok: false, reason: lastReason }
 }
 
-function applyFormalRoleCRound(record: InteractiveSessionRecord, round: FormalRoleCRound): void {
+async function applyFormalRoleCRound(
+  record: InteractiveSessionRecord,
+  round: FormalRoleCRound,
+  dataRoot: string,
+): Promise<void> {
   record.blocked_reason = null
   record.rag_result = round.rag_result
   record.learning_resources = { concept_lesson: round.concept_lesson, code_lab: round.code_lab }
   record.assessment = round.assessment
+  record.private.assessment_history = mergeAssessmentHistory(
+    record.private.assessment_history,
+    publicAssessmentHistory(round.assessment),
+  )
+  // A public form is part of the novelty ledger as soon as it is published.
+  // Waiting until submission would allow an abandoned form to reappear in a
+  // later session. Persist before the session publication commit: a failure
+  // blocks publication instead of silently weakening cross-session novelty.
+  const learnerId = record.learner_request.learner_id ?? record.session_id
+  const memory = await loadLearnerMemory(dataRoot, learnerId)
+  await saveLearnerMemory(dataRoot, {
+    ...memory,
+    recent_assessment_items: mergeAssessmentHistory(
+      memory.recent_assessment_items ?? [],
+      record.private.assessment_history,
+    ),
+    updated_at: new Date().toISOString(),
+  })
   record.adaptation = round.adaptation ?? null
+  record.code_execution = null
   record.private.role_c = {
     data_directory: "role-c",
     session_id: round.learning_session.session_id,
     run_id: round.run_id,
+    spec_id: round.spec_id,
     learner_id: (record.profile as LearnerProfile).learner_id,
     form_id: round.learning_session.form_id,
     attempt_no: round.learning_session.attempt_no,
@@ -1260,82 +1569,93 @@ function applyFormalRoleCRound(record: InteractiveSessionRecord, round: FormalRo
   }
 }
 
+function publicAssessmentHistory(assessment: unknown): PriorAssessmentItem[] {
+  if (!isRecord(assessment) || !isRecord(assessment.payload)) return []
+  const payload = assessment.payload
+  const formId = typeof payload.form_id === "string" ? payload.form_id : ""
+  const items = Array.isArray(payload.items) ? payload.items : []
+  if (!formId) return []
+  return items.flatMap((value) => {
+    if (!isRecord(value)
+      || typeof value.item_id !== "string"
+      || typeof value.objective_id !== "string"
+      || typeof value.modality !== "string"
+      || !["mcq", "true_false", "trace", "short_answer", "code"].includes(value.modality)
+      || typeof value.prompt !== "string") return []
+    const options = Array.isArray(value.options)
+      ? value.options.flatMap((option) => isRecord(option) && typeof option.text === "string" ? [option.text] : [])
+      : []
+    return [{
+      form_id: formId,
+      item_id: value.item_id,
+      objective_id: value.objective_id,
+      modality: value.modality as PriorAssessmentItem["modality"],
+      prompt: value.prompt,
+      options,
+      ...(typeof value.starter_code === "string" ? { starter_code: value.starter_code } : {}),
+    }]
+  })
+}
+
+async function authorDiagnosisForm(
+  author: DiagnosticQuestionAuthorPort,
+  sessionId: string,
+  learnerGoal: string,
+  targets: DiagnosticEvidenceTarget[],
+  priorPublicItems: PriorAssessmentItem[],
+): Promise<{
+  items: PublicDiagnosisItem[]
+  answerKey: Record<string, string>
+  history: PriorAssessmentItem[]
+}> {
+  const authored = await author.author({
+    session_id: sessionId,
+    learner_goal: learnerGoal,
+    targets,
+    prior_public_items: priorPublicItems,
+  })
+  const formId = `DIAGFORM-${safeId(sessionId)}`
+  const items = authored.map((item, index) => {
+    const digest = createHash("sha256")
+      .update(JSON.stringify({ source_id: item.source_id, fact_id: item.fact_id, question: item.question, options: item.options }))
+      .digest("hex")
+      .slice(0, 10)
+    return {
+      item_id: `DIAG-${index + 1}-${item.source_id}-${digest}`,
+      source_id: item.source_id,
+      fact_id: item.fact_id,
+      concept: item.concept,
+      difficulty: item.difficulty,
+      question: item.question,
+      options: [...item.options],
+    }
+  })
+  return {
+    items,
+    answerKey: Object.fromEntries(authored.map((item, index) => [items[index]!.item_id, item.answer])),
+    history: authored.map((item, index) => ({
+      form_id: formId,
+      item_id: items[index]!.item_id,
+      objective_id: `DIAG-${item.source_id}`,
+      modality: "mcq" as const,
+      prompt: item.question,
+      options: [...item.options],
+    })),
+  }
+}
+
+function mergeAssessmentHistory(
+  existing: PriorAssessmentItem[],
+  incoming: PriorAssessmentItem[],
+): PriorAssessmentItem[] {
+  return [...new Map([...existing, ...incoming].map((item) => [
+    `${item.form_id}:${item.item_id}`,
+    structuredClone(item),
+  ])).values()]
+}
+
 export async function resolveRoleCKnowledgeBaseVersion(): Promise<string> {
   return (await loadKnowledgeBase()).version
-}
-
-export function filterRagToCurrentNode(ragResult: RagResult, node: Pick<LearningPathNode, "target_source_ids" | "prerequisite_source_ids">): RagResult {
-  const targetIds = new Set(node.target_source_ids)
-  const sourceIds = new Set([
-    ...node.target_source_ids,
-    ...(node.prerequisite_source_ids ?? []),
-  ])
-  return {
-    ...ragResult,
-    results: ragResult.results
-      .filter((item) => sourceIds.has(item.source_id ?? item.sourceId))
-      .map((item) => {
-        const sourceId = item.source_id ?? item.sourceId
-        const facts = Array.isArray(item.facts) ? item.facts : []
-        if (!targetIds.has(sourceId) || facts.length === 0) return item
-        const matchedFields = new Set(item.retrievalTrace.matchedFields)
-        matchedFields.add("facts")
-        matchedFields.add("taskIntent")
-        return {
-          ...item,
-          reason: `B 当前正式节点精确绑定 ${sourceId}，并使用 A 结构化事实`,
-          retrievalTrace: {
-            ...item.retrievalTrace,
-            matchedFields: [...matchedFields],
-            scoreBreakdown: {
-              ...item.retrievalTrace.scoreBreakdown,
-              facts: Math.max(item.retrievalTrace.scoreBreakdown.facts, facts.length),
-            },
-          },
-        }
-      }),
-  }
-}
-
-/**
- * 确保当前节点所需的 A 证据就绪：路径推进到新节点后，首轮 RAG 快照可能缺少新节点的
- * target / prerequisite 证据（advance 后从未刷新）。此处按 source_id 从知识库结构化
- * 读取缺失来源并合并，返回刷新后的完整 RAG 结果；知识库本身缺失的来源才视为不可恢复。
- */
-export async function ensureCurrentNodeEvidence(
-  ragResult: RagResult,
-  node: Pick<LearningPathNode, "target_source_ids" | "prerequisite_source_ids">,
-): Promise<{ ok: true; ragResult: RagResult } | { ok: false; missingSources: string[] }> {
-  const requiredSourceIds = [...new Set([
-    ...node.target_source_ids,
-    ...(node.prerequisite_source_ids ?? []),
-  ])]
-  const present = new Set(ragResult.results.map((item) => item.source_id ?? item.sourceId))
-  const missing = requiredSourceIds.filter((sourceId) => !present.has(sourceId))
-  if (missing.length === 0) return { ok: true, ragResult }
-
-  const knowledgeBase = await loadKnowledgeBase()
-  const structured = retrieveStructuredEvidenceFromKnowledgeBase(
-    { source_ids: missing },
-    knowledgeBase,
-  )
-  const stillMissing = structured.missing_source_ids
-  if (stillMissing.length > 0) {
-    return { ok: false, missingSources: stillMissing }
-  }
-  const knownIds = new Set(ragResult.results.map((item) => item.source_id ?? item.sourceId))
-  const merged = [...ragResult.results]
-  for (const item of structured.results) {
-    const sourceId = item.source_id ?? item.sourceId
-    if (!knownIds.has(sourceId)) {
-      knownIds.add(sourceId)
-      merged.push(item)
-    }
-  }
-  return {
-    ok: true,
-    ragResult: { ...ragResult, results: merged },
-  }
 }
 
 export function canonicalizePathNodeTopic(
@@ -1441,6 +1761,7 @@ function assertSubmissionAnswers(answers: unknown, commandType: string): answers
 async function resetToDiagnosisPhase(
   record: InteractiveSessionRecord,
   dataRoot: string,
+  diagnosticQuestionAuthor: DiagnosticQuestionAuthorPort,
 ): Promise<InteractiveSessionRecord> {
   const now = new Date().toISOString()
   const knowledgeBase = await loadKnowledgeBase()
@@ -1451,23 +1772,31 @@ async function resetToDiagnosisPhase(
   const learnerId = record.learner_request.learner_id ?? record.session_id
   const learnerMemory = await loadLearnerMemory(dataRoot, learnerId)
   const targetItems = knowledgeBase.items.filter((item) => goalSpec.mapped_source_ids.includes(item.sourceId))
-  const selection = selectDiagnosticItems({
+  const targets = selectDiagnosticEvidenceTargets({
     knowledgeBase,
     target_source_ids: goalSpec.mapped_source_ids,
     prerequisite_source_ids: [...new Set(targetItems.flatMap((item) => item.prerequisites))],
     learner_memory: learnerMemory,
     max_items: 5,
   })
-  const diagnosisItems: PublicDiagnosisItem[] = selection.items.map((item, index) => ({
-    item_id: `DIAG-${index + 1}-${item.source_id}`,
-    source_id: item.source_id,
-    fact_id: item.fact_id,
-    concept: item.concept,
-    difficulty: item.difficulty,
-    question: item.question,
-    options: item.options ? [...item.options] : undefined,
-  }))
-  const answerKey = Object.fromEntries(selection.items.map((item, index) => [diagnosisItems[index]!.item_id, item.answer]))
+  const priorHistory = mergeAssessmentHistory(
+    record.private.assessment_history,
+    learnerMemory.recent_assessment_items ?? [],
+  )
+  const diagnosis = await authorDiagnosisForm(
+    diagnosticQuestionAuthor,
+    `${record.session_id}-PROFILE-${(record.private.profile_epoch ?? 0) + 1}`,
+    record.learner_request.goal,
+    targets,
+    priorHistory,
+  )
+  const diagnosisItems = diagnosis.items
+  const answerKey = diagnosis.answerKey
+  await saveLearnerMemory(dataRoot, {
+    ...learnerMemory,
+    recent_assessment_items: mergeAssessmentHistory(priorHistory, diagnosis.history),
+    updated_at: now,
+  })
   return {
     ...structuredClone(record),
     status: "waiting_for_user",
@@ -1483,6 +1812,7 @@ async function resetToDiagnosisPhase(
     adaptation: null,
     feedback: null,
     blocked_reason: null,
+    terminal_outcome: null,
     code_execution: null,
     // 新画像生命周期：清空旧画像阶段的 worker 账本，避免 D 看到上一轮画像的 worker。
     worker_ledger: [],
@@ -1490,6 +1820,10 @@ async function resetToDiagnosisPhase(
     processed_commands: {},
     private: {
       ...record.private,
+      assessment_history: mergeAssessmentHistory(
+        priorHistory,
+        diagnosis.history,
+      ),
       diagnosis_items: diagnosisItems,
       diagnosis_answer_key: answerKey,
       diagnosis_answers: null,
@@ -1532,6 +1866,7 @@ async function continueAfterDiagnosis(
   const record = structuredClone(original)
   const now = new Date().toISOString()
   record.status = "running"
+  record.terminal_outcome = null
   record.waiting_for = null
   upsertLedger(record, "objective-diagnostician", "completed", "已接收并判定诊断答案")
   record.events.push(event(record.session_id, "worker_completed", "objective_diagnosis", "objective-diagnostician completed grounded diagnosis", now, "objective-diagnostician"))
@@ -1618,6 +1953,9 @@ async function continueAfterDiagnosis(
         ? result.errors[0]?.message ?? result.summary
         : validation.errors[0]?.message ?? "worker contract invalid"
       record.blocked_reason = failureMessage
+      record.terminal_outcome = validation.ok
+        ? terminalOutcomeForWorkerFailure(result.errors[0]?.code, failureMessage)
+        : null
       record.events.push(event(record.session_id, "session_blocked", record.current_stage, record.blocked_reason, new Date().toISOString(), step.worker))
       record.updated_at = new Date().toISOString()
       return record
@@ -1659,9 +1997,18 @@ async function continueAfterDiagnosis(
   record.rag_result = pathArtifacts.a_rag_result
   record.private.upstream_artifacts = publicUpstreamArtifacts(upstreamArtifacts)
   if (!canonicalNextNode) {
-    record.status = "completed"
-    record.current_stage = "completed"
+    record.status = "blocked"
+    record.current_stage = "blocked"
     record.waiting_for = null
+    record.blocked_reason = "PATH_PLANNING_FAILED: B 未形成可执行节点"
+    record.terminal_outcome = {
+      kind: "planning_failed",
+      code: "PATH_PLANNING_FAILED",
+      message: "B 未形成可执行节点",
+      recommended_actions: ["retry_planning", "change_goal"],
+      evidence_refs: [canonicalPath.path_id],
+    }
+    record.events.push(event(record.session_id, "session_blocked", "blocked", record.blocked_reason, new Date().toISOString(), "path-planner"))
     record.updated_at = new Date().toISOString()
     return record
   }
@@ -1675,7 +2022,7 @@ async function continueAfterDiagnosis(
     record.updated_at = new Date().toISOString()
     return record
   }
-  applyFormalRoleCRound(record, formalRound)
+  await applyFormalRoleCRound(record, formalRound, dataRoot)
   markReviewedRoleCWorkers(record)
   record.updated_at = new Date().toISOString()
   record.events.push(event(record.session_id, "waiting_for_user", "assessment", "waiting for assessment answers", record.updated_at, "tiered-evaluator"))
@@ -1705,11 +2052,42 @@ function feedbackDecisionAction(feedback: unknown): string | undefined {
   return typeof (decision as { action?: unknown }).action === "string" ? (decision as { action: string }).action : undefined
 }
 
+function terminalOutcomeForWorkerFailure(code: string | undefined, message: string): LearningTerminalOutcome | null {
+  if (code === "A_RAG_NO_MATCH" || code === "A_RAG_WEAK_MATCH") {
+    return {
+      kind: "insufficient_evidence",
+      code: "INSUFFICIENT_EVIDENCE",
+      message,
+      recommended_actions: ["retry_retrieval", "expand_knowledge_base", "change_goal"],
+      evidence_refs: [],
+    }
+  }
+  if (code === "UNSUPPORTED_GOAL") {
+    return {
+      kind: "unsupported_goal",
+      code: "UNSUPPORTED_GOAL",
+      message,
+      recommended_actions: ["change_goal", "expand_knowledge_base"],
+      evidence_refs: [],
+    }
+  }
+  if (code === "PATH_PLANNING_FAILED") {
+    return {
+      kind: "planning_failed",
+      code: "PATH_PLANNING_FAILED",
+      message,
+      recommended_actions: ["retry_planning", "change_goal"],
+      evidence_refs: [],
+    }
+  }
+  return null
+}
+
 function validateCommand(command: InteractiveSessionCommand): void {
   if (!command || typeof command !== "object" || !/^[A-Za-z0-9_-]{1,120}$/.test(command.command_id ?? "")) {
     throw new InteractiveSessionError("INVALID_COMMAND", "command_id is required and must be safe", 400)
   }
-  if (!["submit_diagnosis_answers", "submit_assessment_answers", "run_assessment_code", "retry"].includes(command.type)) {
+  if (!["submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(command.type)) {
     throw new InteractiveSessionError("INVALID_COMMAND", "Unsupported command type", 400)
   }
 }

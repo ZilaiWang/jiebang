@@ -30,6 +30,9 @@ export interface RoleBPathPlanningRequest {
   fix_scope: "new_spec"
   recommended_level?: LearnerProfileSnapshot["level"]
   review_instruction_ids: string[]
+  /** A semantic discovery candidates available to B for this replanning turn. */
+  candidate_source_ids?: string[]
+  candidate_retrieval_id?: string
 }
 
 export type RoleBPathPlanningResult =

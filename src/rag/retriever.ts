@@ -1,10 +1,11 @@
 import { loadKnowledgeBase } from "../knowledge/loader"
-import type { KnowledgeDifficulty, KnowledgeExample, KnowledgeFact, KnowledgeQuizItem } from "../knowledge/types"
+import type { KnowledgeBase, KnowledgeDifficulty, KnowledgeExample, KnowledgeFact, KnowledgeQuizItem } from "../knowledge/types"
 
 export interface RetrieveKnowledgeInput {
   query: string
   learnerLevel?: KnowledgeDifficulty
   topK?: number
+  knowledgeBase?: KnowledgeBase
 }
 
 export interface RagResultItem {
@@ -50,6 +51,33 @@ export interface RagResult {
   learnerLevel?: KnowledgeDifficulty
   topK: number
   results: RagResultItem[]
+  retrieval_id?: string
+  retrieval_context?: RetrievalContext
+  match_status?: "strong" | "weak" | "no_match"
+  objective_coverage?: ObjectiveEvidenceCoverage[]
+}
+
+export type RetrievalMode = "semantic_discovery" | "identity_hydration" | "evidence_repair"
+
+export interface RetrievalContext {
+  request_id: string
+  request_hash: string
+  retrieval_mode: RetrievalMode
+  parent_retrieval_id?: string
+  action?: "remediate" | "reinforce" | "advance" | "reprofile"
+  focus_objective_ids: string[]
+  resource_needs: Array<"fact" | "prerequisite" | "example" | "practice_task">
+}
+
+export interface ObjectiveEvidenceCoverage {
+  objective_id: string
+  source_id: string
+  importance: "core" | "supporting"
+  status: "strong" | "weak" | "no_match"
+  required_fact_ids: string[]
+  available_fact_ids: string[]
+  missing_fact_ids: string[]
+  reasons: string[]
 }
 
 const DIFFICULTY_ORDER: Record<KnowledgeDifficulty, number> = { beginner: 0, basic: 1, intermediate: 2, integrated: 3 }
@@ -106,7 +134,7 @@ const SYNONYMS: Record<string, string[]> = {
 
 export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<RagResult> {
   const topK = input.topK ?? 3
-  const knowledgeBase = await loadKnowledgeBase()
+  const knowledgeBase = input.knowledgeBase ?? await loadKnowledgeBase()
   const normalizedQuery = normalize(input.query)
   const expandedTerms = expandQueryTerms(normalizedQuery)
 
@@ -118,18 +146,21 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
       const factHits = item.facts.filter((fact) => normalizedQueryIncludesAny(normalizedQuery, fact.content)).length
       const taskHits = item.practiceTasks.filter((task) => normalizedQueryIncludesAny(normalizedQuery, task)).length
       const levelBonus = input.learnerLevel ? Math.max(0, 3 - Math.abs(DIFFICULTY_ORDER[item.difficulty] - DIFFICULTY_ORDER[input.learnerLevel])) : 0
-      const projectBonus = normalizedQuery.includes("成绩统计") && item.sourceId === "K018" ? 10 : 0
-      const listBonus = (normalizedQuery.includes("成绩") || normalizedQuery.includes("很多数据") || normalizedQuery.includes("多个数据") || normalizedQuery.includes("一组数据")) && item.sourceId === "K009" ? 16 : 0
-      const loopBonus = (normalizedQuery.includes("循环") || normalizedQuery.includes("重复执行")) && item.sourceId === "K007" ? 18 : 0
+      const semanticBonus = synonymHits.length * 6
       const scoreBreakdown = {
         keyword: matchedKeywords.length * 10,
         title: titleHit ? 5 : 0,
         facts: factHits * 3,
         practiceTasks: taskHits * 2,
         difficulty: levelBonus,
-        bonus: projectBonus + listBonus + loopBonus + synonymHits.length * 6,
+        bonus: semanticBonus,
       }
-      const score = Object.values(scoreBreakdown).reduce((sum, value) => sum + value, 0)
+      const semanticScore = scoreBreakdown.keyword
+        + scoreBreakdown.title
+        + scoreBreakdown.facts
+        + scoreBreakdown.practiceTasks
+        + scoreBreakdown.bonus
+      const score = semanticScore + scoreBreakdown.difficulty
       const matchedFields = [
         ...(matchedKeywords.length > 0 ? ["keywords"] : []),
         ...(titleHit ? ["title"] : []),
@@ -137,12 +168,13 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
         ...(taskHits > 0 ? ["practiceTasks"] : []),
         ...(levelBonus > 0 ? ["difficulty"] : []),
         ...(synonymHits.length > 0 ? ["synonyms"] : []),
-        ...(projectBonus + listBonus + loopBonus > 0 ? ["taskIntent"] : []),
+        ...(semanticBonus > 0 ? ["taskIntent"] : []),
       ]
 
       return {
         item,
         score,
+        semanticScore,
         reason: matchedKeywords.length > 0 ? `query 命中关键词：${matchedKeywords.join("、")}` : "query 与知识点内容存在弱匹配",
         retrievalTrace: {
           matchedKeywords,
@@ -152,15 +184,17 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
         },
       }
     })
-    .filter((entry) => entry.score > 0 && (entry.item.sourceId.startsWith("K") || entry.retrievalTrace.matchedFields.some((field) => ["keywords", "title", "synonyms"].includes(field))))
+    // Difficulty only ranks already relevant candidates. It can never create a
+    // match by itself, otherwise every beginner item becomes a false hit.
+    .filter((entry) => entry.semanticScore > 0)
     .sort((left, right) => right.score - left.score || left.item.sourceId.localeCompare(right.item.sourceId))
-    .slice(0, topK)
+  const selected = diversifySemanticFootprints(scored, topK)
 
   return {
     query: input.query,
     learnerLevel: input.learnerLevel,
     topK,
-    results: scored.map(({ item, score, reason, retrievalTrace }) => ({
+    results: selected.map(({ item, score, reason, retrievalTrace }) => ({
       sourceId: item.sourceId,
       source_id: item.sourceId,
       title: item.title,
@@ -182,6 +216,35 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
       },
     })),
   }
+}
+
+/** Avoids filling top-k with several items that matched the exact same concept. */
+function diversifySemanticFootprints<T extends {
+  score: number
+  item: { sourceId: string }
+  retrievalTrace: RetrievalTrace
+}>(entries: T[], topK: number): T[] {
+  const remaining = [...entries]
+  const selected: T[] = []
+  const footprints = new Set<string>()
+  while (remaining.length > 0 && selected.length < topK) {
+    remaining.sort((left, right) => {
+      const leftFootprint = semanticFootprint(left.retrievalTrace)
+      const rightFootprint = semanticFootprint(right.retrievalTrace)
+      const leftAdjusted = footprints.has(leftFootprint) && leftFootprint ? left.score * 0.4 : left.score
+      const rightAdjusted = footprints.has(rightFootprint) && rightFootprint ? right.score * 0.4 : right.score
+      return rightAdjusted - leftAdjusted || left.item.sourceId.localeCompare(right.item.sourceId)
+    })
+    const next = remaining.shift()!
+    selected.push(next)
+    const footprint = semanticFootprint(next.retrievalTrace)
+    if (footprint) footprints.add(footprint)
+  }
+  return selected
+}
+
+function semanticFootprint(trace: RetrievalTrace): string {
+  return [...trace.matchedKeywords].map(normalize).sort().join("|")
 }
 
 function normalize(value: string): string {

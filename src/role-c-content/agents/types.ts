@@ -25,6 +25,16 @@ export interface NextRoundGenerationContext {
   misconception_tags?: string[]
 }
 
+export interface PriorAssessmentItem {
+  form_id: string
+  item_id: string
+  objective_id: string
+  modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
+  prompt: string
+  options: string[]
+  starter_code?: string
+}
+
 export interface ConceptTutorRequest {
   generation_spec: GenerationSpec
   evidence_pack: RagEvidencePack
@@ -53,6 +63,8 @@ export interface TieredEvaluatorRequest {
     execution_verified: boolean
   }
   next_round_context?: NextRoundGenerationContext
+  /** Answer-free public question history; only the public author receives it. */
+  prior_assessment_items?: PriorAssessmentItem[]
   revision_objections?: AlignmentObjection[]
   external_revision_round?: 0 | 1 | 2
 }

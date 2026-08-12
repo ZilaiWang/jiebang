@@ -2,10 +2,9 @@ import { expectedMarkerForWorker } from "./worker-contract"
 import { ORCHESTRATION_WORKER_SEQUENCE } from "./state-machine"
 import { loadKnowledgeBase } from "../knowledge/loader"
 import { resolveLearningGoalSpec } from "../knowledge/curriculum"
-import { selectDiagnosticItems } from "../knowledge/diagnostic-selector"
 import { synthesizeProfile } from "../role-b-profile/profile-synthesizer"
 import { executeProfileRetrieval } from "../role-b-profile/rag-bridge"
-import { retrieveKnowledge } from "../rag/retriever"
+import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import { buildFormalPath, startPath } from "../role-b-profile/teaching-audit/formal-path"
 import { adaptLearnerProfile } from "../role-c-content/contracts/profile-adapter"
 import { adaptRagResult } from "../role-c-content/contracts/evidence-pack"
@@ -23,9 +22,8 @@ import { ROLE_C_PROMPT_MANIFEST_VERSION } from "../role-c-content/prompts/common
 import { TrustedCodeLabVerifier } from "../role-c-content/validators/code-lab-validator"
 import { TrustedAssessmentVerifier } from "../role-c-content/validators/assessment-validator"
 import { createDockerPythonCodeRunnerFromEnv } from "../role-c-content/security/code-runner"
-import type { RagResult, RagResultItem } from "../rag/retriever"
+import type { RagResult } from "../rag/retriever"
 import type { LearningPathNode } from "../role-c-content/contracts/profile-adapter"
-import type { KnowledgeBase } from "../knowledge/types"
 
 import type { CodeLabPublicArtifact, ConceptLessonArtifact } from "../role-c-content/contracts/artifacts"
 import type {
@@ -193,23 +191,13 @@ async function runDeterministicWorkerAdapter(
 
   if (invocation.worker === "objective-diagnostician") {
     const bundle = await loadRoleBEvidenceBundle()
-    const knowledgeBase = await loadKnowledgeBase()
     const learningGoalSpec = resolveLearningGoalSpec(invocation.learner_request.learning_goal_spec ?? {
       mode: "custom_goal",
       custom_goal: invocation.learner_request.goal,
     })
-    const targetItems = knowledgeBase.items.filter((item) => learningGoalSpec.mapped_source_ids.includes(item.sourceId))
-    const dynamicSelection = selectDiagnosticItems({
-      knowledgeBase,
-      target_source_ids: learningGoalSpec.mapped_source_ids,
-      prerequisite_source_ids: [...new Set(targetItems.flatMap((item) => item.prerequisites))],
-      learner_memory: extractLearnerMemory(invocation),
-      max_items: 5,
-    })
     return completedResult(invocation, expected.to, {
       mode: "deterministic",
       evidence: bundle.objective_diagnosis,
-      dynamic_selection: dynamicSelection,
       learning_goal_spec: learningGoalSpec,
       evidence_source: ROLE_B_EVIDENCE_FILE,
     }, "Loaded deterministic Role B objective diagnosis evidence")
@@ -244,12 +232,19 @@ async function runDeterministicWorkerAdapter(
     if (!profileArtifact.ok) return profileArtifact.result
 
     const knowledgeBase = await loadKnowledgeBase()
-    const { rag_request, rag_result } = await executeProfileRetrieval(profileArtifact.value.profile)
-    if (rag_result.results.length === 0) {
-      return failedResult(invocation, {
-        code: "A_RAG_EMPTY_RESULT",
-        message: "path-planner requires non-empty A RAG evidence before building a deterministic path",
-        severity: "fatal",
+    const { rag_request, rag_result } = await executeProfileRetrieval(
+      profileArtifact.value.profile,
+      undefined,
+      {
+        run_id: invocation.run_id,
+        profile_version: `${invocation.run_id}-profile-v1`,
+      },
+    )
+    if (rag_result.match_status !== "strong") {
+      return blockedResult(invocation, {
+        code: rag_result.match_status === "no_match" ? "A_RAG_NO_MATCH" : "A_RAG_WEAK_MATCH",
+        message: "A 尚未形成足以规划正式路径的目标发现结果",
+        severity: "recoverable",
       })
     }
 
@@ -270,13 +265,50 @@ async function runDeterministicWorkerAdapter(
       profileSnapshot,
       goalSourceIds,
     })
+    if (formalPath.planning_outcome.status !== "ready") {
+      return blockedResult(invocation, {
+        code: formalPath.planning_outcome.code,
+        message: formalPath.planning_outcome.message,
+        severity: "recoverable",
+        details: {
+          requested_source_ids: formalPath.planning_outcome.requested_source_ids,
+          resolved_source_ids: formalPath.planning_outcome.resolved_source_ids,
+          unresolved_source_ids: formalPath.planning_outcome.unresolved_source_ids,
+        },
+      })
+    }
     const startedPath = startPath(formalPath)
-    const pathRagResult = await ensureEvidenceForPathNode(
-      rag_result,
-      startedPath.nextPathNode,
-      profileArtifact.value.profile.level,
-      knowledgeBase,
-    )
+    const pathRagResult = startedPath.nextPathNode
+      ? await retrieveLearningEvidence(buildLearningEvidenceRequest({
+          run_id: invocation.run_id,
+          retrieval_mode: "identity_hydration",
+          learner_profile: {
+            profile_version: profileSnapshot.profile_version,
+            level: profileArtifact.value.profile.level,
+            known_concepts: [...profileArtifact.value.profile.known_concepts],
+            weak_concepts: [...profileArtifact.value.profile.weak_concepts],
+            goal: profileArtifact.value.profile.goal,
+          },
+          path_context: startedPath.nextPathNode,
+          learning_context: {
+            action: "advance",
+            focus_objective_ids: startedPath.nextPathNode.objectives.map((item) => item.objective_id),
+            misconception_tags: [],
+            reason_codes: ["initial_path_node_activated"],
+          },
+          resource_needs: ["fact", "prerequisite", "example", "practice_task"],
+          parent_retrieval_id: rag_result.retrieval_id ?? rag_result.retrieval_context?.request_id,
+          top_k: Math.max(1, startedPath.nextPathNode.target_source_ids.length
+            + startedPath.nextPathNode.prerequisite_source_ids.length),
+        }), knowledgeBase)
+      : rag_result
+    if (startedPath.nextPathNode && pathRagResult.match_status !== "strong") {
+      return blockedResult(invocation, {
+        code: pathRagResult.match_status === "no_match" ? "A_RAG_NO_MATCH" : "A_RAG_WEAK_MATCH",
+        message: "当前路径节点没有形成完整的目标级事实覆盖",
+        severity: "recoverable",
+      })
+    }
 
     return completedResult(invocation, expected.to, {
       mode: "deterministic",
@@ -547,6 +579,38 @@ function failedResult(
   }
 }
 
+function blockedResult(
+  invocation: WorkerInvocation,
+  error: WorkerResult["errors"][number],
+): WorkerResult {
+  return {
+    schema_version: "1.0",
+    run_id: invocation.run_id,
+    step_index: invocation.step_index,
+    worker: invocation.worker,
+    stage: invocation.stage,
+    status: "blocked",
+    marker: expectedMarkerForWorker(invocation.worker),
+    execution: {
+      worker: invocation.worker,
+      status: "blocked",
+      execution_id: `${invocation.run_id}:${invocation.step_index}:${invocation.worker}`,
+      marker: expectedMarkerForWorker(invocation.worker),
+    },
+    summary: error.message,
+    artifacts: {
+      mode: invocation.mode,
+      worker: invocation.worker,
+      stage: invocation.stage,
+      retrieval_issue: error.code,
+    },
+    output_refs: [],
+    evidence_refs: invocation.evidence_refs,
+    next: "blocked",
+    errors: [error],
+  }
+}
+
 async function loadRoleBEvidenceBundle(): Promise<RoleBEvidenceBundle> {
   return Bun.file(ROLE_B_EVIDENCE_FILE).json() as Promise<RoleBEvidenceBundle>
 }
@@ -676,45 +740,6 @@ function fillRequiredFacts(pathNode: LearningPathNode, evidencePack: ReturnType<
   }
 }
 
-
-async function ensureEvidenceForPathNode(
-  ragResult: RagResult,
-  pathNode: LearningPathNode | null,
-  learnerLevel: LearnerProfile["level"],
-  knowledgeBase: KnowledgeBase,
-): Promise<RagResult> {
-  if (!pathNode) return ragResult
-
-  const requiredSourceIds = [...new Set([
-    ...pathNode.target_source_ids,
-    ...pathNode.prerequisite_source_ids,
-  ])]
-  const bySourceId = new Map<string, RagResultItem>(
-    ragResult.results.map((item) => [item.source_id, item]),
-  )
-
-  for (const sourceId of requiredSourceIds) {
-    if (bySourceId.has(sourceId)) continue
-    const item = knowledgeBase.items.find((candidate) => candidate.sourceId === sourceId)
-    if (!item) continue
-    const targetedResult = await retrieveKnowledge({
-      query: `${item.title} ${item.keywords.join(" ")}`,
-      learnerLevel,
-      topK: 5,
-    })
-    for (const resultItem of targetedResult.results) {
-      if (!bySourceId.has(resultItem.source_id)) {
-        bySourceId.set(resultItem.source_id, resultItem)
-      }
-    }
-  }
-
-  return {
-    ...ragResult,
-    topK: Math.max(ragResult.topK, bySourceId.size),
-    results: [...bySourceId.values()],
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)

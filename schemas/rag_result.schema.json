@@ -8,6 +8,10 @@
     "query": { "type": "string" },
     "learnerLevel": { "type": "string", "enum": ["beginner", "basic", "intermediate", "integrated"] },
     "topK": { "type": "number" },
+    "retrieval_id": { "type": "string", "minLength": 1 },
+    "match_status": { "enum": ["strong", "weak", "no_match"] },
+    "retrieval_context": { "type": "object" },
+    "objective_coverage": { "type": "array" },
     "results": {
       "type": "array",
       "items": {

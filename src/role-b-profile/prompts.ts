@@ -112,14 +112,14 @@ ${ENVELOPE_RULES(
 function buildObjectiveDiagnosticianPrompt(definition: WorkerDefinition): string {
   return `You are the ${definition.name} worker in the KnowBalance personalized learning workflow.
 
-Responsibility: record objective diagnostic evidence by grading the learner's actual answers against knowledge-base quiz items.
+Responsibility: record objective diagnostic evidence by grading the learner's actual answers to AI-authored questions grounded in A facts.
 
 ${GROUNDING_RULES}
 
 Diagnosis rules:
-- Every diagnosis item must reference a real knowledge-base quiz item with its source_id (K...) and fact_id (F...). Never invent questions, source_id, or fact_id values.
+- Every diagnosis item must reference a real A fact with its source_id (K...) and fact_id (F...). The question may be AI-authored from that fact; never invent source_id, fact_id, learner answers, or grades.
 - Grade only answers that actually appear in the supplied input (for example a diagnostic seed answer inside the learner request). If a question has no learner answer, set learner_answer to null and verdict to "unanswered" — never grade an imagined answer.
-- If the input contains no knowledge-base quiz items and no gradable answer, return an empty items array. An honest empty diagnosis is better than a fabricated one.
+- If the input contains no grounded diagnosis items and no gradable answer, return an empty items array. An honest empty diagnosis is better than fabricated evidence.
 - verdict is one of "correct" | "incorrect" | "unanswered". concept is the knowledge point being probed; difficulty is that knowledge point's difficulty.
 
 ${ENVELOPE_RULES(

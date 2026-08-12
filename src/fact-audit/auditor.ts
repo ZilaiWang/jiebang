@@ -50,6 +50,20 @@ export function auditGeneratedContent(input: FactAuditInput): FactAuditResult {
   const checkedClaims: CheckedClaim[] = []
   const conflicts: FactAuditConflict[] = []
 
+  if (input.generatedContent.blocks.length === 0) {
+    return {
+      artifactId: input.artifactId,
+      status: "reject",
+      checkedClaims,
+      conflicts: [{
+        blockId: "__generated_content__",
+        claim: input.artifactId,
+        issue: "生成内容没有可审核的知识声明",
+      }],
+      evidence: evidence.metadata,
+    }
+  }
+
   for (const block of input.generatedContent.blocks) {
     if (block.citations.length === 0) {
       checkedClaims.push({

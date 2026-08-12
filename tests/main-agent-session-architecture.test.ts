@@ -7,12 +7,11 @@ import { validateOrchestratorApiBody } from "../src/orchestration/orchestrator-a
 import {
   bindPathNodeFactsForRoleC,
   buildNextRoundContext,
-  filterRagToCurrentNode,
   interactiveSessionProductionBoundary,
   resolveRoleCKnowledgeBaseVersion,
   roleCRoundRunId,
-  ensureCurrentNodeEvidence,
 } from "../src/orchestration/interactive-session"
+import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../src/rag/learning-evidence"
 
 const roots: string[] = []
 
@@ -87,37 +86,59 @@ describe("main agent session architecture", () => {
     expect(context?.focus_objective_ids).toEqual(["OBJ-K002"])
   })
 
-  test("filters stale RAG evidence to the current B path node before Role C generation", () => {
-    const session = { rag_result: { query: "old", topK: 3, results: [{ source_id: "K001", sourceId: "K001" }, { source_id: "K002", sourceId: "K002" }] } }
-    const node = { target_source_ids: ["K002"], prerequisite_source_ids: ["K001"] }
-    expect((filterRagToCurrentNode(session.rag_result as any, node) as any).results.map((item: any) => item.source_id)).toEqual(["K001", "K002"])
+  test("uses C's published target objectives instead of recalculating them in the main Agent", () => {
+    const context = buildNextRoundContext({
+      feedback_id: "FB-3",
+      final_decision: {
+        action: "remediate",
+        reason_codes: ["round_accuracy_below_remediation_threshold"],
+        target_objective_ids: ["OBJ-K002"],
+      },
+      objective_results: [
+        { objective_id: "OBJ-K001", accuracy: 0, misconception_tags: ["not_selected"] },
+        { objective_id: "OBJ-K002", accuracy: 0.5, misconception_tags: ["selected"] },
+      ],
+      grade_result: { artifact_id: "GRADE-3" },
+    } as any, "SPEC-PARENT", "NRC-3", ["OBJ-K001", "OBJ-K002"])
+
+    expect(context?.focus_objective_ids).toEqual(["OBJ-K002"])
+    expect(context?.misconception_tags).toEqual(["selected"])
   })
 
-  test("refreshes missing A evidence for the current node after advance (next node is not in the first-round RAG snapshot)", async () => {
-    // 模拟 advance 到 K002：首轮快照只含 K001，当前节点 K002 的证据缺失。
-    // ensureCurrentNodeEvidence 应按 source_id 从知识库补全，而不是把会话置为阻塞。
-    const firstRoundSnapshot = { query: "first", topK: 3, results: [{ source_id: "K001", sourceId: "K001" }] }
-    const node = { target_source_ids: ["K002"], prerequisite_source_ids: ["K001"] }
-    const ensured = await ensureCurrentNodeEvidence(firstRoundSnapshot as any, node)
-    expect(ensured.ok).toBe(true)
-    if (ensured.ok) {
-      const sourceIds = ensured.ragResult.results.map((item: any) => item.source_id ?? item.sourceId)
-      expect(sourceIds).toContain("K001")
-      expect(sourceIds).toContain("K002")
-      // 补全后的证据必须携带真实 fact 供 C 绑定（K002 在知识库中存在 facts）。
-      const k002 = ensured.ragResult.results.find((item: any) => (item.source_id ?? item.sourceId) === "K002")
-      expect(Array.isArray(k002?.facts)).toBe(true)
-      expect((k002?.facts ?? []).length).toBeGreaterThan(0)
-    }
+  test("creates a fresh exact evidence result for an advanced path node", async () => {
+    const result = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+      run_id: "RUN-ADVANCE",
+      retrieval_mode: "identity_hydration",
+      learner_profile: { profile_version: "P2", level: "beginner", known_concepts: ["Python"], weak_concepts: ["变量"], goal: "学习变量" },
+      path_context: {
+        node_id: "NODE-K002", target_source_ids: ["K002"], prerequisite_source_ids: ["K001"], goal: "变量与赋值",
+        objectives: [{ objective_id: "OBJ-K002", source_id: "K002", required_fact_ids: [], observable_behavior: "apply", importance: "core" }],
+      },
+      learning_context: { action: "advance", focus_objective_ids: ["OBJ-K002"], misconception_tags: [], reason_codes: ["next_node"] },
+      resource_needs: ["fact", "prerequisite"],
+      parent_retrieval_id: "RAG-PARENT",
+      top_k: 2,
+    }))
+    expect(result.match_status).toBe("strong")
+    expect(result.retrieval_context?.parent_retrieval_id).toBe("RAG-PARENT")
+    expect(result.results.map((item) => item.source_id)).toEqual(["K002", "K001"])
+    expect(result.objective_coverage?.[0]?.status).toBe("strong")
   })
 
-  test("rejects evidence refresh when the knowledge base itself lacks the requested source", async () => {
-    const ensured = await ensureCurrentNodeEvidence({ query: "first", topK: 1, results: [] } as any, {
-      target_source_ids: ["K-NOT-EXISTS-9999"],
-      prerequisite_source_ids: [],
-    })
-    expect(ensured.ok).toBe(false)
-    if (!ensured.ok) expect(ensured.missingSources).toContain("K-NOT-EXISTS-9999")
+  test("returns no_match when an exact path source does not exist", async () => {
+    const result = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+      run_id: "RUN-MISSING",
+      retrieval_mode: "identity_hydration",
+      learner_profile: { profile_version: "P3", level: "beginner", known_concepts: [], weak_concepts: [], goal: "unknown" },
+      path_context: {
+        node_id: "N-X", target_source_ids: ["K999"], prerequisite_source_ids: [], goal: "unknown",
+        objectives: [{ objective_id: "O-X", source_id: "K999", required_fact_ids: [], observable_behavior: "recognize", importance: "core" }],
+      },
+      resource_needs: ["fact"],
+      top_k: 1,
+    }))
+    expect(result.match_status).toBe("no_match")
+    expect(result.objective_coverage?.[0]?.status).toBe("no_match")
   })
 
   test("keeps the next-round button for remediate/reinforce and only returns home after final mastered node", () => {
@@ -145,6 +166,18 @@ describe("main agent session architecture", () => {
       command_id: "CMD-RUN-CODE-001",
       type: "run_assessment_code",
       payload: { item_id: "ITEM-CODE-2", code: "def solve(values):\n    return len(values)" },
+    } })
+  })
+
+  test("accepts a safe published code-lab command through the main Agent schema gate", () => {
+    expect(validateOrchestratorApiBody("command", {
+      command_id: "CMD-RUN-LAB-001",
+      type: "run_code_lab",
+      payload: { lab_id: "LAB-001", code: "def solve(values):\n    return len(values)" },
+    })).toEqual({ ok: true, value: {
+      command_id: "CMD-RUN-LAB-001",
+      type: "run_code_lab",
+      payload: { lab_id: "LAB-001", code: "def solve(values):\n    return len(values)" },
     } })
   })
 
@@ -211,13 +244,12 @@ describe("main agent session architecture", () => {
     expect(profileExpectationForTarget({ known_concepts: ["完全不存在的概念"], weak_concepts: [] }, "K002", kb)).toBe("weak")
   })
 
-  test("caps remediate/reinforce rounds per node so learners cannot loop forever", async () => {
-    // 轮次上限契约：同一节点内 remediate 超过 3 轮、reinforce 超过 2 轮后
-    // 主 Agent 强制 advance（即使准确率未达标），防止会话永不结束。
+  test("changes support strategy after repeated remediate/reinforce rounds", async () => {
+    // 达到轮次上限后由 B 重新规划支持路径，不改写 C 的掌握决策。
     const { MAX_REMEDIATE_ROUNDS_PER_NODE, MAX_REINFORCE_ROUNDS_PER_NODE } = await import("../src/orchestration/interactive-session")
     expect(MAX_REMEDIATE_ROUNDS_PER_NODE).toBe(3)
     expect(MAX_REINFORCE_ROUNDS_PER_NODE).toBe(2)
-    // 上限必须为正整数（防误配导致立即强制推进）。
+    // 上限必须为正整数。
     expect(Number.isSafeInteger(MAX_REMEDIATE_ROUNDS_PER_NODE) && MAX_REMEDIATE_ROUNDS_PER_NODE > 0).toBe(true)
     expect(Number.isSafeInteger(MAX_REINFORCE_ROUNDS_PER_NODE) && MAX_REINFORCE_ROUNDS_PER_NODE > 0).toBe(true)
   })

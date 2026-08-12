@@ -10,12 +10,12 @@ B 把学习者的自然语言描述变成三份可溯源证据，合成标准画
 学习者原话
    ↓ background-collector      背景证据（引文接地）
    ↓ self-assessor             自评证据（引文接地）
-   ↓ objective-diagnostician   客观诊断证据（题目来自知识库 quizItems，带 source_id）
+   ↓ objective-diagnostician   客观诊断证据（B 选目标，A 供事实，AI 当次命题）
    ↓ profile-builder           合成：证据优先级 + 冲突记录 + level 级联
    ↓
 标准画像 {learner_id, level, known_concepts, weak_concepts, goal}
    + 溯源 provenance {level 依据, 概念来源, conflicts, unmapped}
-   + rag_request {learner_profile, query, top_k}   ← B→A 交接物
+   + semantic_discovery 请求   ← 主 Agent 组装、A 执行
 ```
 
 ## 2. 双轨架构（为什么这样设计）
@@ -23,18 +23,18 @@ B 把学习者的自然语言描述变成三份可溯源证据，合成标准画
 | 轨 | 位置 | 作用 |
 |---|---|---|
 | LLM 轨 | `src/role-b-profile/prompts.ts`（经 `src/prompts/worker-stub.ts` 路由） | OpenCode 运行时 4 个 worker 的真实 prompt |
-| 确定性轨 | `src/role-b-profile/*.ts` | 合成规则的唯一可验证实现，供脚本/测试/未来工具层调用 |
+| 确定性轨 | `src/role-b-profile/*.ts` | 合成规则的唯一实现，由持续会话直接调用 |
 
-为什么必须双轨：worker 被注册为无工具无权限的 subagent（`tests/agent-registry.test.ts` 强制），orchestrator 只有 task+question——运行时没有任何环节能执行代码。画像合成、词表规范化、query 拼接这类无判断空间的逻辑交给 LLM 只会引入不确定性，所以确定性轨才是事实源；LLM 轨的 prompt 内嵌同一套规则文本（软约束）。联调阶段应把 `synthesizeProfile` + `retrieveKnowledge` 封装为 orchestrator 可调用的工具层，彻底消除两轨漂移——这与联调说明 §13 对 RAG 工具化的预告是同一件事。
+画像合成、词表规范化和 query 拼接由确定性规则负责。LLM Worker 只负责证据抽取和语义建议，不改写画像优先级、来源身份或检索合同。持续会话直接调用 `synthesizeProfile` 和路径、检索适配器。
 
 ## 3. 三份证据契约
 
-类型定义见 `src/role-b-profile/types.ts`，样例见 `examples/learner_evidence_loop_weak.json`（诊断题为知识库真实 quizItems，非虚构）。
+类型定义见 `src/role-b-profile/types.ts`，样例见 `examples/learner_evidence_loop_weak.json`。正式交互中，B 选择要诊断的目标/先修/历史薄弱来源，A 提供对应事实，AI 当次生成题面与服务端答案。
 
 共同纪律（画像层防幻觉，与 A 的 source_id/fact_id 红线对称）：
 - 每个非空字段必须有学习者原话 quote 支撑（`quotes[]`）
 - 无证据的字段置 null / 空数组，禁止编造
-- 诊断题必须引用真实 quizItems 的 source_id/fact_id；没答的题 verdict=unanswered，不虚构判分
+- 诊断题必须引用真实 A source_id/fact_id；没答的题 verdict=unanswered，不虚构判分
 
 ## 4. 合成规则（每条带理由）
 
@@ -59,37 +59,37 @@ B 把学习者的自然语言描述变成三份可溯源证据，合成标准画
 
 已知边界：同一知识点的不同 keyword（K009 的"列表"/"一组数据"）不互相合并，检索端无损；建议 A 后续把检索器内部的 SYNONYMS 表导出共享，B 可直接复用。
 
-## 5. B → A 交接契约
+## 5. B → 检索层交接契约
 
-出口唯一：`src/role-b-profile/rag-bridge.ts`。
+初始画像检索入口为 `src/role-b-profile/rag-bridge.ts`，通过统一的 `LearningEvidenceRequest` 执行 `semantic_discovery`。
 
 - query 四段格式（全组契约，联调说明 §7）：`学习者水平：…；已掌握：…；薄弱点：…；学习目标：…`，空数组写"无"
-- top_k=5（B→A 检索请求的后端策略值，与已下线的旧 D 无关）
+- top_k=5（初始目标发现的检索策略值）
 - 画像结构对 `schemas/rag_request.schema.json` 的对齐由测试直接读 schema 文件断言——A 改契约时 B 的测试自动报警
+
+B 冻结正式路径节点后，主 Agent 组装 `identity_hydration` 请求，A 按节点 `source_id`、`fact_id` 和资源需求取证。路径重规划重新执行目标发现；C 的证据缺口使用 `evidence_repair`。
 
 ## 6. 运行与验证
 
 ```bash
-bun run check                              # typecheck + 全部测试（含 B 的 17 个）
+bun run check                              # typecheck + 全部测试
 bun src/role-b-profile/profile-demo.ts     # B 链端到端 demo（无需模型凭证）
 ```
 
-验收对照（联调说明 §6 "B 能拿到 K007/K009/K018 等相关知识点"）：
-demo 实跑检索 top5 = K018(50) / K009(43) / K007(41) / K006(28) / K002(15)，
-且 `tests/role-b-profile.test.ts` 的 acceptance 测试固化了该标准。
+`tests/role-b-profile.test.ts` 验证画像合同、query 语义和成绩统计目标的相关知识召回；`tests/learning-evidence-retrieval.test.ts` 验证检索模式、目标覆盖、弱匹配和结果血缘。
 
 ## 7. 与 C / D 的交接
 
-- C：只消费 `rag_result`（facts/examples/practiceTasks/quizItems），画像里的 `goal` 与 `weak_concepts` 决定内容侧重
+- C：正式模型输入消费 `rag_result` 中的 facts/examples/practiceTasks，画像里的 `goal` 与 `weak_concepts` 决定内容侧重
 - D：除画像外请展示 `provenance.conflicts`（自评 vs 客观的矛盾及裁决理由）与 `provenance.level.rule`——这是"系统判断透明化"的展示素材，评委关注点
 - 画像 JSON 的字段与 `examples/learner_*.json` 完全同构，D 现有消费逻辑无需改动
 
-## 8. 当前限制与下一步
+## 8. 当前边界
 
-1. LLM 轨与确定性轨的一致性目前靠 prompt 软约束——下一步在工具层封装 `synthesizeProfile`+`retrieveKnowledge`，orchestrator 直接调用（与联调说明 §13 同方向）
-2. 当前 level 上调只接受“至少 3 道全部答对、最多上调一档”的保守信号；Week 2 可按分层通过率和题目覆盖度进一步校准
-3. 交互式诊断（question 工具中转追问）未实现——当前按 headless 场景设计，未答题诚实标 unanswered
-4. 概念同义词依赖 A 检索器内部 SYNONYMS——建议 A 导出共享（已列入协作事项）
+1. level 上调只接受“至少 3 道全部答对、最多上调一档”的保守信号。
+2. B 只选择诊断来源；AI 题面必须有 A 的事实覆盖。没有可用事实时会话阻塞，不补入无关来源。
+3. 未答诊断题保持 `unanswered`，不推断学习者答案或正确性。
+4. 概念规范化使用知识库词表；未映射概念保留在 `unmapped_concepts`，不静默删除。
 
 ## 9. Week 2 教学审核与仲裁（新增）
 

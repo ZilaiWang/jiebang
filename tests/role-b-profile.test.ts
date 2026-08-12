@@ -362,14 +362,15 @@ describe("role-B worker prompt contract", () => {
     expect(prompt).toContain("question tool") // goal 缺失走补问，不编造
   })
 
-  test("objective-diagnostician prompt forbids invented questions and grades", () => {
+  test("objective-diagnostician prompt accepts AI-authored grounded questions but forbids invented evidence and grades", () => {
     const definition = WORKER_DEFINITIONS.find((worker) => worker.name === "objective-diagnostician")
     if (!definition) throw new Error("objective-diagnostician definition missing")
     const prompt = buildRoleBWorkerPrompt(definition)
 
     expect(prompt).toContain("source_id")
     expect(prompt).toContain("unanswered")
-    expect(prompt).toContain("Never invent")
+    expect(prompt).toContain("AI-authored")
+    expect(prompt).toContain("never invent source_id, fact_id, learner answers, or grades")
   })
 })
 

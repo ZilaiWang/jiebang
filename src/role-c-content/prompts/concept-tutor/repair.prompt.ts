@@ -5,5 +5,7 @@ export function conceptTutorRepairPrompt(issues: string[]): string {
   return `${CONCEPT_TUTOR_SYSTEM_PROMPT}
 
 上一次输出未通过确定性校验。只修复下列结构化失败项，不扩大内容范围：
-${issues.map((issue, index) => `${index + 1}. ${issue}`).join("\n")}`
+${issues.map((issue, index) => `${index + 1}. ${issue}`).join("\n")}
+
+若输入含 revision_objections，结构修复不得撤销已经完成的外审修订，也不得把外审控制数据写入公开内容。`
 }

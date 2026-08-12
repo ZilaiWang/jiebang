@@ -48,6 +48,7 @@ export function answersMatchAssessmentItems(items: Array<{ item_id?: unknown }>,
 }
 
 export function isFinalAdvanceSession(session: any): boolean {
+  if (session?.terminal_outcome && session.terminal_outcome.code !== "PATH_MASTERED") return false
   return Boolean(
     session?.status === "completed"
       && session?.current_path_node == null
@@ -71,6 +72,7 @@ export function nextUnmasteredPathNode(session: any): any | null {
 export function isFinalMasterySession(session: any, notice: { final: boolean } | null): boolean {
   if (notice?.final === true) return true
   if (session?.status !== "completed") return false
+  if (session?.terminal_outcome && session.terminal_outcome.code !== "PATH_MASTERED") return false
   const accuracy = Number(session?.feedback?.round_score?.accuracy ?? 0)
   if (accuracy < 0.8 || session?.feedback?.final_decision?.action !== "advance") return false
   const nodes = Array.isArray(session?.formal_path?.nodes) ? session.formal_path.nodes : []
@@ -263,6 +265,19 @@ export function initialGoalSelection(): { mode: "catalog"; selectedNodeId: strin
 }
 
 export function blockedSessionAction(session: any): { canRetry: boolean; label: string } {
+  const outcome = session?.terminal_outcome
+  if (outcome?.kind === "unsupported_goal") {
+    return { canRetry: false, label: "调整学习目标" }
+  }
+  if (outcome?.kind === "insufficient_evidence") {
+    return { canRetry: false, label: "调整目标或补充资料" }
+  }
+  if (outcome?.kind === "planning_failed") {
+    return { canRetry: false, label: "重新规划或调整目标" }
+  }
+  if (outcome?.kind === "learning_support_required" || String(session?.blocked_reason ?? "").startsWith("LEARNING_SUPPORT_REQUIRED:")) {
+    return { canRetry: false, label: "重新诊断或调整目标" }
+  }
   const hasGenerationCheckpoint = Boolean(session?.profile && session?.formal_path && session?.current_path_node)
   return hasGenerationCheckpoint
     ? { canRetry: true, label: "原样重试 C 资源生成" }

@@ -18,7 +18,7 @@
     "role-d:v2:verify": "bun run role-d:v2:test && bun x tsc -p src/role-d-ui-v2/tsconfig.json --noEmit && bun run role-d:v2:build",
     "docker:role-c:build": "docker build --pull --tag knowbalance-role-c-python-runner:1.0.0 ./docker/role-c-python-runner",
     "docker:role-c:doctor": "bun scripts/role-c-docker-doctor.ts",
-    "test:role-c:docker": "bun scripts/role-c-docker-smoke.ts && bun scripts/role-c-code-lab-demo.ts && bun scripts/role-c-full-demo.ts",
+    "test:role-c:docker": "bun run docker:role-c:doctor && bun scripts/role-c-docker-smoke.ts",
     "test:role-c:real": "bun scripts/role-c-real-model-smoke.ts",
     "test:role-c:regenerate": "bun -e \"import { clearRoleCFixtureCache } from \"./tests/helpers/role-c-fixture-cache\"; clearRoleCFixtureCache(); console.log(\"fixture cache cleared\")\""
   },

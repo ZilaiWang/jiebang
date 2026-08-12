@@ -107,7 +107,7 @@ retrieveKnowledge({ query, learnerLevel: profile.level, topK: 5 })
 
 ### C 内容生成
 
-C 只能基于 `rag_result.results[*].facts/examples/practiceTasks/quizItems` 生成讲义、代码实验、测试题。
+C 只能基于当前冻结 `rag_result` 的 facts、examples 和 practiceTasks 生成讲义、代码实验和正式测评。正式题面由 AI 当次命制，不复制知识条目的 quizItems。
 
 红线：知识性陈述必须带 `source_id/fact_id`，不能凭空生成。
 
@@ -168,6 +168,6 @@ bun run check
 |---|---|---|
 | B/C/D 直接读 A 本地路径 | 跨电脑访问不到 | 从 GitHub clone/pull |
 | 每个人手动复制文件 | 版本不一致 | 统一以 GitHub main 为准 |
-| C 不用 rag_result | 容易幻觉 | 只用 facts/examples/quizItems |
+| C 不用 rag_result | 容易幻觉 | 只用当前冻结 facts，并以 examples/practiceTasks 组织教学任务 |
 | D 不展示 trace | 看不到推荐依据 | 展示 retrieval_trace/citations |
 | A 改完不 push | B/C/D 拿不到更新 | 每次改完 commit + push |

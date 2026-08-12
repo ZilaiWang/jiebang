@@ -1,12 +1,12 @@
 # Role C 内容生成与学习闭环设计
 
-> **实现状态标注（2026-08-08）**：本文描述的是 Role C **服务层能力设计**。其中"锚点优先测评 / 得分选路 / 路线冻结"（`routeRoleCAssessmentAnchors` / `openAnchorFirstSession`）在 **C 服务层仍然保留**并有独立测试，但**主 Agent 交互会话已不再调用**——正式测评直接按 B 初始画像生成整套五题 code-pair（mcq + true_false + trace + code 2 分 + code 4 分），每轮方向由正式测评分数决策（remediate/reinforce/advance/reprofile），无需锚点题。主 Agent 层的 `submit_anchor_answers` 命令及相关字段已彻底删除。
+> 本文描述 Role C 当前正式生成、审核、评分与多轮学习合同。
 
 | 项目 | 内容 |
 |---|---|
-| 设计版本 | 3.5 |
+| 设计版本 | 4.0 |
 | Schema 版本 | 1.0 |
-| Prompt manifest | `c-prompts-1.16.7` |
+| Prompt manifest | `c-prompts-1.20.2` |
 | 实现目录 | `src/role-c-content/` |
 | Schema 目录 | `schemas/role-c-content/` |
 | 自动检查 | `bun run check` |
@@ -26,6 +26,19 @@ Role C 将版本化画像、学习路径和 RAG 证据转换为相互对齐的�
 | C → D | `RoleCReviewedReleaseDelivery`、`RoleCReviewRecoveryStatusDelivery`、`RoleCLearningSessionDelivery`、`RoleCDynamicFeedbackDelivery` |
 
 学习会话由认证后端创建。题目答案、参考实现、隐藏测试、评分比较值、Beta 参数、幂等账本和 `secure://role-c/...` 引用均保存在后端。
+
+### 1.1 统一语义
+
+| 名称 | 项目内定义 | 权威来源 |
+|---|---|---|
+| 目标 | 当前路径节点中可观察、可练习、可测量的学习结果；以 `objective_id` 标识并绑定一个 `source_id` 和必要 `required_fact_ids` | B 的 `LearningPathNode.objectives`，进入 C 后由 `GenerationSpec.targets` 冻结 |
+| 事实 | A 知识库中可独立引用的最小知识陈述；身份为 `source_id + fact_id` | A 的 `RagEvidencePack.results[].facts[]` |
+| 引用 | 公开知识性内容对当前冻结事实的指向，包含 `source_id`、`fact_id` 和关系类型 | C 生成，A 事实审核确认支持关系 |
+| 难度 | 当前节点的领域复杂度、认知要求、推理步数、代码复杂度、先修负荷和脚手架强度 | B 决定路径难度；C 冻结为 `GenerationSpec.difficulty`，只调整呈现层 |
+| 先修 | 理解当前目标前必须具备的知识来源或桥接内容 | B 的 `prerequisite_source_ids`，A 提供对应事实，C 负责呈现桥接内容 |
+| 掌握 | 基于正式新卷首次作答、提示使用、重复曝光、评分置信度和历史证据形成的目标级状态 | C 冻结本轮成绩和学习证据；B 维护跨轮画像，主 Agent 维护会话进度 |
+| 修复 | 对已分类问题执行的最小纠正动作：当前资源重写、补证据或换路径 | C 处理 `artifact`，A 处理 `new_evidence`，B 处理 `new_spec`，主 Agent 负责状态迁移 |
+| 完成 | 非空路径中的节点均完成，最后一个节点经独立正式测评得到 `advance`，且没有待处理阻塞或复核 | 主 Agent 的持久会话状态机 |
 
 ## 2. 总体流程
 
@@ -47,9 +60,7 @@ flowchart TD
     PB2 --> EA
     EA --> S
     REV --> V
-    PUB --> AN["仅开放锚点题"]
-    AN --> RT["后端评分并冻结测评路线"]
-    RT --> SUB["学习者完成正式作答"]
+    PUB --> SUB["学习者完成正式作答"]
     SUB --> LC["LearningCycleService"]
     SEC --> LC
     LC --> FD["动态反馈投递给 D"]
@@ -71,7 +82,7 @@ flowchart TD
 
 Locked Core 包含事实、目标、先修、代码语义、答案和评分规则。Adaptive Shell 包含解释顺序、案例语境、阅读密度、提示层级和脚手架。个性化参数只调整 Adaptive Shell。
 
-RAG 无命中、弱匹配或材料不足时生成 `EvidenceGapRequest`；事实冲突时生成 `FactAuditPacket`。对应运行保持 `blocked`。
+初始目标发现使用 `semantic_discovery`；路径节点冻结后使用 `identity_hydration`；材料不足时 C 生成带原目标身份的 `EvidenceGapRequest`，A 以 `evidence_repair` 创建新证据。每次结果均包含检索身份、请求哈希、父级血缘和目标级覆盖。`weak`、`no_match` 或事实冲突保持结构化阻塞状态。
 
 ## 4. 三个内容 Agent
 
@@ -81,7 +92,7 @@ RAG 无命中、弱匹配或材料不足时生成 `EvidenceGapRequest`；事实�
 | 代码实验 `code-lab` | public 任务、starter、公开测试、提示；secure 参考实现、隐藏测试和评分组 | public/secure 对齐、参考实现、Docker 执行、泄漏检查；mutation 仅记录可选质量指标 |
 | 分层测评 `tiered-evaluator` | Tier 1/2/3 题面、稳定题目身份、secure AnswerSpec、rubric 和代码测试 | 蓝图覆盖、答案一致性、代码执行、选项与评分语义 |
 
-三个 Agent 使用同一份递归冻结的 `GenerationSpec` 和证据包。模型生成候选内容，程序生成稳定 ID、题目计划、覆盖索引、评分聚合、质量指标和发布状态。
+三个 Agent 使用同一份递归冻结的 `GenerationSpec` 和证据包。模型生成互动题、提示、练习任务和正式测评等开放内容；程序生成稳定 ID、题目计划、覆盖索引、评分聚合、质量指标和发布状态。讲义中承担事实陈述的解释、总结和误区纠偏由程序直接使用冻结事实与 A 提供的示例组装，模型不能在这些字段中增加证据外用途、领域或真实案例。
 
 ### 4.1 分阶段生成
 
@@ -92,6 +103,10 @@ RAG 无命中、弱匹配或材料不足时生成 `EvidenceGapRequest`；事实�
 | tiered-evaluator | 先冻结 item plan，再生成 public 和 secure |
 
 每个阶段执行局部 Schema 与语义校验，聚合后执行完整门禁。该结构控制单次输出规模，并支持有界并发和定向修复。
+
+公开测评与历史题面重复时，程序冻结合格题并给出重复题下标，模型只重新命制对应题目。局部补丁合并后重新执行题目计划、证据、目标覆盖和防重校验；题目内容始终由模型生成。
+
+题型由冻结的 `item_plan` 决定。程序只规范与题型唯一对应的结构字段：非选择题的 `options` 为 `null`，非代码题的 `starter_code` 为 `null`；代码题遗漏或误填完整实现时，保留题面约定的函数签名并转换为待完成骨架。该规范不生成题干、选项语义或答案。
 
 ### 4.2 下一轮语义
 
@@ -119,6 +134,8 @@ C 内部门禁依次检查：
 
 审核请求和结果绑定 `pipeline_input_hash`、`generation_spec_hash`、`GenerationSpec.evidence_content_hash`、三份公开产物哈希、审核策略版本和修订序号。B 的结构化结果包含失败维度、缺失先修、未知先修引用、恢复动作、修复范围、建议难度和可恢复状态。
 
+当修复范围为 `artifact` 时，审核意见作为结构化 `revision_objections` 交给对应生成 Agent。该合同保留审核指令 ID、审核方、原始问题码和消息、原始裁决、目标 Agent/产物、objective、字段定位、证据引用、修复范围和建议动作。公共提示词明确这些字段是修订控制数据，不是事实证据；Agent 须逐条处理属于自己的产物级指令，不得在内容阶段伪造新证据或改写路径。后续 Schema 修复不得撤销已完成的外审修订。
+
 恢复动作如下：
 
 | 修复范围 | C 的处理 |
@@ -129,13 +146,24 @@ C 内部门禁依次检查：
 
 每轮跨 Spec 恢复均记录输入、输出和 A/B 请求标识，最多两次。未知先修引用、无效 B 响应和不可支持目标返回结构化阻塞结果。
 
+### 5.1 质量问题分类与唯一处理路径
+
+| 类别 | 检查内容 | 权威发现者 | 修复负责人 | 状态迁移 |
+|---|---|---|---|---|
+| 发布安全 | Schema、公开/私有隔离、答案与隐藏测试泄漏、参考解和评分材料、可信执行与答案一致性 | C 的确定性校验器和 Docker 执行器 | C | 可局部修复时回到对应 Agent；预算耗尽为 `BLOCKED`；基础设施异常为 `FAILED` |
+| 事实支持 | evidence 身份与强度、引用存在、声明是否被引用事实支持 | C 做身份与存在性预检；A 对事实支持作最终审核 | 现有事实足够时由 C 改写；证据不足时由 A 补证据 | `artifact` 或 `new_evidence`，随后重新生成并审核 |
+| 教学质量 | 目标覆盖、讲练测一致、难度、先修、路径适配和具体资源的教学表达 | B 对路径、难度和先修负责；C 对具体讲义、实验、测评及跨资源一致性负责 | 路径问题由 B；资源内容问题由 C | `artifact` 或 `new_spec`，不得把路径问题交给 C 改文案 |
+| 运行诊断 | 模型调用、JSON 截断、Docker 超时、存储、并发和网络错误 | 实际失败的运行组件 | 对应运行组件或主 Agent | 有界重试；仍失败进入 `FAILED`，不得伪装成内容质量问题 |
+
+同一问题只由上表对应的权威路径决定修复范围。分阶段作者校验只用于当次模型修复，`finalizeDraft` 负责单份产物合同，`runCPipeline` 负责跨产物一致性，A/B 审核负责外部语义结论，`assertReviewedReadyPipeline` 负责发布边界复核，学习会话只在读取 secure 产物后复核 public/secure 配对。这些边界复核复用同一校验函数，不另设阈值或第二套状态决策。
+
 ## 6. 发布与回执
 
 审核通过后执行以下提交与发布：
 
 1. `code_lab_secure` 与 `assessment_secure` 通过 `putBatch` 提交为一个安全存储批次；
 2. 三份公开产物与 trace 组成 `RoleCReviewedReleaseDelivery`；
-3. 初始锚点会话和路线冻结后的会话分别组成独立的 `RoleCLearningSessionDelivery`；
+3. 完整正式测评组成 `RoleCLearningSessionDelivery`；
 4. `BLOCKED`、`FAILED` 和 `UNSUPPORTED_TARGET` 组成 `RoleCReviewRecoveryStatusDelivery`。
 
 学习完成后，动态反馈通过 `RoleCDynamicFeedbackDelivery` 投递给 D；学习证据和可选画像漂移建议通过 `RoleCLearningProgressDelivery` 投递给 B。
@@ -161,29 +189,37 @@ Python 代码统一使用 `DockerPythonCodeRunner`：
 `LearningCycleService` 的正式流程：
 
 1. 注册通过中央审核门禁的 `READY` 运行，并复核 public/secure 配对；
-2. `openAnchorFirstSession` 创建仅包含锚点题的 `ANCHOR_PENDING` 会话；
-3. `routeAssessmentAnchors` 从 secure store 读取答案并评分，以真实锚点得分选择路线，通过 revision CAS 冻结为 `ROUTE_LOCKED`；
-4. 路线冻结后更新正式必答题集合；最终提交中的锚点答案必须与选路时一致；
-5. 独立校验认证 learner 与 `SubmissionEnvelope.learner_id_hash`；
-6. 从 secure store 读取答案和代码测试，冻结 `GradeResult`；
-7. 生成 `LearningEvidenceEvent`，原子更新 Beta 掌握度；
-8. 组装唯一公开结果 `DynamicFeedbackResult`；
-9. 持久化完成状态，并按配置向 B 投递学习进展。
+2. 开启已冻结全部必答题的正式会话；
+3. 独立校验认证 learner 与 `SubmissionEnvelope.learner_id_hash`；
+4. 从 secure store 读取答案和代码测试，冻结 `GradeResult`；
+5. 生成题目级 `LearningEvidenceEvent`，原子更新掌握度并交给 B；
+6. 组装唯一公开结果 `DynamicFeedbackResult`；
+7. 持久化成绩、题目历史、B 新画像和下一轮决策。
 
 浏览器可调用的 `processSubmission` 只返回公开反馈或精简错误。学习证据、内部评分和 Beta 状态由后端入口 `processSubmissionInternal` 处理。
-
-锚点阶段不生成学习证据、不更新掌握度。相同答案重放返回同一路线锁；不同答案并发时只有一个 revision CAS 可以冻结路线。D 保存锚点题集合并冻结对应输入，正式提交继续使用选路时的答案。
 
 本轮动作规则：
 
 | 条件 | 动作 |
 |---|---|
-| 正确率 `< 0.4` | `remediate` |
-| `0.4 ≤` 正确率 `< 0.8` | `reinforce` |
-| 正确率 `≥ 0.8` | `advance` |
+| 任一目标正确率 `< 0.4` | `remediate`，聚焦这些低分目标 |
+| 无低分目标，但任一目标正确率 `< 0.8` | `reinforce`，聚焦未稳定目标 |
+| 本轮被测目标正确率全部 `≥ 0.8`，且是未用提示、未暴露答案的新卷首次作答 | `advance` |
+| 同卷使用过提示、已公开答案或重复作答后达标 | `reinforce`，生成新等价题独立确认 |
 | 明确画像漂移 | `reprofile` |
 
-提示级别、重复曝光、grader confidence 和题目权重参与 evidence score 与长期掌握度更新。本轮动作、冻结成绩和全部学习证据使用同一 `final_decision`。
+公开总分用于展示本轮整体表现，但不得掩盖某个未达标目标。主 Agent 直接使用 C 终局决策中的 `target_objective_ids`，不再重复应用阈值。
+
+提示级别、重复曝光、grader confidence 和题目权重参与 evidence score 与长期掌握度更新。原卷在答案公开后只用于练习和反馈，正式进阶必须使用新卷。本轮动作、冻结成绩和全部学习证据使用同一 `final_decision`。
+
+### 8.1 AI 动态命题与防重
+
+- 初始诊断由 B 选择目标、先修和薄弱来源，A 提供对应事实，`diagnostic-author-1.0.1` 为每个来源当次生成一道单选题。题目必须绑定诊断计划中的真实 `source_id/fact_id`，正确选项只保存在服务端。模型返回的选项会按显示语义合并仅空白或标点不同的重复项，并同步正确项文本；合并后不足三项仍要求模型重新命制。
+- 每份正式测评的题面、选项、追踪材料、代码任务和私有答案语义均由模型根据当前 `GenerationSpec` 和证据当次生成。诊断和正式测评均不从预制题库或固定题面中取题，也没有模板降级路径。确定性程序只组装身份、分值、引用、题型计划和评分结果。
+- 会话和学习者记忆保留全部已发布的纯公开题面，用于全历史确定性防重；模型每次只接收最近 200 道作为主动换题参考，避免输入无限增长。题面在发布前即登记，未提交或中途退出的试卷也不会被当作新题再次使用。题面历史是独立流水线输入，因此首轮正式测评也会避开刚发布的诊断题；它只传给诊断命题器和 `tiered-evaluator` 的公开出题阶段，不传给讲义、实验或私有答案阶段。
+- 模型允许考查同一知识和相近难度，但题干、选项组合、数据/场景和代码任务必须重新命制。
+- 公开出题阶段会比对历史题面；题干相同、仅更换干扰项、复制或仅做格式变化的题目会在同一模型阶段收到修订原因并重新命题。达到修订上限仍不合格时阻塞该轮，不切换到固定题。
+- 题目历史不含正确答案、误区映射、参考实现或隐藏测试。
 
 ## 9. 下一轮执行
 
@@ -209,17 +245,16 @@ Python 代码统一使用 `DockerPythonCodeRunner`：
 
 相同执行身份由 single-flight 合并并发调用。审核通过的 `READY` 结果写入 `NextRoundExecutionJournal`，后续调用先校验中央审核门禁和两条 secure 引用，再顺序重放。失效的 secure 引用通过结果哈希 CAS 清除后重新生成；journal 提交结果不确定时清理本次安全批次并撤销同一记录。注入式 journal 的原子提交保留 winner，并清理 loser 的安全存储批次。
 
-`continueCompletedLearningCycle` 将 B 的新版画像、路径和 A 的对应证据送入可恢复审核流水线。服务端入口 `continueRoleCAfterSubmission` 从持久化记录读取当前画像、冻结反馈和历史证据；D 提供 B 的新路径后，C 在服务端刷新 A 证据并绑定目标事实。最终通过后按顺序注册 run、创建稳定的锚点会话，再发布 reviewed release 与学习会话。锚点得分产生后由 `routeRoleCAssessmentAnchors` 调用可信评分并冻结正式测评路线。
+`continueCompletedLearningCycle` 将 B 的新版画像、路径和 A 的对应证据送入可恢复审核流水线。服务端入口 `continueRoleCAfterSubmission` 从持久化记录读取当前画像、冻结反馈和历史证据，刷新当前路径所需的 A 证据，再创建新 Spec、完成审核并发布完整正式测评会话。
 
-本地开发/预览服务公开四个统一入口：
+`src/role-d-integration/contracts.ts` 保留了旧版 `/api/role-c/*` 客户端路径常量，但当前主服务没有注册这些独立 HTTP 路由。正式页面统一经认证的 learning-orchestrator 会话接口消费 C 的能力：
 
-| 路径 | 服务入口 |
+| 正式路径 | C 能力 |
 |---|---|
-| `/api/role-c/generate` | `generateRoleCForRoleDWithRuntime` |
-| `/api/role-c/run-code-lab` | `runRoleCCodeLab` |
-| `/api/role-c/submit` | `submitRoleCAssessment` |
-| `/api/role-c/continue` | `continueRoleCAfterSubmission` |
-| `/api/role-c/route-anchors` | `routeRoleCAssessmentAnchors` |
+| `POST /orchestrator/sessions`、`POST /orchestrator/sessions/:id/commands` | 创建会话，并在命令处理中调用 `generateRoleCForRoleDWithRuntime`、`runRoleCCodeLab`、`submitRoleCAssessment` 和下一轮继续逻辑 |
+| `GET /orchestrator/sessions/:id` | 读取已持久化的公开讲义、代码实验、测评和反馈 |
+| `POST /orchestrator/sessions/:id/repair` | 显式迁移旧会话资源，不在只读轮询中隐式重写内容 |
+| `GET /orchestrator/sessions/:id/events` | 读取会话事件和运行诊断 |
 
 `LearningRunRecord` 保存与 GenerationSpec 一致的可信画像快照，使下一轮在进程重启后仍能仅凭会话和提交标识恢复。继续执行和对外投递使用稳定身份记录，重复请求返回同一终局结果。
 
@@ -245,15 +280,15 @@ Python 代码统一使用 `DockerPythonCodeRunner`：
 
 | 入口 | 用途 |
 |---|---|
+| `InteractiveSessionStore.command` | 当前页面对应的正式产品入口，接收用户命令并调用 C 服务能力 |
+| `generateRoleCForRoleDWithRuntime` | 正式生成入口；选择模型、Docker、A/B 端口和持久化实现 |
 | `runReviewedCPipeline` | 生成、C 内部门禁、A/B 审核和安全产物提交 |
 | `runRecoverableReviewedCPipeline` | 按结构化审核动作执行修订、补证据或换路径 |
 | `createLocalBPathPlanningPort` | 将 B 本地路径规划器适配为 C 恢复接口 |
 | `deliverRoleCToD` | 原子投递审核通过的公开内容与 trace |
 | `deliverReviewRecoveryStatusToD` | 原子投递阻塞、失败或不支持目标状态 |
-| `deliverLearningSessionToD` | 原子投递锚点待答或路线已冻结的会话 |
+| `deliverLearningSessionToD` | 原子投递完整正式测评会话 |
 | `LearningCycleService` | 会话、提交、评分、证据、掌握度和动态反馈 |
-| `LearningCycleService.openAnchorFirstSession` | 创建仅含锚点题的可信会话 |
-| `LearningCycleService.routeAssessmentAnchors` | 可信评分锚点题并冻结正式路线 |
 | `LearningCycleService.executePublishedCodeLab` | 校验会话身份并执行当前已发布代码实验 |
 | `LearningCycleService.prepareNextRoundFromCompletedSubmission` | 从冻结的已完成提交准备可信下一轮 |
 | `deliverDynamicFeedbackToD` | 原子投递统一动态反馈 |
@@ -262,9 +297,10 @@ Python 代码统一使用 `DockerPythonCodeRunner`：
 | `executePreparedNextRound` | 审核执行、并发合并和成功结果重放 |
 | `continueCompletedLearningCycle` | 完成下一轮恢复审核、run/session 注册和 D 发布 |
 | `continueRoleCAfterSubmission` | 服务端恢复已完成提交、刷新新路径证据并继续下一轮 |
-| `routeRoleCAssessmentAnchors` | 服务端接收锚点答案并返回冻结后的正式路线 |
 | `runRoleCCodeLab` | 向 D 提供公开、无答案泄漏的代码实验执行结果 |
 | `RoleBLearningProgressAdapter` | B 接收学习证据信封、幂等更新画像并生成新版本 |
+
+入口分层如下：`InteractiveSessionStore` 是产品会话聚合根；`role-c-service.ts` 是跨角色服务边界；review/orchestrator 下的函数是 C 内部流水线；scripts 中的 demo、smoke 和 week3 evaluation 只用于验证，不作为页面或生产会话入口。
 
 ## 12. 验证命令
 
@@ -289,7 +325,7 @@ bun run test:role-c:docker
 - A 事实审核、B 教学审核、定向修订及跨 Spec 恢复：已完成；
 - 会话、提交、动态反馈、学习证据和掌握度更新：已完成；
 - 四类下一轮准备、恢复审核、run/session 注册、持久化 journal 和终态重放：已完成；
-- 锚点优先测评、得分选路、路线冻结和答案一致性校验：已完成；
+- AI 当次命题、会话内与跨会话防重、新卷独立进阶确认：已完成；
 - C 侧向 B/D 的原子幂等投递与下一轮会话登记：已完成；
 - 画像版本、路径节点、目标包和完整评分合同校验：已完成；
 - Schema、全量测试和 Docker 演示：已完成。

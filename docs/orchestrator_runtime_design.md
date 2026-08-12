@@ -1,536 +1,161 @@
-# Learning Orchestrator Runtime Design
+# Learning Orchestrator 正式运行设计
 
-> **实现状态标注（2026-08-08）**：本文是 Runtime 的**设计基线文档**（设计目标/验收标准），描述的是 runner + 13 态状态机的全量编排路径。当前代码的实际实现已在此设计上演进，阅读时请以代码为准：
->
-> - **两条运行路径并存**：一次性 runner（`learning-orchestrator-runner.ts`，scaffold/deterministic 双模式，13 态状态机，用于演示与验收）+ **持久交互会话**（`interactive-session.ts`，HTTP 8787，**当前开发重心与 D 的实际接入路径**）。
-> - **交互会话的阶段机简化**：不是 13 态线性转移，而是 `objective_diagnosis → assessment → (completed|blocked|failed)` 的循环；`ORCHESTRATION_WORKER_SEQUENCE` 中的 profile-builder / path-planner 在诊断后被直接调用（`slice(3,5)`），C 内容生成走 `generateFormalRoleCRound`（最多 6 次尝试，独立 `roleCRoundRunId`）。
-> - **评分四路决策**：remediate / reinforce / advance / reprofile（阈值 0.4 / 0.8），下一轮内容**后台生成**（提交响应先返回 feedback，会话置 `running`，前端轮询），会话可跨服务重启恢复（`retry` + 持久化 `next_round_context`）。
-> - **锚点路由已彻底移除**：`submit_anchor_answers` 命令、`anchor_routing`/`anchor_answers` 字段、`continueAfterAnchorAnswers`/`mergeAnchorAnswers` 等函数及 UI 客户端函数全部删除；正式测评直接按 B 初始画像生成。
-> - **A 证据随节点推进**：`ensureCurrentNodeEvidence` 在每轮 C 生成前按当前节点 target/先修从知识库按 source_id 补全缺失证据，advance 到新节点不再因首轮 RAG 快照缺证据而阻塞。
-> - **测评结构升级**：五题 code-pair（mcq + true_false + trace + code 2 分 + code 4 分），不再含 `short_answer`；新增 `run_assessment_code` 即时试运行命令与 `code_execution` 公开字段。
-> - **旧会话自动迁移**：`GET /sessions/:id` 触发 `repairLegacyAssessment`，检测到 short_answer 或资源目标漂移时后台重新生成。
-> - **补救/强化差异合同全段生效**：`projectNextRoundContext` 不再因某段无 focus 目标而丢弃差异指令，teaching_strategy + variation_requirements 作用于整轮所有段。
-> - **reprofile 触发链路修复**：画像预期按 B 画像 known/weak_concepts 映射（`profileExpectationForTarget`）；`profile_version` 跨轮稳定（`<run_id>-profile-E<epoch>`，reprofile 后 epoch+1）；`profile_drift_minimum_conflicts=1` 适配每节点单 objective——reprofile 从"永不触发的死代码"变为可触发的画像校正。
-> - 交互会话仅接受 `deterministic` 模式（scaffold 模式被 `orchestrator-api-schema.ts` 明确拒绝）。
->
-> 交互会话的 HTTP API、公开字段与命令详见 [`orchestrator_session_api.md`](./orchestrator_session_api.md)。
+本文描述主 Agent 持续学习会话的当前运行合同。HTTP 字段和命令样例见 [`orchestrator_session_api.md`](./orchestrator_session_api.md)，Role C 内容、审核和评分细节见 [`role_c_design.md`](./role_c_design.md)。
 
-## 1. 核心结论
+## 1. 运行边界
 
-KnowBalance 已经注册 `learning-orchestrator` 主 Agent 和 8 个角色子 Agent，但当前可复现业务链路主要由 TypeScript service、demo 和 test 直接串联。为了让系统从“有主 Agent 名义”升级为“主 Agent 真实可审计编排”，需要新增一层 **Learning Orchestrator Runtime**。
+主 Agent 负责会话编排、状态迁移、身份校验、持久化和 Agent 间交接，不直接编写课程内容、诊断题或测评题，也不在前端推断掌握状态。
 
-这层 Runtime 的目标不是重写 A/B/C/D 业务，而是让 `learning-orchestrator` 承担以下可验证职责：
+正式入口为：
 
-1. 管理完整学习流程状态。
-2. 决定下一步应该调用哪个子 Agent。
-3. 将上游证据和产物传递给下游子 Agent。
-4. 校验每个子 Agent 的输出契约。
-5. 在失败时进入 blocked / failed，而不是跳步或代做。
-6. 生成可审计 trace ledger 和 Markdown 汇报。
-7. 支持 scaffold 与 deterministic 两种运行模式，分别证明“主 Agent 调度结构”和“主 Agent 接入真实业务链路”。
+- 服务：`scripts/learning-orchestrator-api.ts`
+- 会话聚合：`src/orchestration/interactive-session.ts`
+- HTTP Schema：`src/orchestration/orchestrator-api-schema.ts`
+- Role C 服务边界：`src/role-d-integration/role-c-service.ts`
+- D 客户端：`src/role-d-ui-v2/src/orchestrator-client.ts`
 
-## 2. 现状判断
+会话请求中的 `mode: "deterministic"` 表示流程和状态迁移由确定性程序控制。诊断题、讲义、代码实验和正式测评仍由模型当次生成；模型未配置时正式会话阻塞，不切换到固定模板。
 
-### 2.1 已有内容
+## 2. 正式学习链
 
-当前仓库已经具备：
+```mermaid
+flowchart TD
+    U["学习目标、背景、自评与长期记忆"] --> T["B 选择诊断来源"]
+    T --> E["A 提供 source/fact 证据"]
+    E --> Q["AI 当次生成诊断题"]
+    Q --> A1["学习者提交诊断答案"]
+    A1 --> P["B 合成画像并规划路径"]
+    P --> R["A 检索并冻结当前节点证据"]
+    R --> C["C 生成讲义、代码实验和正式测评"]
+    C --> V["C 门禁 + A 事实审核 + B 教学审核"]
+    V -->|通过| D["D 展示并收集作答"]
+    V -->|事实问题| R
+    V -->|路径问题| P
+    V -->|内容问题| C
+    D --> G["C 可信评分和目标级证据"]
+    G --> B2["B 消费进展并更新画像"]
+    B2 --> N{"终局动作"}
+    N -->|补救或巩固| C
+    N -->|进阶或重建画像| P
+    N -->|需要支持| X["明确阻塞"]
+```
 
-- `src/agents/orchestrator.ts`：主 Agent 注册。
-- `src/prompts/orchestration.ts`：主 Agent 的顺序调度 prompt。
-- `src/agents/workers.ts`：8 个 worker 定义。
-- `tests/agent-registry.test.ts`：验证 1 primary + 8 subagents。
-- `src/role-b-profile/`：B 画像链路真实实现。
-- `src/role-c-content/`：C 概念、代码实验、测评、审核恢复等真实实现。
-- `src/role-d-integration/` 与 `src/role-d-ui-v2/`：主 Agent边界适配与新版 D展示。
-- `scripts/learning-orchestrator-api.ts`：主 Agent持续会话 HTTP 服务入口。
-- `scripts/role-c-week3-evaluation.ts`：Week3 评测脚本。
+## 3. 会话状态
 
-### 2.2 主要缺口
+公开状态：
 
-当前缺口不是“没有主 Agent”，而是：
-
-| 缺口 | 影响 |
+| `status` | 含义 |
 |---|---|
-| 主 Agent 运行态不可见 | 看不到它如何逐步管理 8 个子 Agent |
-| 没有统一 orchestration session | 缺少跨步骤状态、run_id、current_stage 和错误状态 |
-| 缺少子 Agent 统一输入输出契约 | 不容易证明每一步由主 Agent 调度并验收 |
-| 缺少 trace ledger | 答辩时缺少逐步调用证据 |
-| 缺少失败恢复记录 | 子 Agent blocked 时难以证明主 Agent 做了正确处理 |
-| OpenCode 原生路径依赖模型稳定性 | 难以作为唯一可复现验收依据 |
+| `running` | 后端正在调用 Agent、审核或生成下一轮 |
+| `waiting_for_user` | 等待诊断答案或正式测评答案 |
+| `completed` | 非空正式学习路径的全部节点均已通过测评 |
+| `blocked` | 缺少证据、目标不支持或无法形成新的支持路径 |
+| `failed` | 运行依赖或不可恢复执行错误 |
 
-## 3. 设计目标
+公开阶段为 `objective_diagnosis`、`assessment`、`completed`、`blocked`、`failed`。只有服务端状态机可以迁移阶段；D 根据公开状态展示，不自行推进路径或改写终局。
 
-### 3.1 必须达到
+课程终态由 `terminal_outcome` 说明。`PATH_MASTERED` 只在非空路径全部节点由正式测评推进后产生；空路径不能表示完成。知识库不支持目标、证据不足、路径规划失败和连续学习后仍需额外支持分别返回 `UNSUPPORTED_GOAL`、`INSUFFICIENT_EVIDENCE`、`PATH_PLANNING_FAILED` 和 `LEARNING_SUPPORT_REQUIRED`，并给出对应建议动作。临时模型、Docker 或生成故障不冒充课程终态。
 
-1. 一次运行有唯一 `run_id` 和 `session_id`。
-2. 每个阶段只能按照状态机合法转移。
-3. 每个子 Agent 调用前，主 Agent 写入决策记录。
-4. 每个子 Agent 返回后，主 Agent 校验 worker、stage、status、marker、artifacts、next。
-5. 每一步都写入 JSONL trace。
-6. 完成后生成 `latest.json` 和 `latest.md`。
-7. blocked / failed 也必须生成报告。
-8. 测试覆盖正常路径、非法跳步、worker 输出错误、blocked、failed、retry 上限。
+## 4. AI 诊断命题
 
-### 3.2 不做的事
+初始诊断按以下职责拆分：
 
-1. 不让主 Agent 直接生成教学内容。
-2. 不让主 Agent 伪造画像、路径、引用或测评结果。
-3. 不把 TypeScript deterministic pipeline 删除或替换。
-4. 不依赖真实 LLM provider 作为唯一验收方式。
-5. 不把子 Agent 失败伪装成成功。
+1. B 根据学习目标、先修关系和长期薄弱点选择诊断来源。
+2. A 为每个来源提供真实 `source_id/fact_id` 和事实文本。
+3. `ModelDiagnosticQuestionAuthor`（`diagnostic-author-1.0.1`）为每个来源当次生成一道 3–4 选项单选题。
+4. 程序校验来源、事实、题目数量、选项唯一性、唯一正确选项和历史防重。
+5. 公开题面写入会话，正确选项写入 `private.diagnosis_answer_key`。
 
-## 4. 目标架构
+诊断命题不读取知识库 `quizItems` 作为学习者题面。生成失败最多执行有界修订；仍不合格时返回 `DIAGNOSTIC_GENERATION_FAILED`，不使用预制题替代。
 
-```text
-Learner Request
-      |
-      v
-Learning Orchestrator Runtime
-      |
-      |-- State Machine
-      |-- Worker Contract Validator
-      |-- Worker Adapters
-      |-- Trace Ledger
-      |-- Report Generator
-      v
-8 Role Workers / Existing Role Modules
-      |
-      |-- background-collector
-      |-- self-assessor
-      |-- objective-diagnostician
-      |-- profile-builder
-      |-- path-planner
-      |-- concept-tutor
-      |-- code-lab
-      |-- tiered-evaluator
-      v
-Run Artifacts
-      |
-      |-- .tmp/orchestrator/runs/<run_id>/trace.jsonl
-      |-- .tmp/orchestrator/runs/<run_id>/summary.json
-      |-- .tmp/orchestrator/runs/<run_id>/summary.md
-      |-- .tmp/orchestrator/latest.json
-      |-- .tmp/orchestrator/latest.md
-```
+## 5. 画像、路径与证据
 
-## 5. 主 Agent 职责边界
+B 使用背景、自评、客观诊断和长期记忆合成画像。客观表现优先于自评，冲突保存在 provenance 中。正式路径节点给出目标来源、先修来源和可观察行为。
 
-### 5.1 主 Agent 负责
+A 的首轮检索结果由画像和学习目标构造。C 生成前按当前路径节点绑定 `source_id/fact_id`，并冻结为 `RagEvidencePack` 与 `GenerationSpec`。路径推进时必须使用当前节点证据；证据缺失、冲突或无法支持目标时保持阻塞。
 
-| 职责 | 具体含义 |
+## 6. Role C 三类资源
+
+每轮 C 使用同一份画像快照、路径节点、证据包和 `GenerationSpec` 生成：
+
+- 概念讲义：解释、示例、误区、即时检查和分层提示；
+- 代码实验：公开任务与 starter、公开检查、提示，以及服务端参考实现和隐藏测试；
+- 正式测评：选择、判断、追踪和代码题，以及服务端答案与评分合同。
+
+三类资源必须覆盖同一组目标，并通过 Schema、事实引用、目标覆盖、public/secure 隔离、Docker 执行和跨产物一致性检查。随后由 A 审核事实和引用、B 审核路径目标、先修、难度与教学适配。
+
+审核修复按问题归属执行：内容问题在当前 Spec 内定向修订，事实问题刷新 A 证据，路径问题调用 B 重规划。所有修订均有界；不通过的产物不能发布给 D。
+
+## 7. AI 正式命题与防重
+
+正式测评由 `tiered-evaluator` 根据当前 Spec、A 证据和讲义摘要当次生成，不从题库取题，也不存在固定题降级。
+
+防重输入独立于 `next_round_context`，因此首轮正式测评也能看到刚发布的诊断题。会话和学习者记忆保留全部已发布公开题面用于确定性防重，模型只接收最近 200 道作为主动换题参考。正式试卷在发布前即登记，学习者未提交或中途退出也不会使题目重新变成可用新题。题面历史：
+
+- 只包含题干、选项、题型和公开 starter；
+- 只传给诊断命题器和正式测评的公开出题阶段；
+- 不传给讲义、代码实验、私有答案和隐藏测试阶段；
+- 不作为事实或指令使用。
+
+相同知识和相近难度的新变式允许发布。题干相同、只更换干扰项、复制或仅格式改写会触发重新命题；达到修订上限仍重复时阻塞该轮。
+
+## 8. 代码运行与评分
+
+代码实验和正式代码题均通过 C 的 Docker Runner 执行。浏览器只提交学习者代码和当前公开资源身份；参考实现、隐藏测试、期望值和计分规则由后端从安全存储读取。
+
+正式提交必须覆盖当前试卷全部必答题。评分冻结后形成题目级学习证据，包含真实题型、得分、提示级别、重复情况和置信度，并通过正式端口原子交给 B。
+
+目标级动作规则：
+
+| 条件 | 动作 |
 |---|---|
-| 状态管理 | 维护 current_stage、completed_steps、blocked_stage |
-| 调度决策 | 根据状态机选择下一个 worker |
-| 上下文传递 | 将上游 artifacts/evidence_refs/input_refs 传给下游 |
-| 契约校验 | 检查 worker output 是否符合统一 contract |
-| 失败处理 | retry 一次；仍失败则 blocked / failed |
-| 追踪审计 | 每步写 trace，记录决策、输入摘要、输出摘要、耗时和错误 |
-| 汇报生成 | 生成答辩可读 Markdown 和机器可读 JSON |
+| 任一目标正确率 `< 0.4` | `remediate` |
+| 无低分目标，但任一目标正确率 `< 0.8` | `reinforce` |
+| 全部被测目标 `≥ 0.8` 且为新卷首次、无提示、答案未曝光的独立作答 | `advance` |
+| 同卷重试、使用提示或答案已曝光后达标 | `reinforce`，新卷独立确认 |
+| 画像与客观证据出现明确冲突 | `reprofile` |
 
-### 5.2 主 Agent 不负责
+总分用于展示，不覆盖目标级判断。下一轮只读取 C 冻结的 `final_decision` 和 `target_objective_ids`。
 
-| 不负责事项 | 归属 |
+同一节点连续补救 3 轮或巩固 2 轮后，主 Agent 请求 B 重新规划支持路径。B 无法产生新支持路径时返回 `LEARNING_SUPPORT_REQUIRED`，当前节点保持未掌握。
+
+## 9. 持久化与并发
+
+会话文件使用 revision CAS、文件锁、租约和原子替换，敏感文件权限为 0600。相同 `command_id` 和相同内容幂等重放；相同 ID 携带不同内容返回冲突。同一会话的命令串行处理。
+
+会话私有状态保存：
+
+- 诊断答案键和学习者诊断作答；
+- 当前画像、路径、RAG、C run/session/spec 身份；
+- 已发布公开题面历史；
+- 冻结评分、反馈和下一轮上下文；
+- B 返回的新画像和路径状态。
+
+长期 learner memory 保存掌握、薄弱点、已完成会话和最近公开题面。模型/API/Docker 调用期间会话保持 `running`；完成后原子发布新的等待、完成或阻塞状态。
+
+## 10. API 与 D 消费
+
+正式会话 API：
+
+| 方法与路径 | 用途 |
 |---|---|
-| 学习者背景事实抽取 | background-collector |
-| 自评内容抽取 | self-assessor |
-| 客观诊断判分 | objective-diagnostician |
-| 画像合成 | profile-builder / B |
-| 学习路径规划 | path-planner / B |
-| RAG 检索和证据冻结 | A / adapter |
-| 概念讲解生成 | concept-tutor / C |
-| 代码实验生成和验证 | code-lab / C |
-| 分层测评生成和判分 | tiered-evaluator / C |
-| 前端展示 | D |
+| `POST /orchestrator/sessions` | 创建会话并生成 AI 诊断题 |
+| `GET /orchestrator/sessions/:id` | 读取公开会话视图 |
+| `GET /orchestrator/sessions/:id/events` | 读取公开事件 |
+| `POST /orchestrator/sessions/:id/commands` | 提交诊断、运行代码、提交测评或重试 |
+| `POST /orchestrator/sessions/:id/repair` | 显式迁移不兼容的持久会话 |
+| `GET/PUT /orchestrator/provider-config` | 本机回环地址配置模型 Provider |
 
-## 6. 状态机设计
+D 只消费公开视图：讲义、实验、题面、代码运行摘要、逐题反馈、路径状态、阻塞原因和正式课程终态。D 不接收诊断答案、正式答案、参考实现、隐藏测试、内部掌握参数或安全存储引用。
 
-### 6.1 状态定义
+## 11. 可观测性与验证
 
-```text
-created
-intake_ready
-background_collected
-self_assessed
-objective_diagnosed
-profile_built
-path_planned
-concept_ready
-lab_ready
-assessment_ready
-completed
-blocked
-failed
-```
+公开事件记录会话创建、Worker 调用、等待用户、生成、审核、评分、下一轮和终局。日志记录输入/产物身份、状态和安全诊断，不记录模型内部思考，不输出密钥或私有答案。
 
-### 6.2 正常转移
-
-```text
-created
-  -> intake_ready
-  -> background_collected
-  -> self_assessed
-  -> objective_diagnosed
-  -> profile_built
-  -> path_planned
-  -> concept_ready
-  -> lab_ready
-  -> assessment_ready
-  -> completed
-```
-
-### 6.3 Worker 对应关系
-
-| 当前状态 | 调用 worker | 成功后状态 |
-|---|---|---|
-| intake_ready | background-collector | background_collected |
-| background_collected | self-assessor | self_assessed |
-| self_assessed | objective-diagnostician | objective_diagnosed |
-| objective_diagnosed | profile-builder | profile_built |
-| profile_built | path-planner | path_planned |
-| path_planned | concept-tutor | concept_ready |
-| concept_ready | code-lab | lab_ready |
-| lab_ready | tiered-evaluator | assessment_ready |
-| assessment_ready | none | completed |
-
-### 6.4 失败转移
-
-| 情况 | 目标状态 |
-|---|---|
-| Worker 输出 `status: blocked` | blocked |
-| Worker 输出 `status: failed` | failed |
-| Worker 输出缺少 marker，重试后仍缺失 | blocked |
-| Worker 输出 schema 不合法，重试后仍不合法 | blocked |
-| Runtime 抛出不可恢复异常 | failed |
-| 非法跳步 | failed |
-
-## 7. Worker Contract
-
-### 7.1 WorkerInvocation
-
-```ts
-export interface WorkerInvocation {
-  schema_version: "1.0"
-  session_id: string
-  run_id: string
-  step_index: number
-  stage: OrchestrationStage
-  worker: WorkerName
-  learner_request: LearnerRequest
-  upstream_artifacts: Record<string, unknown>
-  input_refs: string[]
-  evidence_refs: EvidenceRef[]
-  retry_count: number
-  mode: "scaffold" | "deterministic"
-}
-```
-
-### 7.2 WorkerResult
-
-```ts
-export interface WorkerResult {
-  schema_version: "1.0"
-  run_id: string
-  step_index: number
-  worker: WorkerName
-  stage: OrchestrationStage
-  status: "completed" | "blocked" | "failed"
-  marker: string
-  summary: string
-  artifacts: Record<string, unknown>
-  output_refs: string[]
-  evidence_refs: EvidenceRef[]
-  next: OrchestrationStage | "complete" | "blocked" | "failed"
-  errors: WorkerError[]
-}
-```
-
-### 7.3 EvidenceRef
-
-```ts
-export interface EvidenceRef {
-  ref_id: string
-  kind: "profile" | "rag" | "generation_spec" | "artifact" | "review" | "assessment" | "trace"
-  source: "A" | "B" | "C" | "D" | "orchestrator"
-  content_hash?: string
-  path?: string
-}
-```
-
-### 7.4 WorkerError
-
-```ts
-export interface WorkerError {
-  code: string
-  message: string
-  severity: "warning" | "recoverable" | "fatal"
-  details?: Record<string, unknown>
-}
-```
-
-## 8. Worker Adapter 策略
-
-Worker Adapter 是主 Agent 与现有 A/B/C/D 模块之间的薄层。Adapter 只做机械转换和契约包装，不伪造业务内容。
-
-### 8.1 Scaffold 模式
-
-用途：证明 1 主 + 8 子的完整调度结构。
-
-特点：
-
-- 每个 worker 返回合法 `WorkerResult`。
-- 每个结果包含 `[executed:<worker-name>]` marker。
-- artifacts 标注为 scaffold，不声称是真实画像或真实课程。
-- 适合答辩展示主 Agent 的调度过程。
-
-### 8.2 Deterministic 模式
-
-用途：将现有 TypeScript 业务能力接入主 Agent。
-
-特点：
-
-- B 相关 worker 尽量接 `src/role-b-profile/` 的真实实现。
-- A RAG 证据通过 path-planner 或中间 adapter 获取，并保存为 evidence ref。
-- C 相关 worker 接 `src/role-c-content/` 的 deterministic provider / pipeline。
-- D 展示不作为 8 个子 Agent 之一，但可在 final report 中引用 `src/role-d-integration` 的 display handoff。
-- 如果某个真实业务目标不被当前 deterministic C 支持，返回 blocked，不能伪装 completed。
-
-## 9. Trace Ledger 设计
-
-### 9.1 文件结构
-
-```text
-.tmp/orchestrator/
-  latest.json
-  latest.md
-  runs/
-    <run_id>/
-      trace.jsonl
-      summary.json
-      summary.md
-      artifacts/
-```
-
-### 9.2 TraceEvent
-
-```ts
-export interface TraceEvent {
-  schema_version: "1.0"
-  run_id: string
-  session_id: string
-  step_index: number
-  event_type:
-    | "session_started"
-    | "orchestrator_decision"
-    | "worker_invoked"
-    | "worker_completed"
-    | "worker_blocked"
-    | "worker_failed"
-    | "state_transition"
-    | "session_completed"
-    | "session_blocked"
-    | "session_failed"
-  stage: OrchestrationStage
-  worker?: WorkerName
-  message: string
-  input_refs: string[]
-  output_refs: string[]
-  evidence_refs: EvidenceRef[]
-  duration_ms?: number
-  error?: WorkerError
-  timestamp: string
-}
-```
-
-### 9.3 Markdown 报告内容
-
-`summary.md` 必须包含：
-
-1. 运行结论。
-2. run_id / session_id / mode。
-3. 8 步调度表。
-4. 每步主 Agent 决策。
-5. 每步 worker 输出 marker。
-6. 输入证据和输出产物引用。
-7. blocked / failed 原因。
-8. 下一步建议。
-
-## 10. Runner 流程
-
-```text
-1. create session
-2. validate learner request
-3. transition created -> intake_ready
-4. while not terminal:
-   4.1 select next worker by current_state
-   4.2 build WorkerInvocation
-   4.3 write orchestrator_decision event
-   4.4 invoke worker adapter
-   4.5 validate WorkerResult
-   4.6 if invalid and retry_count == 0: retry once
-   4.7 if completed: write trace and transition state
-   4.8 if blocked: write trace and enter blocked
-   4.9 if failed: write trace and enter failed
-5. write summary.json and summary.md
-6. update latest.json and latest.md
-```
-
-## 11. 验证计划
-
-### 11.1 单元测试
-
-| 测试文件 | 覆盖内容 |
-|---|---|
-| `tests/orchestration-state-machine.test.ts` | 合法转移、非法跳步、terminal 状态 |
-| `tests/orchestration-worker-contract.test.ts` | marker、worker/stage 匹配、schema 字段、错误输出 |
-| `tests/orchestration-trace-ledger.test.ts` | JSONL 写入、summary 生成、latest 更新 |
-| `tests/orchestration-runner.test.ts` | 8 步成功、worker blocked、worker failed、retry 上限 |
-| `tests/learning-orchestrator-demo.test.ts` | demo 脚本输出 JSON/Markdown 且顺序正确 |
-
-### 11.2 集成验证命令
+统一检查：
 
 ```bash
-bun scripts/learning-orchestrator-demo.ts --mode scaffold
-bun scripts/learning-orchestrator-demo.ts --mode deterministic
-bun test --isolate ./tests/orchestration-state-machine.test.ts ./tests/orchestration-worker-contract.test.ts ./tests/orchestration-trace-ledger.test.ts ./tests/orchestration-runner.test.ts ./tests/learning-orchestrator-demo.test.ts
-bun run typecheck
 bun run check
 ```
 
-### 11.3 验收标准
-
-| 验收项 | 标准 |
-|---|---|
-| Agent 数量 | 1 primary + 8 subagents 保持不变 |
-| 调度顺序 | 8 个 worker 按固定顺序执行 |
-| 状态机 | 非法跳步被拒绝 |
-| Trace | 每步至少包含 decision、invocation、completion/block/fail、transition |
-| 报告 | JSON 和 Markdown 同时生成 |
-| 失败处理 | blocked / failed 有明确 stage、worker、reason |
-| 证据链 | 下游 input_refs 包含上游 output_refs |
-| 真实性边界 | scaffold 输出必须标注 scaffold；deterministic 不支持目标必须 blocked |
-| 测试 | orchestration 相关测试全部通过 |
-| 标准命令 | `bun run typecheck` 与 `bun run check` 作为最终门禁 |
-
-## 12. 实施顺序
-
-### Phase 1：类型和状态机
-
-新增：
-
-```text
-src/orchestration/types.ts
-src/orchestration/state-machine.ts
-```
-
-测试：
-
-```text
-tests/orchestration-state-machine.test.ts
-```
-
-### Phase 2：Worker Contract 校验
-
-新增：
-
-```text
-src/orchestration/worker-contract.ts
-```
-
-测试：
-
-```text
-tests/orchestration-worker-contract.test.ts
-```
-
-### Phase 3：Trace Ledger 与报告
-
-新增：
-
-```text
-src/orchestration/trace-ledger.ts
-src/orchestration/report.ts
-```
-
-测试：
-
-```text
-tests/orchestration-trace-ledger.test.ts
-```
-
-### Phase 4：Worker Adapters
-
-新增：
-
-```text
-src/orchestration/worker-adapters.ts
-```
-
-职责：
-
-- 先实现 scaffold adapter，快速建立完整调度证据。
-- 再逐步把 B/C 的 deterministic 能力接入 adapter。
-- 对暂未真实接入的能力返回明确 scaffold 或 blocked，不能伪装真实业务完成。
-
-### Phase 5：Runner 与 Demo
-
-新增：
-
-```text
-src/orchestration/learning-orchestrator-runner.ts
-scripts/learning-orchestrator-demo.ts
-```
-
-测试：
-
-```text
-tests/orchestration-runner.test.ts
-tests/learning-orchestrator-demo.test.ts
-```
-
-### Phase 6：文档与答辩素材
-
-新增或更新：
-
-```text
-docs/orchestrator_runtime_guide.md
-README.md
-```
-
-内容：
-
-- 如何运行主 Agent 编排 demo。
-- 如何阅读 trace ledger。
-- scaffold 与 deterministic 的区别。
-- 失败恢复示例。
-- 答辩用 8 步主控表。
-
-## 13. 风险与控制
-
-| 风险 | 控制方式 |
-|---|---|
-| 把主 Agent 做成新的业务实现，重复 A/B/C/D | 主 Agent 只做 orchestration，业务通过 adapter 调已有模块 |
-| scaffold 被误报为真实业务完成 | 报告必须显示 mode；scaffold artifacts 必须标注 scaffold |
-| deterministic 模式遇到 C 目标覆盖不足 | 返回 blocked 并记录 unsupported target，不伪造 ready |
-| OpenCode provider 不稳定 | OpenCode 路径作为可选演示；确定性 Runner 作为可复现验收路径 |
-| Trace 过大 | summary.md 保留摘要，trace.jsonl 保存完整事件 |
-| 测试被当前 typecheck blocker 卡住 | 先修现有 `ContinueRoleCForRoleDResult` 类型收窄问题，再跑最终 `bun run check` |
-
-## 14. 答辩表述
-
-可以这样描述强化后的主 Agent：
-
-> KnowBalance 使用 1 个主编排 Agent 和 8 个角色子 Agent。主 Agent 不直接生成教学内容，而是通过显式状态机管理完整学习流程，负责调度决策、上下文传递、输出校验、失败恢复和全链路 trace。每个子 Agent 只处理自己的专业职责。系统每次运行都会生成 JSONL trace 和 Markdown 报告，记录主 Agent 调用哪个子 Agent、传入哪些证据、收到哪些产物、如何进入下一阶段，从而保证多智能体协作过程可复现、可解释、可验收。
-
-## 15. 最小可交付切片
-
-如果时间有限但仍坚持质量，优先交付以下切片：
-
-1. `types.ts` + `state-machine.ts`。
-2. `worker-contract.ts`。
-3. `trace-ledger.ts` + `report.ts`。
-4. scaffold 模式 runner。
-5. `learning-orchestrator-demo.ts --mode scaffold`。
-6. 对应测试。
-7. `summary.md` 答辩报告样例。
-
-该切片可以严谨证明：主 Agent 已经具备持续状态、顺序调度、契约校验和 trace 审计能力。随后再把 deterministic B/C/D 真实链路逐步接入。
+真实运行还需要模型 Provider 和 Docker。正式验收应从 HTTP 会话入口依次完成 AI 诊断、画像与路径、A 证据、C 三类资源、代码执行、正式评分、B 进展消费和至少一次 AI 新卷续轮。

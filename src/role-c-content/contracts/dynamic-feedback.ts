@@ -79,9 +79,11 @@ export function decideRoundAction(input: {
   max_score: number
   objective_results?: ObjectiveRoundResult[]
   profile_drift_suggestion?: ProfileDriftSuggestion
+  /** False when answers/hints were already exposed for this same form. */
+  independent_attempt?: boolean
 }): FinalLearningDecision {
   const policy = DEFAULT_ROUND_ACTION_POLICY
-  const accuracy = scoreRatio(input.raw_score, input.max_score)
+  const roundAccuracy = scoreRatio(input.raw_score, input.max_score)
   const objectiveResults = input.objective_results ?? []
 
   if (input.profile_drift_suggestion) {
@@ -95,11 +97,20 @@ export function decideRoundAction(input: {
     }
   }
 
-  if (accuracy < policy.remediate_below) {
+  // A weighted total must not hide an unmastered objective. When item-level
+  // objective results are available, the weakest objective determines whether
+  // this node needs remediation/reinforcement; the total remains the public
+  // round score. The total is retained as the compatibility fallback for
+  // callers that have not yet assembled objective results.
+  const decisionAccuracy = objectiveResults.length > 0
+    ? Math.min(...objectiveResults.map((result) => result.accuracy))
+    : roundAccuracy
+
+  if (decisionAccuracy < policy.remediate_below) {
     return {
       action: "remediate",
       basis: "round_accuracy",
-      confidence: confidenceFromBoundary(accuracy, policy.remediate_below),
+      confidence: confidenceFromBoundary(decisionAccuracy, policy.remediate_below),
       reason_codes: ["round_accuracy_below_remediation_threshold"],
       target_objective_ids: focusObjectives(
         objectiveResults,
@@ -109,11 +120,11 @@ export function decideRoundAction(input: {
     }
   }
 
-  if (accuracy < policy.advance_at_least) {
+  if (decisionAccuracy < policy.advance_at_least) {
     return {
       action: "reinforce",
       basis: "round_accuracy",
-      confidence: confidenceFromBand(accuracy, policy.remediate_below, policy.advance_at_least),
+      confidence: confidenceFromBand(decisionAccuracy, policy.remediate_below, policy.advance_at_least),
       reason_codes: ["round_accuracy_in_reinforcement_band"],
       target_objective_ids: focusObjectives(
         objectiveResults,
@@ -123,10 +134,21 @@ export function decideRoundAction(input: {
     }
   }
 
+  if (input.independent_attempt === false) {
+    return {
+      action: "reinforce",
+      basis: "round_accuracy",
+      confidence: 0.9,
+      reason_codes: ["fresh_independent_assessment_required"],
+      target_objective_ids: objectiveResults.map((result) => result.objective_id),
+      policy_ref: policy.policy_ref,
+    }
+  }
+
   return {
     action: "advance",
     basis: "round_accuracy",
-    confidence: confidenceFromBoundary(accuracy, policy.advance_at_least),
+    confidence: confidenceFromBoundary(decisionAccuracy, policy.advance_at_least),
     reason_codes: ["round_accuracy_at_or_above_advancement_threshold"],
     target_objective_ids: [],
     policy_ref: policy.policy_ref,
@@ -161,6 +183,10 @@ export function buildDynamicFeedbackResult(input: {
     max_score: payload.max_score,
     objective_results: objectiveResults,
     profile_drift_suggestion: input.profile_drift_suggestion,
+    independent_attempt: isIndependentAssessmentAttempt(
+      payload.item_results,
+      input.attempt_no,
+    ),
   })
   if (!sameDecision(expectedDecision, input.final_decision)
     || payload.recommendation.action !== input.final_decision.action
@@ -253,6 +279,14 @@ export function aggregateObjectiveResults(
       }
     })
     .sort((left, right) => left.objective_id.localeCompare(right.objective_id))
+}
+
+export function isIndependentAssessmentAttempt(
+  itemResults: NonNullable<GradeResultArtifact["payload"]>["item_results"],
+  attemptNo: number,
+): boolean {
+  return attemptNo === 1 && itemResults.every((item) =>
+    item.hint_factor === 1 && item.repeat_factor === 1)
 }
 
 function focusObjectives(

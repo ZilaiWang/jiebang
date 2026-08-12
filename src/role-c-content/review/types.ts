@@ -88,6 +88,8 @@ export interface ContentReviewFinding {
   fix_scope: ReviewFixScope
   locator?: ReviewBlockLocator
   evidence_refs: string[]
+  /** 审核方的原始裁决强度；与 C 内部 publication-blocking severity 分开。 */
+  source_decision?: "revise" | "reject"
 }
 
 export interface ContentRevisionInstruction extends ContentReviewFinding {

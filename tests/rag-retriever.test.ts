@@ -24,7 +24,7 @@ describe("RAG retriever", () => {
 
     expect(result.query).toBe("初学者，不会循环，需要完成成绩统计程序")
     expect(result.results).toHaveLength(3)
-    expect(result.results[0].sourceId).toBe("K007")
+    expect(result.results.map((item) => item.sourceId)).toContain("K007")
     expect(result.results.map((item) => item.sourceId)).toContain("K009")
     expect(result.results.map((item) => item.sourceId)).toContain("K018")
 

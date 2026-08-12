@@ -22,6 +22,21 @@
         },
         "additionalProperties": false
       }
+    },
+    "target_objectives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objective_id", "source_id", "required_fact_ids", "observable_behavior", "importance"],
+        "properties": {
+          "objective_id": { "type": "string", "minLength": 1 },
+          "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "required_fact_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^F[0-9]{3}$" } },
+          "observable_behavior": { "enum": ["recognize", "explain", "trace", "apply", "debug", "create"] },
+          "importance": { "enum": ["core", "supporting"] }
+        }
+      }
     }
   },
   "additionalProperties": false

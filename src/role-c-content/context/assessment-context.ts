@@ -31,6 +31,12 @@ export interface AssessmentAuthorModelInput {
     misconceptions: NonNullable<TieredEvaluatorRequest["concept_artifact"]["payload"]>["misconceptions"]
     code_lab_summary?: TieredEvaluatorRequest["code_lab_summary"]
     next_round_context?: TieredEvaluatorRequest["next_round_context"]
+    prior_assessment_items?: TieredEvaluatorRequest["prior_assessment_items"]
+    novelty_brief?: {
+      history_count: number
+      variant_id: string
+      required_design_moves: string[]
+    }
   }
   revision_objections?: TieredEvaluatorRequest["revision_objections"]
   external_revision_round?: TieredEvaluatorRequest["external_revision_round"]
@@ -102,6 +108,21 @@ export function buildAssessmentAuthorModelInput(
         ? structuredClone(request.code_lab_summary)
         : undefined,
       next_round_context: nextRoundContext,
+      prior_assessment_items: request.prior_assessment_items
+        ? structuredClone(request.prior_assessment_items.slice(-200))
+        : undefined,
+      novelty_brief: request.prior_assessment_items?.length
+        ? {
+            history_count: request.prior_assessment_items.length,
+            variant_id: `${request.generation_spec.spec_id}-NOVEL-${request.prior_assessment_items.length}`,
+            required_design_moves: [
+              "选择或判断题使用新的判断角度与具体情境",
+              "追踪题改变控制流或数据流结构，不只替换数值",
+              "简答题改用错误诊断、比较或迁移任务",
+              "代码题改变函数任务、参数组织和输出行为",
+            ],
+          }
+        : undefined,
     },
     revision_objections: request.revision_objections
       ? structuredClone(request.revision_objections)

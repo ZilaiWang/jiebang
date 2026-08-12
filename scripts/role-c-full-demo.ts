@@ -1,5 +1,5 @@
 import { loadKnowledgeBase } from "../src/knowledge/loader"
-import { retrieveStructuredEvidence } from "../src/rag/structured-evidence"
+import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../src/rag/learning-evidence"
 import { executeProfileRetrieval } from "../src/role-b-profile/rag-bridge"
 import type { LearnerProfile } from "../src/role-b-profile/types"
 import {
@@ -34,10 +34,16 @@ import {
 } from "../src/role-c-content"
 import { createRoleCModelGatewayFromEnv } from "../src/role-c-content/contracts/model-gateway"
 
-function resolveProvider(): ModelBackedRoleCContentProvider {
+function resolveProvider(): {
+  provider: ModelBackedRoleCContentProvider
+  modelConfigHash: string
+} {
   try {
     const gateway = createRoleCModelGatewayFromEnv(process.env)
-    return new ModelBackedRoleCContentProvider(gateway, modelBackedProviderOptionsFromEnv(process.env))
+    return {
+      provider: new ModelBackedRoleCContentProvider(gateway, modelBackedProviderOptionsFromEnv(process.env)),
+      modelConfigHash: gateway.model_config_hash,
+    }
   } catch (error) {
     console.error("模型 Provider 不可用。请复制 .env.role-c.example 为 .env.role-c.local 并配置模型参数。")
     process.exit(1)
@@ -64,44 +70,32 @@ const path = defineLearningPathNode({
   objectives: rawPath.objectives,
   assessment_blueprint: rawPath.assessment_blueprint,
 })
-const requiredSourceIds = [...new Set([
-  ...path.target_source_ids,
-  ...path.prerequisite_source_ids,
-])]
-const exactEvidence = await retrieveStructuredEvidence({
-  source_ids: requiredSourceIds,
-})
-if (exactEvidence.missing_source_ids.length > 0) {
-  throw new Error(`路径证据缺失：${exactEvidence.missing_source_ids.join("、")}`)
-}
-const exactBySource = new Map(
-  exactEvidence.results.map((item) => [item.sourceId, item]),
-)
-const recalledBySource = new Map(
-  ragResult.results.map((item) => [item.sourceId, item]),
-)
-const completeRagResult = {
-  ...ragResult,
-  topK: requiredSourceIds.length,
-  results: requiredSourceIds.map((sourceId) => {
-    const exact = exactBySource.get(sourceId)
-    if (!exact) throw new Error(`路径证据缺失：${sourceId}`)
-    const recalled = recalledBySource.get(sourceId)
-    return recalled
-      ? {
-          ...exact,
-          score: recalled.score,
-          reason: recalled.reason,
-          retrievalTrace: structuredClone(recalled.retrievalTrace),
-          retrieval_trace: structuredClone(recalled.retrieval_trace),
-        }
-      : exact
-  }),
-}
+const completeRagResult = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+  run_id: "RUN-C-FULL-DEMO",
+  retrieval_mode: "identity_hydration",
+  learner_profile: {
+    profile_version: snapshot.profile_version,
+    level: profile.level,
+    known_concepts: [...profile.known_concepts],
+    weak_concepts: [...profile.weak_concepts],
+    goal: profile.goal,
+  },
+  path_context: path,
+  learning_context: {
+    action: "advance",
+    focus_objective_ids: path.objectives.map((objective) => objective.objective_id),
+    misconception_tags: [],
+    reason_codes: ["full_demo_initial_path"],
+  },
+  resource_needs: ["fact", "prerequisite", "example", "practice_task"],
+  parent_retrieval_id: ragResult.retrieval_id,
+  top_k: Math.max(1, path.target_source_ids.length + path.prerequisite_source_ids.length),
+}), kb)
 const evidence = adaptRagResult(completeRagResult, {
   kb_version: kb.version,
-  rag_version: "rule-rag+structured-path-evidence-1.0",
+  rag_version: "learning-evidence-1.0",
 })
+const resolvedProvider = resolveProvider()
 const built = buildGenerationSpec({
   run_id: "RUN-C-FULL-DEMO",
   profile_snapshot: snapshot,
@@ -109,7 +103,7 @@ const built = buildGenerationSpec({
   evidence_pack: evidence,
   versions: {
     prompt_version: ROLE_C_PROMPT_MANIFEST_VERSION,
-    model_config_hash: "deterministic-full-reference-v1",
+    model_config_hash: resolvedProvider.modelConfigHash,
     runner_image_digest: runner.runner_image_digest,
   },
   seed: 42,
@@ -120,7 +114,7 @@ if (!built.ok) {
   process.exit(1)
 }
 
-const provider = resolveProvider()
+const provider = resolvedProvider.provider
 const agents = createRoleCAgents(provider, {
   code_lab: new TrustedCodeLabVerifier(runner),
   assessment: new TrustedAssessmentVerifier(runner),
@@ -186,13 +180,23 @@ const initialReleaseAck = await deliverRoleCToD(releasePort, pipeline)
 
 const publicAssessment = pipeline.public_artifacts.assessment
 const formId = publicAssessment.payload.form_id
-const answers: SubmissionEnvelope["answers"] = [
-  { item_id: "ITEM-O1-T1-MCQ", selected_option_id: "opt_iterate", hint_level_used: 0 },
-  { item_id: "ITEM-O2-T1-TF", selected_option_id: "opt_true", hint_level_used: 0 },
-  { item_id: "ITEM-O1-T2-TRACE", text_response: "8", hint_level_used: 0 },
-  { item_id: "ITEM-O2-T2-SHORT", text_response: "列表保存一组成绩并保持顺序，程序可逐项处理。", hint_level_used: 0 },
-  { item_id: "ITEM-O3-T3-CODE", code_response: "def average_score(scores):\n    return 0", hint_level_used: 0 },
-]
+const answers: SubmissionEnvelope["answers"] = publicAssessment.payload.items.map(
+  (item): SubmissionEnvelope["answers"][number] => {
+    if (item.modality === "mcq" || item.modality === "true_false") {
+      const option = item.options?.[0]
+      if (!option) throw new Error(`选择题 ${item.item_id} 缺少公开选项`)
+      return { item_id: item.item_id, selected_option_id: option.option_id, hint_level_used: 0 }
+    }
+    if (item.modality === "code") {
+      return {
+        item_id: item.item_id,
+        code_response: item.starter_code?.trim() || "def solution(*args):\n    return None",
+        hint_level_used: 0,
+      }
+    }
+    return { item_id: item.item_id, text_response: "暂时无法确定", hint_level_used: 0 }
+  },
+)
 const submission: SubmissionEnvelope = {
   schema_version: "1.0",
   submission_id: "SUB-C-FULL-DEMO-01",

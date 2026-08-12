@@ -60,7 +60,7 @@ function gradeArtifact(
           max_score: maxScore,
           evidence_score: 0.45,
           grader_confidence: 1,
-          hint_factor: 0.45,
+          hint_factor: 1,
           repeat_factor: 1,
           misconception_tags: [],
           feedback_code: rawScore === maxScore ? "correct" : "incorrect",
@@ -108,7 +108,34 @@ describe("role C dynamic feedback contract", () => {
     expect(decideRoundAction({ raw_score: 10, max_score: 10 }).action).toBe("advance")
   })
 
-  test("keeps a full-score action independent from discounted evidence and prior mastery", () => {
+  test("does not let a weighted total hide a weak objective", () => {
+    const objectiveResults = [
+      {
+        objective_id: "O1",
+        raw_score: 0,
+        max_score: 2,
+        accuracy: 0,
+        evidence_score: 0,
+        misconception_tags: ["missing_prerequisite"],
+      },
+      {
+        objective_id: "O2",
+        raw_score: 8,
+        max_score: 8,
+        accuracy: 1,
+        evidence_score: 1,
+        misconception_tags: [],
+      },
+    ]
+
+    expect(decideRoundAction({
+      raw_score: 8,
+      max_score: 10,
+      objective_results: objectiveResults,
+    })).toMatchObject({ action: "remediate", target_objective_ids: ["O1"] })
+  })
+
+  test("keeps evidence weighting separate from an unassisted first-attempt score", () => {
     const itemResults = gradeArtifact(10, 10, "advance", 0.8, [
       "round_accuracy_at_or_above_advancement_threshold",
     ]).payload!.item_results
@@ -116,6 +143,27 @@ describe("role C dynamic feedback contract", () => {
     const decision = decideRoundAction({ raw_score: 10, max_score: 10, objective_results: objectiveResults })
     expect(decision.action).toBe("advance")
     expect(objectiveResults[0]).toMatchObject({ accuracy: 1, evidence_score: 0.45 })
+  })
+
+  test("requires a fresh independent form after hints or prior answer exposure", () => {
+    const objectiveResults = [{
+      objective_id: "O1",
+      raw_score: 10,
+      max_score: 10,
+      accuracy: 1,
+      evidence_score: 0.45,
+      misconception_tags: [],
+    }]
+    expect(decideRoundAction({
+      raw_score: 10,
+      max_score: 10,
+      objective_results: objectiveResults,
+      independent_attempt: false,
+    })).toMatchObject({
+      action: "reinforce",
+      reason_codes: ["fresh_independent_assessment_required"],
+      target_objective_ids: ["O1"],
+    })
   })
 
   test("gives an explicit profile drift suggestion priority", () => {

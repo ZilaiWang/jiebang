@@ -128,14 +128,29 @@ export async function runAssessmentCode(
   }, fetcher)
 }
 
+export async function runCodeLab(
+  sessionId: string,
+  learnerId: string,
+  labId: string,
+  code: string,
+  fetcher: Fetcher = fetch,
+  commandId: string = newClientId("cmd"),
+): Promise<any> {
+  return command(sessionId, learnerId, {
+    command_id: commandId,
+    type: "run_code_lab",
+    payload: { lab_id: labId, code },
+  }, fetcher)
+}
+
 export async function waitForOrchestratorSession(
   sessionId: string,
   learnerId: string,
   fetcher: Fetcher = fetch,
   options: { timeoutMs?: number; intervalMs?: number; onRunning?: (session: any) => void } = {},
 ): Promise<any> {
-  // 与主 Agent 后端生成预算对齐：C 每轮最多 6 次生成尝试、单次模型超时最长 120s，
-  // 最坏情况可超 10 分钟；默认 600s 避免多轮重试时前端提前误报超时。
+  // 覆盖主 Agent 当前的有界生成与修复预算；具体重试次数由服务端统一管理，
+  // 客户端只负责在总等待窗口内轮询公开状态。
   const timeoutMs = options.timeoutMs ?? 600_000
   const intervalMs = options.intervalMs ?? 800
   const deadline = Date.now() + timeoutMs

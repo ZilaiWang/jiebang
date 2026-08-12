@@ -39,8 +39,19 @@ export interface FormalLearningPath {
   current_node_index: number
   /** 路径创建时的画像快照 */
   profile_snapshot: LearnerProfileSnapshot
+  /** B 对本次规划是否形成可执行路径的正式结论。空节点不能代表课程完成。 */
+  planning_outcome: FormalPathPlanningOutcome
   created_at: string
   updated_at: string
+}
+
+export interface FormalPathPlanningOutcome {
+  status: "ready" | "unsupported_goal" | "planning_failed"
+  code: "PATH_READY" | "UNSUPPORTED_GOAL" | "PATH_PLANNING_FAILED"
+  message: string
+  requested_source_ids: string[]
+  resolved_source_ids: string[]
+  unresolved_source_ids: string[]
 }
 
 export interface BuildFormalPathInput {
@@ -109,6 +120,35 @@ export function buildFormalPath(input: BuildFormalPathInput): FormalLearningPath
 
   // 构建有序节点列表：先修 → 目标
   const nodes = buildOrderedNodes(learnerProfile, knowledgeBase, goalItems, originalGoal)
+  const requestedSourceIds = [...new Set(goalSourceIds ?? [])]
+  const resolvedSourceIds = goalItems.map((item) => item.sourceId)
+  const unresolvedSourceIds = requestedSourceIds.filter((sourceId) => !resolvedSourceIds.includes(sourceId))
+  const planningOutcome: FormalPathPlanningOutcome = nodes.length > 0
+    ? {
+        status: "ready",
+        code: "PATH_READY",
+        message: "已形成可执行的正式学习路径",
+        requested_source_ids: requestedSourceIds,
+        resolved_source_ids: resolvedSourceIds,
+        unresolved_source_ids: unresolvedSourceIds,
+      }
+    : goalItems.length === 0
+      ? {
+          status: "unsupported_goal",
+          code: "UNSUPPORTED_GOAL",
+          message: "当前知识库没有解析出可教授的目标知识点",
+          requested_source_ids: requestedSourceIds,
+          resolved_source_ids: [],
+          unresolved_source_ids: unresolvedSourceIds,
+        }
+      : {
+          status: "planning_failed",
+          code: "PATH_PLANNING_FAILED",
+          message: "目标知识点已解析，但没有形成可执行的学习路径",
+          requested_source_ids: requestedSourceIds,
+          resolved_source_ids: resolvedSourceIds,
+          unresolved_source_ids: unresolvedSourceIds,
+        }
 
   const pathId = `PATH-${learnerProfile.learner_id}-${Date.now()}`
   const now = new Date().toISOString()
@@ -120,6 +160,7 @@ export function buildFormalPath(input: BuildFormalPathInput): FormalLearningPath
     nodes,
     current_node_index: -1,
     profile_snapshot: profileSnapshot,
+    planning_outcome: planningOutcome,
     created_at: now,
     updated_at: now,
   }
@@ -133,6 +174,17 @@ export function advanceToNextNode(input: AdvancePathInput): AdvancePathResult {
   // 深拷贝路径以保持不可变性
   const updatedPath = structuredClone(path)
   updatedPath.updated_at = new Date().toISOString()
+
+  // 空路径表示规划未形成，不是“所有节点已完成”。
+  if (updatedPath.nodes.length === 0) {
+    updatedPath.profile_snapshot = updatedProfileSnapshot
+    return {
+      nextPathNode: null,
+      nextProfileSnapshot: updatedProfileSnapshot,
+      path: updatedPath,
+      pathCompleted: false,
+    }
+  }
 
   // 标记当前节点状态
   if (updatedPath.current_node_index >= 0 && updatedPath.current_node_index < updatedPath.nodes.length) {
@@ -224,7 +276,7 @@ export function startPath(path: FormalLearningPath): AdvancePathResult {
       nextPathNode: null,
       nextProfileSnapshot: path.profile_snapshot,
       path,
-      pathCompleted: true,
+      pathCompleted: false,
     }
   }
 
@@ -265,8 +317,17 @@ export function getPathStatus(path: FormalLearningPath): FormalPathStatus {
     currentNodeIndex: path.current_node_index,
     currentNode,
     remainingNodes: Math.max(0, path.nodes.length - path.current_node_index - 1),
-    pathCompleted: path.current_node_index >= path.nodes.length,
+    pathCompleted: path.nodes.length > 0
+      && path.current_node_index >= path.nodes.length
+      && path.nodes.every((node) => node.status === "completed"),
   }
+}
+
+/** 只有非空路径的全部节点都由正式 advance 完成，才属于课程掌握完成。 */
+export function isFormalPathMastered(path: FormalLearningPath): boolean {
+  return path.nodes.length > 0
+    && path.current_node_index >= path.nodes.length
+    && path.nodes.every((node) => node.status === "completed")
 }
 
 // ── 内部实现 ──

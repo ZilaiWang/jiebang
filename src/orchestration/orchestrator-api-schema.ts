@@ -44,8 +44,17 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
   if (typeof value.command_id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(value.command_id)) {
     errors.push("command_id is required and must be safe")
   }
-  if (!["submit_diagnosis_answers", "submit_assessment_answers", "run_assessment_code", "retry"].includes(String(value.type))) {
+  if (!["submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(String(value.type))) {
     errors.push("Unsupported command type")
+  }
+  if (value.type === "run_code_lab") {
+    const payload = isRecord(value.payload) ? value.payload : null
+    if (!payload || typeof payload.lab_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.lab_id)) {
+      errors.push("run_code_lab.payload.lab_id is required and must be safe")
+    }
+    if (!payload || typeof payload.code !== "string" || payload.code.trim().length === 0 || Buffer.byteLength(payload.code, "utf8") > 100_000) {
+      errors.push("run_code_lab.payload.code is required and must be at most 100 KB")
+    }
   }
   if (value.type === "run_assessment_code") {
     const payload = isRecord(value.payload) ? value.payload : null

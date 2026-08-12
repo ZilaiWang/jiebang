@@ -39,6 +39,7 @@ import {
   ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
   ASSESSMENT_SECURE_STAGE_SYSTEM_PROMPT,
   ASSESSMENT_EXECUTION_REPAIR_SYSTEM_PROMPT,
+  ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
   CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT,
   CODE_LAB_EXECUTION_REPAIR_SYSTEM_PROMPT,
@@ -85,6 +86,7 @@ import {
   normalizeConceptSegmentAuthorPayloadLenient,
   splitConceptRequest,
   validateAssessmentPublicAuthorAgainstPlan,
+  validateAssessmentNovelty,
   validateAssessmentSecureAuthorAgainstPublic,
   validateAssessmentSecureAgainstPublic,
   deterministicAssessmentStarterRepair,
@@ -707,14 +709,22 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       max_repairs: maxRepairs,
       diagnostic_sink: this.stageFailureDiagnosticSink,
       validate: (payload) => {
-        // 确定性修复：代码题 starter_code 直接给出完整答案时，
-        // 提取函数签名替换为未完成骨架，避免消耗模型修复预算。
+        // item_plan 已冻结题型，因此先把模型容易写错的空值和代码骨架
+        // 规范为该题型的唯一合法形态；题干、选项语义与任务仍由模型生成。
         if (Array.isArray((payload as any).items)) {
           for (let i = 0; i < (payload as any).items.length; i++) {
             const item = (payload as any).items[i]
             const expected = plan[i]
-            if (expected?.modality === "code" && item?.starter_code && !assessmentStarterIsIncomplete(item.starter_code)) {
-              item.starter_code = deterministicAssessmentStarterRepair(item.starter_code)
+            if (!expected) continue
+            const isChoice = expected.modality === "mcq"
+              || expected.modality === "true_false"
+            if (!isChoice) item.options = null
+            if (expected.modality !== "code") item.starter_code = null
+            else if (!assessmentStarterIsIncomplete(item?.starter_code)) {
+              item.starter_code = deterministicAssessmentStarterRepair(
+                item?.starter_code,
+                item?.prompt,
+              )
             }
           }
         }
@@ -728,7 +738,13 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           plan,
           formId,
         )
-        return validationIssues(validateAssessmentPublicStage(request, normalized))
+        return [
+          ...validationIssues(validateAssessmentPublicStage(request, normalized)),
+          ...validateAssessmentNovelty(
+            normalized,
+            request.prior_assessment_items ?? [],
+          ),
+        ]
       },
     })
     const normalizedPublic = materializeAssessmentPublicAuthorPayload(
@@ -743,7 +759,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       input: {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
-        upstream: modelInput.upstream,
+        upstream: assessmentUpstreamWithoutHistory(modelInput.upstream),
         public_payload: normalizedPublic,
         staged_contract: {
           form_id: formId,
@@ -858,7 +874,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       input: {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
-        upstream: modelInput.upstream,
+        upstream: assessmentUpstreamWithoutHistory(modelInput.upstream),
         public_payload: publicPayload,
         prior_secure_payload: draft.secure_draft.payload,
         trusted_verification_report: {
@@ -1164,9 +1180,30 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               ? {}
               : { previous_output: previousOutput }),
             validator_report: issues,
+            repair_directive: stageRepairDirective(
+              stage.task,
+              issues,
+              attempt,
+              stage.idempotency_identity,
+            ),
           }
       try {
-        value = await this.gateway.generateStructured<T>({
+        const repairDirective = stageRepairDirective(
+          stage.task,
+          issues,
+          attempt,
+          stage.idempotency_identity,
+        )
+        value = attempt > 0
+          && previousOutput !== undefined
+          && repairDirective.replace_entire_item
+          ? await this.generateAssessmentNoveltyRepair(
+              stage,
+              previousOutput,
+              issues,
+              repairDirective,
+            )
+          : await this.gateway.generateStructured<T>({
           task: stage.task,
           system_prompt: systemPrompt,
           input: requestInput,
@@ -1185,7 +1222,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             }),
             attempt,
           }),
-        })
+          })
       } catch (error) {
         if (
           attempt < stage.max_repairs
@@ -1212,6 +1249,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           issues,
           output_hash: contentHash(value),
         }))
+        if (attempt < stage.max_repairs) continue
         break
       }
       await stage.diagnostic_sink?.(sanitizeStageFailureDiagnostic({
@@ -1224,6 +1262,54 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       }))
     }
     throw new ModelOutputValidationError(stage.task, issues)
+  }
+
+  private async generateAssessmentNoveltyRepair<T>(
+    stage: StructuredStage<T>,
+    previousOutput: T,
+    issues: string[],
+    repairDirective: ReturnType<typeof stageRepairDirective>,
+  ): Promise<T> {
+    const indices = repairDirective.required_change_indices
+    const patch = await this.gateway.generateStructured<{
+      replacements: Array<{
+        index: number
+        prompt: string
+        options: string[] | null
+        starter_code: string | null
+      }>
+    }>({
+      task: "role-c.tiered-evaluator.public.novelty-repair",
+      system_prompt: ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT,
+      input: {
+        ...asRecord(stage.input),
+        previous_output: previousOutput,
+        validator_report: issues,
+        repair_directive: repairDirective,
+      },
+      output_schema_id: "role_c_assessment_public_novelty_patch_v1",
+      output_schema: assessmentNoveltyPatchSchema(indices),
+      temperature: stage.temperature,
+      max_tokens: Math.min(stage.max_tokens, 4_000),
+      idempotency_key: idempotencyKey({
+        ...stage.idempotency_identity,
+        task: "role-c.tiered-evaluator.public.novelty-repair",
+        model_config_hash: this.gateway.model_config_hash,
+        repair_directive: repairDirective,
+      }),
+    })
+    const candidate = structuredClone(previousOutput) as T
+    const items = asRecord(candidate).items
+    if (!Array.isArray(items)) return candidate
+    for (const replacement of patch.replacements) {
+      if (!indices.includes(replacement.index) || !items[replacement.index]) continue
+      items[replacement.index] = {
+        prompt: replacement.prompt,
+        options: replacement.options,
+        starter_code: replacement.starter_code,
+      }
+    }
+    return candidate
   }
 
   private async generateConceptLessonMonolithic(
@@ -1344,11 +1430,82 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         throw error
       }
       const validation = validateAssessmentDraftStructure(request, draft as AssessmentDraft)
-      if (validation.ok) return draft as AssessmentDraft
-      issues = validationIssues(validation)
+      const noveltyIssues = validateAssessmentNovelty(
+        (draft as AssessmentDraft).public_draft.payload,
+        request.prior_assessment_items ?? [],
+      )
+      if (validation.ok && noveltyIssues.length === 0) return draft as AssessmentDraft
+      issues = [...validationIssues(validation), ...noveltyIssues]
     }
     return draft as AssessmentDraft
   }
+}
+
+function stageRepairDirective(
+  task: string,
+  issues: string[],
+  attempt: number,
+  identity: Record<string, unknown>,
+): {
+  repair_attempt: number
+  variation_token: string
+  required_change_indices: number[]
+  replace_entire_item: boolean
+} {
+  const indices = [...new Set(issues.flatMap((issue) => {
+    const match = issue.match(/items\[(\d+)\]/u)
+    return match ? [Number(match[1])] : []
+  }))]
+  return {
+    repair_attempt: attempt,
+    variation_token: contentHash({ task, identity, attempt, issues }).slice("sha256:".length, "sha256:".length + 20),
+    required_change_indices: indices,
+    replace_entire_item: task === "role-c.tiered-evaluator.public" && indices.length > 0,
+  }
+}
+
+function assessmentNoveltyPatchSchema(indices: number[]): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["replacements"],
+    properties: {
+      replacements: {
+        type: "array",
+        minItems: indices.length,
+        maxItems: indices.length,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["index", "prompt", "options", "starter_code"],
+          properties: {
+            index: { type: "integer", enum: indices },
+            prompt: { type: "string", minLength: 1 },
+            options: {
+              anyOf: [
+                { type: "null" },
+                { type: "array", minItems: 2, maxItems: 4, items: { type: "string", minLength: 1 } },
+              ],
+            },
+            starter_code: {
+              anyOf: [
+                { type: "null" },
+                { type: "string", minLength: 1 },
+              ],
+            },
+          },
+        },
+      },
+    },
+  }
+}
+
+function assessmentUpstreamWithoutHistory<T extends { prior_assessment_items?: unknown }>(upstream: T): T {
+  const result = structuredClone(upstream) as T & {
+    prior_assessment_items?: unknown
+  }
+  delete result.prior_assessment_items
+  return result
 }
 
 const REPAIRABLE_STARTER_LEAK_CODES = new Set([
@@ -1911,27 +2068,50 @@ function patchAssessmentExpectedFromReferenceFailures(
   return patched
 }
 
-function referenceFailureKind(code: string): string {
+export function referenceFailureKind(code: string): string {
+  if (code.startsWith("static:")) return "static_policy"
   const separator = code.indexOf(":")
-  if (separator <= 0) return code.startsWith("static:") ? "static_policy" : "other"
+  if (separator <= 0) return topLevelReferenceFailureKind(code)
   const reason = code.slice(separator + 1)
-  if (reason.startsWith("static:")) return "static_policy"
+  if (reason.startsWith("static:") || reason === "static_policy") return "static_policy"
   if (reason.includes("assertion_failed")) return "assertion_failed"
-  if (reason.includes("runtime_")) return reason.slice(reason.indexOf("runtime_"))
+  if (reason.includes("runtime_")) return "runtime_error"
+  if (reason.includes("syntax_error")) return "syntax_error"
+  if (reason.includes("output_limit")) return "output_limit"
+  if (reason.includes("non_json_output")) return "non_json_output"
   if (reason.includes("timeout")) return "timeout"
   if (reason.includes("runner_error")) return "runner_error"
   return "other"
 }
 
-function referenceFailureShape(code: string): string {
+export function referenceFailureShape(code: string): string {
+  if (code.startsWith("static:")) return `static_${code.slice("static:".length) || "policy"}`
   const separator = code.indexOf(":")
-  if (separator <= 0) return code.startsWith("static:") ? `static_${code.slice("static:".length) || "policy"}` : "unknown"
+  if (separator <= 0) return topLevelReferenceFailureKind(code)
   const rest = code.slice(separator + 1)
+  if (rest === "static_policy") return "static_policy"
   if (rest.startsWith("static:")) return `static_${rest.slice("static:".length) || "policy"}`
   if (rest.includes("assertion_failed")) return rest.includes("expected=") && rest.includes("actual=") ? "assertion_diff" : "assertion_tag_only"
-  if (rest.includes("runtime_")) return rest.startsWith("runtime_") ? "runtime_error" : "runtime_unknown"
+  if (rest.includes("runtime_")) return "runtime_error"
+  if (rest.includes("syntax_error")) return "syntax_error"
+  if (rest.includes("output_limit")) return "output_limit"
+  if (rest.includes("non_json_output")) return "non_json_output"
   if (rest.includes("timeout")) return "timeout"
   if (rest.includes("runner_error")) return "runner_error"
+  return "other"
+}
+
+function topLevelReferenceFailureKind(code: string): string {
+  if (code.startsWith("static:")) return "static_policy"
+  if (code === "execution_timeout") return "timeout"
+  if (code === "resource_limit_exceeded") return "resource_limit"
+  if (code.includes("output_truncated") || code.includes("output_limit")) return "output_limit"
+  if (code.includes("invalid_runner")
+    || code.includes("runner_")
+    || code.includes("docker_")
+    || code.includes("test_suite_unavailable")) {
+    return "runner_error"
+  }
   return "other"
 }
 

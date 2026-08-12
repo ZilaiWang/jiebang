@@ -37,6 +37,19 @@ export function validateSpecEvidence(spec: GenerationSpec, evidence: RagEvidence
       severity: "critical",
     })
   }
+  if (evidence.objective_coverage) {
+    const coverageByObjective = new Map(evidence.objective_coverage.map((entry) => [entry.objective_id, entry]))
+    for (const target of spec.targets) {
+      const coverage = coverageByObjective.get(target.objective_id)
+      if (!coverage || coverage.source_id !== target.source_id || coverage.status !== "strong") {
+        issues.push(issue(
+          "insufficient_objective_evidence",
+          `evidence.objective_coverage.${target.objective_id}`,
+          `目标 ${target.objective_id} 未形成 strong 事实覆盖`,
+        ))
+      }
+    }
+  }
 
   const sources = new Set(evidence.results.map((item) => item.source_id))
   const facts = new Set(

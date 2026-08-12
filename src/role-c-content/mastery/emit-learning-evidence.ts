@@ -3,6 +3,7 @@ import { C_SCHEMA_VERSION, contentHash, stableId } from "../contracts/common"
 import {
   aggregateObjectiveResults,
   decideRoundAction,
+  isIndependentAssessmentAttempt,
   type FinalLearningDecision,
 } from "../contracts/dynamic-feedback"
 import type { LearningEvidenceEvent } from "../contracts/learning-evidence-event"
@@ -36,6 +37,10 @@ export function emitLearningEvidence(
     raw_score: grade.raw_score,
     max_score: grade.max_score,
     objective_results: aggregateObjectiveResults(grade.item_results),
+    independent_attempt: isIndependentAssessmentAttempt(
+      grade.item_results,
+      context.attempt_no,
+    ),
   })
   const idempotencyKey = contentHash({
     contract: "role-c-mastery-evidence-batch-v1",

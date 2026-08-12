@@ -12,6 +12,7 @@ import {
   aggregateObjectiveResults,
   buildDynamicFeedbackResult,
   decideRoundAction,
+  isIndependentAssessmentAttempt,
   type DynamicFeedbackResult,
 } from "../contracts/dynamic-feedback"
 import type {
@@ -1673,10 +1674,15 @@ export class LearningCycleService {
     const spec = run.pipeline_input.generation_spec
     const evidence = run.pipeline_input.evidence_pack
     const objectiveResults = aggregateObjectiveResults(record.grade.item_results)
+    const independentAttempt = isIndependentAssessmentAttempt(
+      record.grade.item_results,
+      record.submission.attempt_no,
+    )
     const roundDecision = decideRoundAction({
       raw_score: record.grade.raw_score,
       max_score: record.grade.max_score,
       objective_results: objectiveResults,
+      independent_attempt: independentAttempt,
     })
     const provisionalGrade = finalizeGradeResult({
       grade: record.grade,
@@ -1716,6 +1722,7 @@ export class LearningCycleService {
       max_score: record.grade.max_score,
       objective_results: objectiveResults,
       profile_drift_suggestion: drift,
+      independent_attempt: independentAttempt,
     })
     const gradeArtifact = this.dependencies.feedback_generator
       ? await finalizeGradeResultWithFeedback({

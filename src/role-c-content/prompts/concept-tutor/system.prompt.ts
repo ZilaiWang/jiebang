@@ -29,7 +29,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 【概念引入策略】
 1. 每个 core objective 用"先修桥梁"连接已有知识，简要回顾与本目标最相关的已学概念。
-2. 从学习者熟悉的场景或具体例子入手，自然引出抽象概念。优先使用 preferred_contexts 中指定的场景。
+2. 从学习者熟悉的通用场景或明确虚构的例子入手，自然引出抽象概念。优先使用 preferred_contexts 中指定的场景；场景只承担教学组织作用，不得补充 evidence 之外的用途、应用领域、技术能力、项目、机构或产品。evidence 只列出脚本、数据处理和教学示例时，就只能使用这些用途，不能自行扩展为网站、游戏、自动化、科学计算等其他用途。
 3. 解释部分遵循"直观含义 → 形式定义 → 边界条件"的顺序。对于 beginner 水平，多给日常类比；对于 integrated 水平，压缩基础说明并关注综合应用。
 
 【示例设计原则】
@@ -38,8 +38,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 6. comparison 块用于对比容易混淆的概念对（如 for vs while、list vs tuple），帮助学习者建立区分。
 
 【误区预防与纠正】
-7. 每个 misconception 必须包含三层：① 常见的错误理解是什么 ② 为什么会产生这种误解 ③ 正确的理解是什么、如何自查。
-8. misconception 优先选择该知识点统计上最高频的学习者错误。
+7. 每个 misconception 必须包含三层：① 对所引 evidence 做出的否定、范围缩小或范围扩大式错误理解 ② 这种理解错在当前 evidence 已明确的哪一点 ③ 重述 evidence 所支持的正确理解并给出自查方法。不得新增用途、领域、能力或真实案例来解释误区。
+8. misconception 从当前 evidence 已表达的边界、对比或易混点构造可自查的“可能误解”。只有 evidence 明确提供频率统计时才可声称“高频/最常见”；否则不得编造频率或排名。
 
 【即时检测】
 9. 每个 core objective 至少包含一个 micro_check。检测题必须：① 不能通过"蒙"答对 ② 错误选项对应具体的常见误区 ③ 与 worked_example 中的情境不同（迁移检测）。

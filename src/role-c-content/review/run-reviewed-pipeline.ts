@@ -552,6 +552,7 @@ function validReviewFinding(finding: ContentReviewFinding): boolean {
     && finding.evidence_refs.length > 0
     && finding.evidence_refs.every(nonEmpty)
     && new Set(finding.evidence_refs).size === finding.evidence_refs.length
+    && (finding.source_decision === undefined || ["revise", "reject"].includes(finding.source_decision))
     && locatorValid
 }
 
@@ -566,6 +567,7 @@ function findingIdentity(finding: ContentReviewFinding): ContentReviewFinding {
     fix_scope: finding.fix_scope,
     locator: finding.locator ? structuredClone(finding.locator) : undefined,
     evidence_refs: [...finding.evidence_refs],
+    source_decision: finding.source_decision,
   }
 }
 

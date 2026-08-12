@@ -26,6 +26,10 @@ async function json(response: Response): Promise<any> {
   return response.json()
 }
 
+function normalizePublicPrompt(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[\s，,。！？；：“”"'、`()\[\]{}\-_]+/g, "")
+}
+
 function ownerRequest(url: string, init: RequestInit = {}): Request {
   const headers = new Headers(init.headers)
   headers.set("authorization", "Bearer learner-interactive-001")
@@ -49,6 +53,21 @@ async function createSession(handle: (request: Request) => Promise<Response>) {
     }),
   }))
   return { response, body: await json(response) }
+}
+
+async function waitForSessionGeneration(
+  handle: (request: Request) => Promise<Response>,
+  sessionId: string,
+  timeoutMs = 120_000,
+): Promise<any> {
+  const deadline = Date.now() + timeoutMs
+  let latest: any
+  do {
+    latest = await json(await handle(ownerRequest(`http://localhost/orchestrator/sessions/${sessionId}`)))
+    if (latest.status !== "running") return latest
+    await Bun.sleep(50)
+  } while (Date.now() < deadline)
+  throw new Error(`Session ${sessionId} did not finish background generation within ${timeoutMs}ms`)
 }
 
 describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP API", () => {
@@ -293,6 +312,8 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
     expect(body.learning_resources.code_lab.status).toBe("ready")
     expect(body.assessment.status).toBe("ready")
     expect(body.assessment.payload.items.length).toBeGreaterThan(0)
+    const normalizedDiagnosisPrompts = new Set(created.body.waiting_for.items.map((item: any) => normalizePublicPrompt(item.question)))
+    expect(body.assessment.payload.items.every((item: any) => !normalizedDiagnosisPrompts.has(normalizePublicPrompt(item.prompt)))).toBe(true)
     expect(JSON.stringify(body)).not.toContain("assessment_secure")
     expect(JSON.stringify(body)).not.toContain("correct_option_id")
     expect(JSON.stringify(body)).not.toContain("hidden_tests")
@@ -302,6 +323,10 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
     expect(persistedText).not.toContain("assessment_secure")
     expect(persistedText).not.toContain("hidden_tests")
     expect(persistedText).not.toContain("reference_solution")
+    const learnerMemory = JSON.parse(await Bun.file(join(data_root, "learner-memory", "learner-interactive-001.json")).text())
+    for (const item of body.assessment.payload.items) {
+      expect(learnerMemory.recent_assessment_items.some((prior: any) => prior.item_id === item.item_id)).toBe(true)
+    }
 
     const replay = await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
       method: "POST",
@@ -325,6 +350,33 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
       body: JSON.stringify({ command_id: "CMD-DIAGNOSIS-001", type: "submit_diagnosis_answers", payload: { answers: diagnosisAnswers } }),
     })))
 
+    const lab = prepared.learning_resources.code_lab.payload
+    const labExecution = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command_id: "CMD-RUN-LAB-001",
+        type: "run_code_lab",
+        payload: { lab_id: lab.lab_id, code: lab.starter_code },
+      }),
+    })))
+    expect(labExecution.code_execution.labId).toBe(lab.lab_id)
+    expect(["passed", "failed", "timeout"]).toContain(labExecution.code_execution.status)
+
+    const codeItem = prepared.assessment.payload.items.find((item: any) => item.modality === "code")
+    expect(codeItem).toBeDefined()
+    const assessmentExecution = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command_id: "CMD-RUN-ASSESSMENT-001",
+        type: "run_assessment_code",
+        payload: { item_id: codeItem.item_id, code: codeItem.starter_code },
+      }),
+    })))
+    expect(assessmentExecution.code_execution.itemId).toBe(codeItem.item_id)
+    expect(["passed", "failed", "timeout"]).toContain(assessmentExecution.code_execution.status)
+
     const assessmentAnswers = prepared.assessment.payload.items.map((item: any) => ({
       item_id: item.item_id,
       ...(item.modality === "mcq" || item.modality === "true_false"
@@ -343,11 +395,12 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
         payload: { answers: assessmentAnswers },
       }),
     }))
-    const body = await json(response)
+    const accepted = await json(response)
 
     expect(response.status).toBe(200)
-    expect(body.feedback.round_score.max_score).toBeGreaterThan(0)
-    expect(["remediate", "reinforce", "advance"]).toContain(body.feedback.final_decision.action)
+    expect(accepted.feedback.round_score.max_score).toBeGreaterThan(0)
+    expect(["remediate", "reinforce", "advance"]).toContain(accepted.feedback.final_decision.action)
+    const body = await waitForSessionGeneration(handle, "SESSION-INTERACTIVE-001")
     expect(body.round_no).toBe(2)
     expect(body.status).toBe("waiting_for_user")
     expect(body.waiting_for.type).toBe("assessment_answers")
@@ -367,9 +420,12 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ command_id: "CMD-ASSESSMENT-002", type: "submit_assessment_answers", payload: { answers: secondAnswers } }),
     }))
-    const secondBody = await json(secondResponse)
+    const secondAccepted = await json(secondResponse)
     expect(secondResponse.status).toBe(200)
-    expect(secondBody.feedback.run_id).toBe(body.assessment.run_id)
+    expect(secondAccepted.feedback.run_id).toBe(body.assessment.run_id)
+    const secondBody = secondAccepted.status === "running"
+      ? await waitForSessionGeneration(handle, "SESSION-INTERACTIVE-001")
+      : secondAccepted
     expect(secondBody.round_no).toBe(3)
 
     const reloadedHandler = createLearningOrchestratorApiHandler({ data_root })

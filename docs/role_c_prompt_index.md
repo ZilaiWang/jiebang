@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 |------|------|
-| `common-policy.ts` | 版本号（`c-prompts-1.16.2`）、权威边界、个性化边界、next_round 语义 |
-| `staged-repair.prompt.ts` | 分阶段生成通用修复模板，code-lab / evaluator 共用 |
+| `common-policy.ts` | 版本号（`c-prompts-1.20.2`）、权威边界、外审修订协议、个性化边界、next_round 语义 |
+| `staged-repair.prompt.ts` | 分阶段生成通用修复模板，包含隐藏测试修复与重复题完整重命题要求 |
 
 ## Concept Tutor
 
@@ -37,7 +37,7 @@
 | `evaluator/author-repair.prompt.ts` | 命题校验失败时的定向修复提示词，含隐藏测试泄漏处理指引 |
 | `evaluator/feedback.prompt.ts` | 学习反馈生成。含正向引导策略、具体可行动原则、formative / summative 双模式说明 |
 | `evaluator/grader.prompt.ts` | 盲审量规判断器。met / unmet / uncertain 的判断标准与 confidence 取值指导 |
-| `evaluator/staged.prompt.ts` | 分阶段命题（3个提示词）：公开出题阶段（题干/选项/难度控制）、私有答案阶段（答案合同/rubric/代码测试）、可信执行修订阶段（修复策略） |
+| `evaluator/staged.prompt.ts` | 分阶段命题：公开出题、重复题局部重命题、私有答案和可信执行修订 |
 
 ## Critic
 

@@ -103,6 +103,10 @@ describe("orchestrator UI state mapping", () => {
 
   test("maps blocked sessions to a truthful recovery action", () => {
     expect(blockedSessionAction({ status: "failed", profile: {}, formal_path: {}, current_path_node: {}, blocked_reason: "C blocked" })).toEqual({ canRetry: true, label: "原样重试 C 资源生成" })
+    expect(blockedSessionAction({ status: "blocked", profile: {}, formal_path: {}, current_path_node: {}, blocked_reason: "LEARNING_SUPPORT_REQUIRED: 当前节点未掌握" })).toEqual({ canRetry: false, label: "重新诊断或调整目标" })
+    expect(blockedSessionAction({ status: "blocked", terminal_outcome: { kind: "unsupported_goal" } })).toEqual({ canRetry: false, label: "调整学习目标" })
+    expect(blockedSessionAction({ status: "blocked", terminal_outcome: { kind: "insufficient_evidence" } })).toEqual({ canRetry: false, label: "调整目标或补充资料" })
+    expect(blockedSessionAction({ status: "blocked", terminal_outcome: { kind: "planning_failed" } })).toEqual({ canRetry: false, label: "重新规划或调整目标" })
     expect(blockedSessionAction({ status: "failed", profile: null, formal_path: null, current_path_node: null, blocked_reason: "legacy failure" })).toEqual({ canRetry: false, label: "重新诊断" })
   })
 

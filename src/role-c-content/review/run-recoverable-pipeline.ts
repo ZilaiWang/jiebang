@@ -842,6 +842,7 @@ function reviewEvidenceGapRequest(
     reason: directive.reason,
     learner_level: profile.level,
     required_facts: requiredFacts,
+    target_objectives: structuredClone(path.objectives),
   }
 }
 
@@ -924,6 +925,7 @@ function pathEvidenceGapRequest(
     reason,
     learner_level: profile.level,
     required_facts: requiredFacts,
+    target_objectives: structuredClone(path.objectives),
   }
 }
 

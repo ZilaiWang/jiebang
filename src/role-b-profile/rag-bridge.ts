@@ -2,8 +2,8 @@
 // 输出: 符合 schemas/rag_request.schema.json 的 rag_request，以及实际执行检索的结果
 // 作用: B → A 交接的唯一出口。query 拼接格式是全组契约
 // （docs/team_integration_guide.md 与联调说明 §7），只允许在这里生成，禁止各处手拼。
-import { retrieveKnowledge } from "../rag/retriever"
 import type { RagResult } from "../rag/retriever"
+import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import type { LearnerProfile, RagRequest } from "./types"
 
 // B→A 请求的 top_k 后端策略值，不依赖已下线的旧 D 联调脚本
@@ -35,12 +35,23 @@ export function buildRagRequest(profile: LearnerProfile, topK: number = DEFAULT_
 export async function executeProfileRetrieval(
   profile: LearnerProfile,
   topK: number = DEFAULT_TOP_K,
+  options: { run_id?: string; profile_version?: string; parent_retrieval_id?: string } = {},
 ): Promise<{ rag_request: RagRequest; rag_result: RagResult }> {
   const request = buildRagRequest(profile, topK)
-  const result = await retrieveKnowledge({
-    query: request.query,
-    learnerLevel: profile.level,
-    topK: request.top_k,
+  const evidenceRequest = buildLearningEvidenceRequest({
+    run_id: options.run_id ?? `PROFILE-${profile.learner_id}`,
+    retrieval_mode: "semantic_discovery",
+    learner_profile: {
+      profile_version: options.profile_version ?? `PROFILE-${profile.learner_id}`,
+      level: profile.level,
+      known_concepts: [...profile.known_concepts],
+      weak_concepts: [...profile.weak_concepts],
+      goal: profile.goal,
+    },
+    resource_needs: ["fact", "prerequisite"],
+    parent_retrieval_id: options.parent_retrieval_id,
+    top_k: request.top_k,
   })
+  const result = await retrieveLearningEvidence(evidenceRequest)
   return { rag_request: request, rag_result: result }
 }

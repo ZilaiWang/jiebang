@@ -46,7 +46,13 @@
       "type": "array",
       "uniqueItems": true,
       "items": { "type": "string", "minLength": 1 }
-    }
+    },
+    "candidate_source_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z]+[0-9]{3}$" }
+    },
+    "candidate_retrieval_id": { "type": "string", "minLength": 1 }
   },
   "additionalProperties": false
 }

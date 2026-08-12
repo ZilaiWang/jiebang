@@ -94,7 +94,9 @@ export function createLearningOrchestratorApiHandler(
   const providerWritesEnabled = isLoopbackHostname(options.server_hostname ?? "127.0.0.1")
     || isPrivateNetworkHostname(options.server_hostname ?? "127.0.0.1")
   hydrateProviderEnvironmentFromDisk(providerConfigPath, providerEnvironment)
-  const sessions = new InteractiveSessionStore(dataRoot)
+  const sessions = new InteractiveSessionStore(dataRoot, {
+    model_environment: providerEnvironment,
+  })
 
   return async function handle(request: Request): Promise<Response> {
     try {

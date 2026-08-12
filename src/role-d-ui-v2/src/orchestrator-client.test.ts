@@ -4,6 +4,8 @@ import {
   getOrchestratorEvents,
   getOrchestratorSession,
   getProviderConfiguration,
+  runAssessmentCode,
+  runCodeLab,
   saveProviderConfiguration,
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
@@ -74,6 +76,28 @@ describe("orchestrator browser client", () => {
       { command_id: "CMD-DIAG-1", type: "submit_diagnosis_answers", payload: { answers: { "DIAG-1": "A" } } },
       { command_id: "CMD-ASSESS-1", type: "submit_assessment_answers", payload: { answers: [{ item_id: "ITEM-1", selected_option_id: "A", hint_level_used: 0 }] } },
     ])
+  })
+
+  test("runs a published assessment code item through the main Agent command", async () => {
+    const { calls, fetcher } = fakeFetch([{ session_id: "SESSION-1", code_execution: { status: "passed" } }])
+    await runAssessmentCode("SESSION-1", learnerId, "ITEM-CODE-1", "print(1)", fetcher, "CMD-RUN-1")
+
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      command_id: "CMD-RUN-1",
+      type: "run_assessment_code",
+      payload: { item_id: "ITEM-CODE-1", code: "print(1)" },
+    })
+  })
+
+  test("runs a published code lab through the main Agent command", async () => {
+    const { calls, fetcher } = fakeFetch([{ session_id: "SESSION-1", code_execution: { status: "passed" } }])
+    await runCodeLab("SESSION-1", learnerId, "LAB-1", "print(1)", fetcher, "CMD-LAB-1")
+
+    expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({
+      command_id: "CMD-LAB-1",
+      type: "run_code_lab",
+      payload: { lab_id: "LAB-1", code: "print(1)" },
+    })
   })
 
   test("reads and saves provider configuration without a learner authorization header", async () => {

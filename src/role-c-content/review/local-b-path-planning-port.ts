@@ -52,9 +52,13 @@ export function createLocalBPathPlanningPort(
             prerequisitePlan.reason,
           )
         }
+        const planningKnowledgeBase = knowledgeBaseForCandidates(
+          localKnowledgeBase,
+          request,
+        )
         const planned = planRecoveryPath({
           learnerProfile: profileForB(request),
-          knowledgeBase: localKnowledgeBase,
+          knowledgeBase: planningKnowledgeBase,
           auditResult: auditForB(
             request,
             prerequisitePlan?.source_ids.slice(0, 1),
@@ -153,6 +157,23 @@ export function createLocalBPathPlanningPort(
         )
       }
     },
+  }
+}
+
+function knowledgeBaseForCandidates(
+  knowledgeBase: KnowledgeBase,
+  request: RoleBPathPlanningRequest,
+): KnowledgeBase {
+  if (!request.candidate_source_ids) return knowledgeBase
+  const allowed = new Set([
+    ...request.candidate_source_ids,
+    ...request.current_path_node.target_source_ids,
+    ...request.current_path_node.prerequisite_source_ids,
+    ...request.missing_prerequisite_source_ids,
+  ])
+  return {
+    ...knowledgeBase,
+    items: knowledgeBase.items.filter((item) => allowed.has(item.sourceId)),
   }
 }
 

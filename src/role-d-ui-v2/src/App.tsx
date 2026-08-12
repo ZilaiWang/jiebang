@@ -52,6 +52,8 @@ import {
   getProviderConfiguration,
   newClientId,
   retryOrchestratorSession,
+  runAssessmentCode as requestAssessmentCode,
+  runCodeLab as requestCodeLab,
   saveProviderConfiguration,
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
@@ -94,6 +96,8 @@ type LiveContextValue = {
   create: (input: { goal: string; nodeId?: string; custom?: boolean; planName: string }) => Promise<void>
   submitDiagnosis: () => Promise<void>
   submitAssessment: () => Promise<void>
+  runAssessmentItemCode: (itemId: string, code: string) => Promise<void>
+  runPublishedCodeLab: (labId: string, code: string) => Promise<void>
   retry: () => Promise<void>
   refreshEvents: () => Promise<void>
   reset: () => void
@@ -268,7 +272,12 @@ export function App() {
     diagnosisAnswers,
     assessmentAnswers,
     setDiagnosisAnswer: (itemId, answer) => setDiagnosisAnswers((current) => ({ ...current, [itemId]: answer })),
-    setAssessmentAnswer: (itemId, answer) => setAssessmentAnswers((current) => ({ ...current, [itemId]: answer })),
+    setAssessmentAnswer: (itemId, answer) => {
+      setAssessmentAnswers((current) => ({ ...current, [itemId]: answer }))
+      setLiveSession((current) => current?.code_execution?.itemId === itemId
+        ? { ...current, code_execution: null }
+        : current)
+    },
     clearAssessmentAnswers: () => setAssessmentAnswers({}),
     create: async ({ goal, nodeId, custom, planName }) => {
       if (!currentUser || !currentPlan) {
@@ -326,6 +335,26 @@ export function App() {
         setPage("feedback")
       } catch (reason) { setError(reason instanceof Error ? reason.message : "提交正式测评失败") }
       finally { setBusy("") }
+    },
+    runAssessmentItemCode: async (itemId, code) => {
+      if (!liveSession || !itemId || !code.trim()) return
+      setBusy("正在通过 Docker 检查这段代码…")
+      setError("")
+      try {
+        applySession(await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code))
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "代码运行失败")
+      } finally { setBusy("") }
+    },
+    runPublishedCodeLab: async (labId, code) => {
+      if (!liveSession || !labId || !code.trim()) return
+      setBusy("正在通过 Docker 运行代码实验…")
+      setError("")
+      try {
+        applySession(await requestCodeLab(liveSession.session_id, learnerId, labId, code))
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "代码实验运行失败")
+      } finally { setBusy("") }
     },
     retry: async () => {
       if (!liveSession) return
@@ -570,7 +599,7 @@ function GoalPage({ onContinue: _onContinue }: { onContinue: () => void }) {
   const selectedTopic = chapters.flatMap((chapter) => chapter.topics).find((topic) => topic.node_id === selected)
   return <div className="page narrow-page"><PageHeading kicker="建立学习目标" title="这次，你想真正学会什么？" description="课程目录来自仓库中的 Python curriculum；也可以保留自定义目标模式。历史学习情况由主 Agent读取，不再要求你重复填写。" />
     <div className="segmented"><button className={mode === "catalog" ? "is-active" : ""} onClick={() => setMode("catalog")} type="button">从课程目录选择</button><button className={mode === "custom" ? "is-active" : ""} onClick={() => setMode("custom")} type="button">自定义学习目标</button></div>
-    {mode === "catalog" ? <div className="chapter-grid">{chapters.map((chapter) => <article className={`chapter-card ${chapter.tone}`} key={chapter.node_id}><h2>{chapter.title}</h2>{chapter.topics.map((topic) => <button className={selected === topic.node_id ? "is-selected" : ""} type="button" key={topic.node_id} onClick={() => setSelected(topic.node_id)}><span>{topic.title}</span>{selected === topic.node_id && <Check size={16} />}</button>)}</article>)}</div> : <article className="custom-goal-card"><label htmlFor="custom-goal">用自己的话描述学习目标</label><textarea id="custom-goal" value={customGoal} onChange={(event) => setCustomGoal(event.target.value)} /><p>主 Agent会把自定义描述映射到真实课程知识与题库；D 不在本地推断结果。</p></article>}
+    {mode === "catalog" ? <div className="chapter-grid">{chapters.map((chapter) => <article className={`chapter-card ${chapter.tone}`} key={chapter.node_id}><h2>{chapter.title}</h2>{chapter.topics.map((topic) => <button className={selected === topic.node_id ? "is-selected" : ""} type="button" key={topic.node_id} onClick={() => setSelected(topic.node_id)}><span>{topic.title}</span>{selected === topic.node_id && <Check size={16} />}</button>)}</article>)}</div> : <article className="custom-goal-card"><label htmlFor="custom-goal">用自己的话描述学习目标</label><textarea id="custom-goal" value={customGoal} onChange={(event) => setCustomGoal(event.target.value)} /><p>主 Agent会把自定义描述映射到真实课程知识与学习路径；D 不在本地推断结果。</p></article>}
     <div className="history-read-card"><div className="history-icon"><History /></div><div><b>历史学习情况由主 Agent处理</b><p>D 不要求用户手动填写薄弱知识，也不预先声称历史已经读取；画像生成后再展示主 Agent公开结果。</p></div><span>服务端负责</span></div>
     <div className="page-actions"><button className="primary-action" disabled={Boolean(busy) || (mode === "custom" ? customGoal.trim().length === 0 : !selectedTopic)} type="button" onClick={() => void create(mode === "custom" ? { goal: customGoal.trim(), custom: true, planName: planNameFromGoal({ mode: "custom", customGoal }) } : { goal: `学习${selectedTopic?.title ?? "Python基础"}`, nodeId: selectedTopic?.node_id, planName: planNameFromGoal({ mode: "catalog", chapterTitle: selectedTopic?.title ?? "Python基础" }) })}>{busy ? "正在创建会话…" : "确认目标并创建主 Agent会话"} <ArrowRight /></button></div>
   </div>
@@ -584,8 +613,8 @@ function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => void }) 
   const [index, setIndex] = useState(0)
   const answers = isLive ? liveAnswers : {}
   const item = previewItems[index]
-  if (!item) return <EmptyState title="当前合同样例没有公开题目" body="D 不会为了页面完整而自造诊断题。正式接入后由主 Agent返回 A 题库中的公开题目。" />
-  return <div className="page diagnosis-page"><PageHeading kicker="客观诊断 · 主 Agent实时题目" title="一次只回答一个问题" description="题目由主 Agent基于学习目标、历史与 A 题库动态选择；D 只展示公开题干和来源。" />
+  if (!item) return <EmptyState title="当前会话没有公开题目" body="D 不会为了页面完整而自造诊断题。主 Agent 会在取得 A 的事实证据后调用 AI 当次命题。" />
+  return <div className="page diagnosis-page"><PageHeading kicker="客观诊断 · 主 Agent实时题目" title="一次只回答一个问题" description="题目由 AI 根据当前学习目标、A 的事实证据和公开题面历史当次生成；D 只展示公开题干和来源。" />
     <section className="diagnosis-shell"><div className="diagnosis-progress"><span>问题 {index + 1} / {previewItems.length}</span><div><i style={{ width: `${((index + 1) / previewItems.length) * 100}%` }} /></div><b>{Math.round(((index + 1) / previewItems.length) * 100)}%</b></div><article className="question-card"><div className="question-meta"><span>{item.difficulty ?? "诊断题"}</span><span>{item.concept}</span><span>{item.source_id}</span></div><h2>{item.question}</h2>{item.options?.length ? <div className="diagnosis-options">{item.options.map((option: string, optionIndex: number) => <button type="button" className={answers[item.item_id] === option ? "is-selected" : ""} onClick={() => setDiagnosisAnswer(item.item_id, option)} key={`${optionIndex}-${option}`}><span>{String.fromCharCode(65 + optionIndex)}</span><b>{option}</b>{answers[item.item_id] === option && <Check size={18} />}</button>)}</div> : <textarea placeholder="写下你的回答" value={answers[item.item_id] ?? ""} onChange={(event) => setDiagnosisAnswer(item.item_id, event.target.value)} />}
       <details className="why-question"><summary><CircleHelp size={16} /> 为什么问我这道题？</summary><p>用于诊断：{item.concept}。题目来源：{item.source_id}{item.fact_id ? ` / ${item.fact_id}` : ""}。D 不在浏览器中保存答案键。</p></details></article>
       <div className="diagnosis-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}><ChevronLeft /> 上一题</button>{index < previewItems.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>下一题 <ChevronRight /></button> : <button className="primary-action" disabled={Boolean(busy) || !diagnosisComplete(activeSession, answers)} type="button" onClick={() => void submitDiagnosis()}>{busy ? "正在生成学习资源…" : "提交诊断并生成学习方案"} <ArrowRight /></button>}</div></section>
@@ -656,7 +685,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
 }
 
 function LessonPage({ onAssessment }: { onAssessment: () => void }) {
-  const { retry, reset, busy } = useLive()
+  const { retry, reset, runPublishedCodeLab, busy } = useLive()
   const activeSession = useRequiredSession()
   const lesson = activeSession.learning_resources.concept_lesson?.payload
   const lab = activeSession.learning_resources.code_lab?.payload
@@ -667,13 +696,18 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const [sideTab, setSideTab] = useState<SideTab>("hint")
   const [activeSection, setActiveSection] = useState("prerequisite")
   const [code, setCode] = useState(lab?.starter_code ?? "")
+  const [lastExecutedCode, setLastExecutedCode] = useState<string | null>(null)
+  useEffect(() => {
+    setCode(lab?.starter_code ?? "")
+    setLastExecutedCode(null)
+  }, [activeSession.round_no, activeSession.learning_resources.code_lab?.payload?.lab_id])
   if (!lesson) return <BlockedResourceState session={activeSession} busy={busy} onRetry={() => void retry()} onRestart={reset} title="互动学习资源未通过可信发布" />
   const sections = lesson ? lessonOutline(lesson) : []
   return <div className="lesson-page"><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}</h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
     <div className="lesson-layout">
       <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { setActiveSection(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>当前内容结构</span><div><i style={{ width: "58%" }} /></div><small>由 C 公开字段直接渲染</small></div></aside>
       <section className="lesson-main"><div className="lesson-tabs" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => setTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => setTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => setTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
-        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={setActiveSection} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} /> : <ChecksContent lesson={lesson} />}
+        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={setActiveSection} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
       </section>
       <aside className="lesson-side"><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</aside>
     </div>
@@ -774,9 +808,9 @@ function CodeViewer({ code }: { code: string }) {
   return <div className="code-viewer"><div className="code-lines">{lines.map((line, index) => <div className={index === effectiveStep ? "is-current" : index < effectiveStep ? "is-past" : ""} key={`${index}-${line}`}><span>{index + 1}</span><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(line || " ") }} /></div>)}</div><div className="code-controls"><button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))}><ChevronLeft size={15} /> 上一步</button><button type="button" onClick={() => { setPlaying((value) => !value); if (!playing && effectiveStep >= lines.length - 1) setStep(0) }}>{playing ? <Pause size={15} /> : <Play size={15} />} {playing ? "暂停播放" : "自动演示"}</button><button type="button" onClick={() => setStep((value) => Math.min(lines.length - 1, value + 1))}>下一步 <ChevronRight size={15} /></button></div></div>
 }
 
-function LabContent({ lab, code, setCode }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void }) {
+function LabContent({ lab, code, setCode, busy, execution, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onRun: () => Promise<void> }) {
   if (!lab) return <EmptyState title="代码实验尚未发布" body="D 不会自造 starter code 或测试。请等待主 Agent返回 learning_resources.code_lab。" />
-  return <div className="lab-workspace"><section className="lab-instructions"><span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span><h2>{lab.title}</h2>{lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}<div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div></section><section className="editor-panel"><header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header><PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" /><footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button></footer><div className="run-result is-visible"><b>当前主 Agent合同未提供代码运行命令</b><p>D 仅展示 C 发布的 starter code 与公开测试，不在浏览器伪造运行输出或通过状态。</p></div></section></div>
+  return <div className="lab-workspace"><section className="lab-instructions"><span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span><h2>{lab.title}</h2>{lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}<div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div></section><section className="editor-panel"><header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header><PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" /><footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="run-button" disabled={Boolean(busy) || !code.trim()} type="button" onClick={() => void onRun()}><Play size={15} /> {busy ? "运行中…" : "运行代码"}</button></footer>{execution ? <div className="run-result is-visible" role="status"><b>{execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b><p>{typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>{execution.feedback?.map((entry) => <small key={entry.code}>{entry.message}</small>)}</div> : null}</section></div>
 }
 
 function ChecksContent({ lesson }: { lesson: LessonPayload }) {
@@ -808,7 +842,7 @@ function AgentPanel() {
 }
 
 function AssessmentPage({ onFeedback: _onFeedback }: { onFeedback: () => void }) {
-  const { isLive, assessmentAnswers: answers, setAssessmentAnswer, clearAssessmentAnswers, submitAssessment, retry, reset, busy } = useLive()
+  const { isLive, assessmentAnswers: answers, setAssessmentAnswer, clearAssessmentAnswers, submitAssessment, runAssessmentItemCode, retry, reset, busy } = useLive()
   const activeSession = useRequiredSession()
   const assessment = activeSession.assessment?.payload
   const [index, setIndex] = useState(0)
@@ -824,8 +858,11 @@ function AssessmentPage({ onFeedback: _onFeedback }: { onFeedback: () => void })
   const item = assessment.items[index]
   const complete = Object.values(answers).filter(Boolean).length
   const isCodePrompt = item.modality === "code" || item.modality === "trace"
+  const codeExecution = activeSession.code_execution?.itemId === item.item_id
+    ? activeSession.code_execution
+    : null
   return <div className="page assessment-page"><PageHeading kicker={`正式测评 · ${assessment.title}`} title="提交后进入 Role C 正式评分" description="正确答案、评分规范与隐藏测试始终保留在服务端。当前作答会通过主 Agent命令提交，不在 D 中评分。" />
-    <section className="assessment-shell"><aside><b>测评进度</b>{assessment.items.map((candidate, itemIndex) => <button className={itemIndex === index ? "is-active" : answers[candidate.item_id] ? "is-complete" : ""} type="button" onClick={() => setIndex(itemIndex)} key={candidate.item_id}><span>{itemIndex + 1}</span><small>{modalityLabel(candidate.modality)}</small></button>)}<p>{complete} / {assessment.items.length} 已作答</p></aside><article className="formal-question"><div className="question-meta"><span>第 {index + 1} 题</span><span>Tier {item.tier}</span><span>{item.max_score} 分</span></div><h2 className={isCodePrompt ? "formal-question-prompt is-code" : "formal-question-prompt"}>{item.prompt}</h2>{item.modality === "code" ? <PythonCodeEditor value={answers[item.item_id] ?? item.starter_code ?? ""} onChange={(value) => setAssessmentAnswer(item.item_id, value)} minHeight={360} ariaLabel={`正式测评第 ${index + 1} 题 Python 编辑器`} /> : item.options?.length ? <div className="formal-options">{item.options.map((option) => <button className={answers[item.item_id] === option.option_id ? "is-selected" : ""} type="button" onClick={() => setAssessmentAnswer(item.item_id, option.option_id)} key={option.option_id}><span>{option.label}</span><b>{option.text}</b></button>)}</div> : <textarea rows={6} value={answers[item.item_id] ?? ""} onChange={(event) => setAssessmentAnswer(item.item_id, event.target.value)} /> }<div className="formal-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}>上一题</button>{index < assessment.items.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>保存并下一题</button> : <button className="primary-action" disabled={Boolean(busy) || !assessmentComplete(activeSession, answers) || !isLive} type="button" onClick={() => void submitAssessment()}>{busy ? "正在正式评分…" : "提交正式测评"} <ArrowRight /></button>}</div></article></section>
+    <section className="assessment-shell"><aside><b>测评进度</b>{assessment.items.map((candidate, itemIndex) => <button className={itemIndex === index ? "is-active" : answers[candidate.item_id] ? "is-complete" : ""} type="button" onClick={() => setIndex(itemIndex)} key={candidate.item_id}><span>{itemIndex + 1}</span><small>{modalityLabel(candidate.modality)}</small></button>)}<p>{complete} / {assessment.items.length} 已作答</p></aside><article className="formal-question"><div className="question-meta"><span>第 {index + 1} 题</span><span>Tier {item.tier}</span><span>{item.max_score} 分</span></div><h2 className={isCodePrompt ? "formal-question-prompt is-code" : "formal-question-prompt"}>{item.prompt}</h2>{item.modality === "code" ? <><PythonCodeEditor value={answers[item.item_id] ?? item.starter_code ?? ""} onChange={(value) => setAssessmentAnswer(item.item_id, value)} minHeight={360} ariaLabel={`正式测评第 ${index + 1} 题 Python 编辑器`} /><div className="assessment-code-run"><button className="secondary-action" disabled={Boolean(busy) || !(answers[item.item_id] ?? item.starter_code ?? "").trim()} type="button" onClick={() => void runAssessmentItemCode(item.item_id, answers[item.item_id] ?? item.starter_code ?? "")}>运行代码</button>{codeExecution ? <div className="run-result is-visible" role="status"><b>{codeExecution.status === "passed" ? "代码检查通过" : codeExecution.status === "blocked" ? "代码暂时无法运行" : "代码检查未通过"}</b><p>{typeof codeExecution.passedChecks === "number" && typeof codeExecution.totalChecks === "number" ? `通过 ${codeExecution.passedChecks} / ${codeExecution.totalChecks} 项检查。` : codeExecution.message ?? "服务端未返回公开检查摘要。"}</p>{codeExecution.feedback?.map((entry) => <small key={entry.code}>{entry.message}</small>)}</div> : null}</div></> : item.options?.length ? <div className="formal-options">{item.options.map((option) => <button className={answers[item.item_id] === option.option_id ? "is-selected" : ""} type="button" onClick={() => setAssessmentAnswer(item.item_id, option.option_id)} key={option.option_id}><span>{option.label}</span><b>{option.text}</b></button>)}</div> : <textarea rows={6} value={answers[item.item_id] ?? ""} onChange={(event) => setAssessmentAnswer(item.item_id, event.target.value)} /> }<div className="formal-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}>上一题</button>{index < assessment.items.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>保存并下一题</button> : <button className="primary-action" disabled={Boolean(busy) || !assessmentComplete(activeSession, answers) || !isLive} type="button" onClick={() => void submitAssessment()}>{busy ? "正在正式评分…" : "提交正式测评"} <ArrowRight /></button>}</div></article></section>
   </div>
 }
 

@@ -30,6 +30,20 @@ export interface AlignmentObjection {
   severity: "warning" | "critical"
   evidence: string[]
   proposed_action: string
+  /** 以下字段保留外部 A/B 审核原意；内部跨产物门禁产生的 objection 可不提供。 */
+  review_instruction_id?: string
+  review_source?: "fact_audit" | "teaching_audit" | "review_adapter"
+  review_code?: string
+  review_message?: string
+  review_decision?: "revise" | "reject"
+  fix_scope?: "artifact" | "new_evidence" | "new_spec"
+  target_agent?: "concept-tutor" | "code-lab" | "tiered-evaluator"
+  locator?: {
+    field: string
+    ref_id: string
+    parent_block_id?: string
+    objective_id?: string
+  }
 }
 
 export interface AlignmentReport {

@@ -1,6 +1,7 @@
-import type { RagResult, RagResultItem } from "../../rag/retriever"
+import type { ObjectiveEvidenceCoverage, RagResult, RagResultItem, RetrievalContext } from "../../rag/retriever"
 import type { KnowledgeDifficulty } from "../../knowledge/types"
 import { C_SCHEMA_VERSION, stableId, type EvidenceRef, type SchemaVersion } from "./common"
+import type { LearningPathNode } from "./profile-adapter"
 
 export type RagMatchStatus = "strong" | "weak" | "no_match"
 
@@ -67,6 +68,8 @@ export interface RagEvidencePack {
   kb_version: string
   rag_version: string
   results: RagEvidenceItem[]
+  retrieval_context?: RetrievalContext
+  objective_coverage?: ObjectiveEvidenceCoverage[]
 }
 
 /** Answer-free projection that may cross C's public boundary. */
@@ -86,6 +89,12 @@ export function projectPublicRagEvidencePack(
     match_status: pack.match_status,
     kb_version: pack.kb_version,
     rag_version: pack.rag_version,
+    retrieval_context: pack.retrieval_context
+      ? structuredClone(pack.retrieval_context)
+      : undefined,
+    objective_coverage: pack.objective_coverage
+      ? structuredClone(pack.objective_coverage)
+      : undefined,
     results: pack.results.map(({ quiz_seeds: _quizSeeds, ...item }) =>
       structuredClone(item)),
   }
@@ -100,6 +109,7 @@ export interface EvidenceGapRequest {
   reason: string
   learner_level: KnowledgeDifficulty
   required_facts: EvidenceRef[]
+  target_objectives?: LearningPathNode["objectives"]
 }
 
 export interface FactAuditPacket {
@@ -145,17 +155,25 @@ export function adaptRagResult(result: RagResult, options: AdaptRagResultOptions
     kb_version: options.kb_version,
     rag_version: options.rag_version,
     source_ids: normalizedResults.map((item) => item.source_id),
+    retrieval_context: result.retrieval_context,
+    objective_coverage: result.objective_coverage,
   }
 
   return {
     schema_version: C_SCHEMA_VERSION,
-    retrieval_id: options.retrieval_id ?? stableId("RAG", identity),
+    retrieval_id: options.retrieval_id ?? result.retrieval_id ?? stableId("RAG", identity),
     query: result.query,
     learner_level: result.learnerLevel,
     top_k: result.topK,
-    match_status: classifyMatch(result.results),
+    match_status: result.match_status ?? classifyMatch(result.results),
     kb_version: options.kb_version,
     rag_version: options.rag_version,
+    retrieval_context: result.retrieval_context
+      ? structuredClone(result.retrieval_context)
+      : undefined,
+    objective_coverage: result.objective_coverage
+      ? structuredClone(result.objective_coverage)
+      : undefined,
     results: normalizedResults,
   }
 }

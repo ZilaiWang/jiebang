@@ -28,6 +28,14 @@ export function toAlignmentObjections(
       ? [...instruction.evidence_refs]
       : [instruction.locator?.ref_id ?? instruction.artifact_id],
     proposed_action: instruction.proposed_action,
+    review_instruction_id: instruction.instruction_id,
+    review_source: instruction.source,
+    review_code: instruction.code,
+    review_message: instruction.message,
+    review_decision: instruction.source_decision,
+    fix_scope: instruction.fix_scope,
+    target_agent: instruction.target_agent,
+    ...(instruction.locator ? { locator: structuredClone(instruction.locator) } : {}),
   }))
 }
 

@@ -55,6 +55,10 @@ const DANGEROUS_PATTERNS: Array<[RegExp, string]> = [
   [/\b__builtins__\b/, "builtins_introspection"],
   [/\.(?:f_back|f_locals|f_globals|gi_frame|cr_frame|ag_frame)\b/, "frame_introspection"],
   [/\b(?:__class__|__bases__|__mro__|__subclasses__|__globals__|__code__|__closure__)\b/, "object_introspection"],
+  // Keep preflight aligned with the Docker harness, which rejects every
+  // double-underscore attribute access. Method definitions such as __init__
+  // are names rather than Attribute nodes and remain valid.
+  [/\.\s*__[A-Za-z0-9_]*__\b/, "object_introspection"],
 ]
 
 /** Conservative preflight. Isolation remains mandatory even when this report passes. */

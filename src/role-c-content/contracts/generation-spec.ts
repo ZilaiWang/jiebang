@@ -370,6 +370,7 @@ function createGapRequest(
     reason,
     learner_level: input.profile_snapshot.level,
     required_facts: uniqueRequiredFacts,
+    target_objectives: structuredClone(input.path_node.objectives),
   }
 }
 

@@ -23,13 +23,11 @@ import type { KnowledgeBase } from "../knowledge/types"
 import { canonicalizeConcept } from "../role-b-profile/concept-canonicalizer"
 import {
   type RagResult,
-  type RagResultItem,
 } from "../rag/retriever"
 import {
-  retrieveStructuredEvidenceFromKnowledgeBase,
   type StructuredEvidenceRetrievalPort,
-  type StructuredEvidenceRequest,
 } from "../rag/structured-evidence"
+import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import { join, resolve } from "node:path"
 import { appendFile, mkdir } from "node:fs/promises"
 import { roleCGenerationBudgets, shouldRetryWholeGenerationReason } from "./generation-budget"
@@ -270,9 +268,9 @@ export async function generateRoleCForRoleDWithRuntime(
     }
   }
 
-  // 真实模型生成有少量随机失败（code-lab secure 阶段、可信执行修复等），
-  // 至多重试 5 次，每次使用新 runId 重建 spec 避免产物 ID 冲突；
-  // 仍失败才向调用方阻塞。审核通过即停止。
+  // 真实模型生成可能在 code-lab secure 阶段或可信执行修复中失败。
+  // 重试次数统一由 generation budget 提供；每次使用新 runId 重建 spec
+  // 避免产物 ID 冲突，审核通过即停止。
   const provider = runtime.provider ?? new ModelBackedRoleCContentProvider(
     modelGateway!,
     {
@@ -326,6 +324,9 @@ export async function generateRoleCForRoleDWithRuntime(
       generation_spec: built.spec,
       evidence_pack: evidencePack,
       ...(input.next_round_context ? { next_round_context: input.next_round_context } : {}),
+      ...(input.prior_assessment_items?.length
+        ? { prior_assessment_items: input.prior_assessment_items }
+        : {}),
     }
     pipeline = await runRecoverableReviewedCPipeline(
       pipelineInput,
@@ -335,7 +336,10 @@ export async function generateRoleCForRoleDWithRuntime(
       review_port: runtime.reviewPort
         ?? createLocalABContentReviewPort({ knowledge_base: knowledgeBase }),
       profile_snapshot: profileSnapshot,
-      path_planning_port: createLocalBPathPlanningPort(knowledgeBase),
+      path_planning_port: createEvidenceAwareBPathPlanningPort(
+        knowledgeBase,
+        runtime.pathPlanningPort ?? createLocalBPathPlanningPort(knowledgeBase),
+      ),
       evidence_refresh_port: createRoleCRecoveryEvidenceRefreshPort({
         kbVersion: input.kbVersion,
         knowledgeBase,
@@ -414,6 +418,7 @@ export async function generateRoleCForRoleDWithRuntime(
     artifacts,
     workflow,
     runId: finalSpec.run_id,
+    specId: finalSpec.spec_id,
     learningSession: {
       sessionId: learningSessionId,
       formId: assessment.payload!.form_id,
@@ -443,8 +448,6 @@ export interface RoleCRecoveryEvidenceRefreshOptions {
   structuredEvidencePort?: StructuredEvidenceRetrievalPort
 }
 
-const RECOVERY_SOURCE_BATCH_SIZE = 8
-
 /**
  * Resolves B's fixed recovery path through A's identity-based evidence port.
  * Text retrieval remains reserved for the initial stage, before source IDs are known.
@@ -452,15 +455,6 @@ const RECOVERY_SOURCE_BATCH_SIZE = 8
 export function createRoleCRecoveryEvidenceRefreshPort(
   options: RoleCRecoveryEvidenceRefreshOptions,
 ): EvidenceRefreshPort {
-  const retrieve = options.structuredEvidencePort
-    ? options.structuredEvidencePort.retrieveStructuredEvidence.bind(
-        options.structuredEvidencePort,
-      )
-    : async (request: StructuredEvidenceRequest) =>
-        retrieveStructuredEvidenceFromKnowledgeBase(
-          request,
-          options.knowledgeBase,
-        )
   return {
     async refreshEvidence(request) {
       const sourceIds = [...new Set(request.target_source_ids)]
@@ -468,69 +462,42 @@ export function createRoleCRecoveryEvidenceRefreshPort(
         request.required_facts,
         sourceIds,
       )
-      const batches = chunk(sourceIds, RECOVERY_SOURCE_BATCH_SIZE)
-      const recalled = await Promise.all(batches.map((batch) =>
-        retrieve({
-          source_ids: batch,
-          fact_ids_by_source: Object.fromEntries(batch.flatMap((sourceId) => {
-            const factIds = requiredFactsBySource[sourceId]
-            return factIds && factIds.length > 0
-              ? [[sourceId, factIds]]
-              : []
-          })),
-        })))
-      const requested = new Set(sourceIds)
-      const mergedBySource = new Map<string, RagResultItem>()
-      const missingSources = new Set<string>()
-      const missingFactKeys = new Set<string>()
-      for (const result of recalled) {
-        for (const sourceId of result.missing_source_ids) {
-          if (requested.has(sourceId)) missingSources.add(sourceId)
-        }
-        for (const fact of result.missing_fact_refs) {
-          if (requested.has(fact.source_id)) {
-            missingFactKeys.add(`${fact.source_id}:${fact.fact_id}`)
-          }
-        }
-        for (const item of result.results) {
-          const sourceId = sourceIdOf(item)
-          if (requested.has(sourceId) && !mergedBySource.has(sourceId)) {
-            mergedBySource.set(sourceId, structuredClone(item))
-          }
-        }
-      }
-      for (const sourceId of sourceIds) {
-        if (!mergedBySource.has(sourceId)) missingSources.add(sourceId)
-        const item = mergedBySource.get(sourceId)
-        const availableFacts = new Set(item?.facts.map((fact) =>
-          fact.factId ?? fact.fact_id) ?? [])
-        for (const factId of requiredFactsBySource[sourceId] ?? []) {
-          if (!availableFacts.has(factId)) {
-            missingFactKeys.add(`${sourceId}:${factId}`)
-          }
-        }
-      }
-      const merged: RagResult = {
-        query: `按标识刷新证据：${sourceIds.join("、")}`,
-        learnerLevel: request.learner_level,
-        topK: Math.max(1, sourceIds.length),
-        results: sourceIds.flatMap((sourceId) => {
-          if (missingSources.has(sourceId)) return []
-          const item = mergedBySource.get(sourceId)
-          if (!item) return []
-          const filtered = {
-            ...item,
-            facts: item.facts.filter((fact) =>
-              !missingFactKeys.has(
-                `${sourceId}:${fact.factId ?? fact.fact_id}`,
-              )),
-          }
-          return [filtered]
-        }),
-      }
+      const objectives = request.target_objectives?.length
+        ? structuredClone(request.target_objectives)
+        : sourceIds.map((sourceId) => ({
+            objective_id: `RECOVERY-${sourceId}`,
+            source_id: sourceId,
+            required_fact_ids: requiredFactsBySource[sourceId] ?? [],
+            observable_behavior: "explain" as const,
+            importance: "core" as const,
+          }))
+      const merged = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+        run_id: request.run_id,
+        retrieval_mode: "evidence_repair",
+        learner_profile: {
+          profile_version: `RECOVERY-${request.run_id}`,
+          level: request.learner_level,
+          known_concepts: [],
+          weak_concepts: [],
+          goal: request.reason,
+        },
+        path_context: {
+          node_id: `RECOVERY-${request.request_id}`,
+          target_source_ids: sourceIds,
+          prerequisite_source_ids: [],
+          goal: request.reason,
+          objectives,
+        },
+        resource_needs: request.missing_type === "example"
+          ? ["fact", "example"]
+          : request.missing_type === "practice_task"
+            ? ["fact", "practice_task"]
+            : ["fact"],
+        top_k: Math.max(1, sourceIds.length),
+      }), options.knowledgeBase, options.structuredEvidencePort)
       const evidence = adaptRagResult(merged, {
         kb_version: options.kbVersion,
-        rag_version: "structured-evidence-1.0-recovery",
+        rag_version: "learning-evidence-1.0-recovery",
         retrieval_id: stableId("RAG-RECOVERY", {
           request_id: request.request_id,
           source_ids: sourceIds,
@@ -538,14 +505,69 @@ export function createRoleCRecoveryEvidenceRefreshPort(
           kb_version: options.kbVersion,
         }),
       })
-      return {
-        ...evidence,
-        match_status: missingSources.size === 0 && missingFactKeys.size === 0
-          ? "strong"
-          : evidence.results.length > 0
-            ? "weak"
-            : "no_match",
+      return evidence
+    },
+  }
+}
+
+/** Main-Agent adapter: A discovers candidates, then B owns the path decision. */
+export function createEvidenceAwareBPathPlanningPort(
+  knowledgeBase: KnowledgeBase,
+  basePort: RoleBPathPlanningPort = createLocalBPathPlanningPort(knowledgeBase),
+): RoleBPathPlanningPort {
+  return {
+    async replanLearningPath(request) {
+      if (request.failed_dimensions.includes("prerequisite_coverage")
+        && request.missing_prerequisite_source_ids.length > 0) {
+        return basePort.replanLearningPath({
+          ...request,
+          candidate_source_ids: [...request.missing_prerequisite_source_ids],
+        })
       }
+      const discovery = await retrieveLearningEvidence(buildLearningEvidenceRequest({
+        run_id: `${request.run_id}-PATH-DISCOVERY`,
+        retrieval_mode: "semantic_discovery",
+        learner_profile: {
+          profile_version: request.profile_snapshot.profile_version,
+          level: request.profile_snapshot.level,
+          known_concepts: [...request.profile_snapshot.known_concepts],
+          weak_concepts: [...request.profile_snapshot.weak_concepts],
+          goal: request.profile_snapshot.goal,
+        },
+        planning_context: {
+          current_node_id: request.current_path_node.node_id,
+          current_goal: request.current_path_node.goal,
+          observable_behaviors: request.current_path_node.objectives.map((item) => item.observable_behavior),
+          excluded_source_ids: [...request.current_path_node.target_source_ids],
+        },
+        learning_context: {
+          action: request.failed_dimensions.length === 0 ? "advance" : "remediate",
+          focus_objective_ids: request.current_path_node.objectives.map((item) => item.objective_id),
+          misconception_tags: [],
+          reason_codes: request.failed_dimensions.length > 0
+            ? [...request.failed_dimensions]
+            : ["path_advance"],
+        },
+        resource_needs: ["fact", "prerequisite"],
+        top_k: 8,
+      }), knowledgeBase)
+      if (discovery.results.length === 0) {
+        return {
+          status: "blocked",
+          request_id: request.request_id,
+          code: "UNSUPPORTED_TARGET",
+          reason: "A 未发现可供 B 重规划的相关知识来源",
+          failed_dimensions: [...request.failed_dimensions],
+          missing_prerequisite_source_ids: [...request.missing_prerequisite_source_ids],
+          ...(request.recommended_level ? { recommended_level: request.recommended_level } : {}),
+          can_recover: false,
+        }
+      }
+      return basePort.replanLearningPath({
+        ...request,
+        candidate_source_ids: discovery.results.map((item) => item.source_id ?? item.sourceId),
+        candidate_retrieval_id: discovery.retrieval_id,
+      })
     },
   }
 }
@@ -587,14 +609,6 @@ export function profileExpectationForTarget(
   const knownSourceIds = new Set(profile.known_concepts.flatMap((concept) =>
     canonicalizeConcept(concept, knowledgeBase).sourceIds))
   return knownSourceIds.has(sourceId) ? "known" : "weak"
-}
-
-function chunk<T>(values: T[], size: number): T[][] {
-  const chunks: T[][] = []
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size))
-  }
-  return chunks
 }
 
 function toRoleDRecovery(recovery: ReviewRecoverySummary) {
@@ -694,6 +708,7 @@ export async function runRoleCCodeLab(
     return {
       status: "blocked",
       executionId: input.executionId,
+      labId: input.labId,
       code: "RUNNER_UNAVAILABLE",
       message: "代码执行服务暂不可用",
     }
@@ -717,6 +732,7 @@ export async function runRoleCCodeLab(
     return {
       status: "blocked",
       executionId: result.execution_id,
+      labId: input.labId,
       code: result.code,
       message: result.message,
     }
@@ -836,8 +852,10 @@ export async function continueRoleCAfterSubmission(
       kbVersion: knowledgeBase.version,
       knowledgeBase,
     })
-  const pathPlanningPort = runtime.pathPlanningPort
-    ?? createLocalBPathPlanningPort(knowledgeBase)
+  const pathPlanningPort = createEvidenceAwareBPathPlanningPort(
+    knowledgeBase,
+    runtime.pathPlanningPort ?? createLocalBPathPlanningPort(knowledgeBase),
+  )
 
   let nextPathNode = input.nextPathNode
     ? structuredClone(input.nextPathNode)
@@ -1191,6 +1209,7 @@ async function refreshNextPathEvidence(
           source_id: objective.source_id,
           fact_id: factId,
         }))),
+      target_objectives: structuredClone(pathNode.objectives),
     })
   } catch (error) {
     return {
@@ -1290,10 +1309,6 @@ function resolveRoleCLearningPersistence(
     return createAtomicRoleCLearningPersistence(runtime.dataDirectory)
   }
   return defaultInMemoryLearningPersistence
-}
-
-function sourceIdOf(item: RagResultItem): string {
-  return item.sourceId ?? item.source_id
 }
 
 function reviewAuditSummary(
@@ -1522,4 +1537,3 @@ function stageLabel(event: AgentTraceEvent): string {
   if (event.agent === "tiered-evaluator") return "分阶测评"
   return event.event_type === "c.pipeline.ready" ? "C 内容发布" : "C 入口校验"
 }
-

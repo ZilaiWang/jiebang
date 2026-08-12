@@ -1,7 +1,6 @@
 # Learning Orchestrator 持续会话 HTTP API
 
-> 更新于 2026-08-08：与 `src/orchestration/interactive-session.ts` 当前实现对齐。
-> 主要变化：新增 `run_assessment_code` 命令与 `code_execution` 公开字段；正式测评改为五题 code-pair 结构（不再含主观简答题）；提交测评后下一轮内容后台生成（`running` 状态 + 前端轮询）；`GET /sessions/:id` 触发旧会话自动迁移；**锚点路由已彻底移除**（`submit_anchor_answers` 命令、`anchor_routing`/`anchor_answers` 字段及相关函数全部删除，正式测评直接按 B 初始画像生成，无需锚点题）；**advance 到新节点时自动按当前节点从知识库补全缺失的 A 证据**（`ensureCurrentNodeEvidence`），不再因首轮 RAG 快照缺后续节点证据而阻塞。
+> 与 `src/orchestration/interactive-session.ts` 当前实现对齐。持续会话支持诊断、C 内容生成、代码执行、正式测评、动态反馈、新卷续轮和 B 路径调整。
 
 ## 启动
 
@@ -83,7 +82,7 @@ Content-Type: application/json
 }
 ```
 
-诊断题的可信答案只保存在服务端会话文件中（`private.diagnosis_answer_key`），不会返回浏览器。
+诊断目标由 B 根据学习目标、先修和历史薄弱点选定；A 提供对应 source/fact；AI 按 `diagnostic-author-1.0.1` 当次生成单选题面、选项和答案。模型输出必须通过 source/fact 绑定、选项唯一性和历史防重校验。可信答案只保存在服务端会话文件中（`private.diagnosis_answer_key`），不会返回浏览器。
 
 ### 查询并恢复会话
 
@@ -144,7 +143,22 @@ Content-Type: application/json
 }
 ```
 
-正式测评结构为五题 code-pair：`mcq(1分) + true_false(1分) + trace(2分) + code(2分) + code(4分)`，不再包含 `short_answer` 主观题；所有题目的 citations 均绑定到 A 知识库真实 fact。
+正式测评结构为五题 code-pair：`mcq(1分) + true_false(1分) + trace(2分) + code(2分) + code(4分)`。题面、选项、数据场景、代码任务和私有答案由 AI 根据当前 Spec 与 A 证据当次生成；所有 citations 均绑定到 A 知识库真实 fact。
+
+#### 运行代码实验
+
+```json
+{
+  "command_id": "CMD-LAB-001",
+  "type": "run_code_lab",
+  "payload": {
+    "lab_id": "LAB-O1",
+    "code": "def solve(values):\n    return len(values)"
+  }
+}
+```
+
+仅在当前轮 C 资源已经发布并等待 `assessment_answers` 时允许。主 Agent 使用当前会话中冻结的 C run/session 身份调用 Docker Runner；隐藏测试和参考实现始终由服务端安全存储读取。公开结果写入 `code_execution`，不会接受 D 提交的测试或评分标准。
 
 #### 提交测评答案
 
@@ -166,13 +180,14 @@ Content-Type: application/json
 
 代码题通过 `code_response` 字段提交。主 Agent 使用服务端私有的 `assessment_secure` 评分，返回公开 `feedback.final_decision`，然后执行：
 
-- `remediate`：保持当前节点，按聚焦目标生成针对性补救轮（准确率 < 0.4）；同一节点补救轮次达到上限（3）后强制推进下一节点；
-- `reinforce`：保持当前节点，生成巩固强化轮（准确率 < 0.8）；同一节点强化轮次达到上限（2）后强制推进下一节点；
-- `advance`：推进 B 正式路径，`round_no + 1`，把下一节点目标作为 focus 传给 C；**下一节点若不在首轮 RAG 快照中，主 Agent 自动按当前节点 target/先修从知识库按 source_id 补全 A 证据**（`ensureCurrentNodeEvidence`）后再生成，不再阻塞；
+- `remediate`：任一目标准确率低于 0.4，保持当前节点并生成新的针对性补救轮；
+- `reinforce`：无补救目标、但任一目标准确率低于 0.8，或本卷已用提示/暴露答案，保持当前节点并生成新变式；
+- `advance`：推进 B 正式路径，`round_no + 1`，把下一节点目标作为 focus 传给 C；主 Agent 为新节点创建独立的 `identity_hydration` 请求，A 按节点的目标、先修和必要事实取证，结果强匹配后进入生成；
 - `reprofile`：画像漂移（画像预期与真实表现连续冲突：预期 known 但 mastery < 0.45，或预期 weak 但 mastery > 0.85，单目标冲突即触发），回到诊断阶段重建学习者画像；
+- 连续补救 3 轮或巩固 2 轮后：由 B 根据最新画像重新规划先修/支持路径；没有新的可用路径时返回 `blocked` 和 `LEARNING_SUPPORT_REQUIRED`，节点仍为未掌握；
 - 路径走完：返回 `completed`。
 
-每次评分后主 Agent 会把本轮 mastery 写回 learner-memory（按 source_id），跨会话学习记忆真实生效；同节点轮次上限（`MAX_REMEDIATE_ROUNDS_PER_NODE=3` / `MAX_REINFORCE_ROUNDS_PER_NODE=2`）防止学习者无限循环在同一节点。
+每次评分后主 Agent 会把本轮 mastery 写回 learner-memory（按 source_id）。诊断题创建后、正式试卷发布前，公开题面即登记到防重记忆，因此未提交的试卷也不会在后续会话中重复使用。服务端使用同一学习者的全部公开题面执行确定性防重，只把最近 200 道交给诊断命题器和 `tiered-evaluator` 的公开出题阶段作为主动换题参考。题干相同、仅更换干扰项、复制或仅格式变化都会要求 AI 重新命制；相同知识目标和相近难度的新变式可以使用。历史中不保存正确答案、参考实现或隐藏测试。
 
 reprofile 触发链路(2026-08-08 修复):画像预期现在来自 B 画像真实 known/weak_concepts(`profileExpectationForTarget` 按 source_id 映射,不再硬编码 weak);`profile_version` 跨轮稳定(`<run_id>-profile-E<epoch>`),同一画像纪元内多轮 evidence 跨轮累积,reprofile 后 epoch+1 使新画像从零累积;触发门槛 `profile_drift_minimum_conflicts=1` 适配每节点单 objective。
 
@@ -237,6 +252,11 @@ Authorization: Bearer learner-001
 - `code_execution`（最近一次 `run_assessment_code` 的公开摘要，无则 `null`）
 - `feedback`
 - `blocked_reason`
+- `terminal_outcome`（课程终态；`completed_mastered / unsupported_goal / insufficient_evidence / planning_failed / learning_support_required`，临时生成故障为 `null`）
+
+`status=completed` 只表示非空正式路径的全部节点均已通过测评，此时
+`terminal_outcome.code=PATH_MASTERED`。没有路径节点不会被解释为完成；目标不受支持、
+证据不足和路径规划失败分别使用结构化终态与建议动作。
 
 公开响应不会包含：
 

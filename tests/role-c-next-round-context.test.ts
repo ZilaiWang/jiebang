@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { projectNextRoundContext } from "../src/role-c-content/context/next-round-context"
 import { buildConceptTutorModelInput } from "../src/role-c-content/context/concept-context"
 import { buildCodeLabModelInput } from "../src/role-c-content/context/code-lab-context"
+import { buildAssessmentAuthorModelInput } from "../src/role-c-content/context/assessment-context"
 
 const baseContext = {
   request_id: "REQ-1",
@@ -82,5 +83,78 @@ describe("next round context projection", () => {
     )
     expect(reinforceProjected?.teaching_strategy).toBe("same_difficulty_new_variant")
     expect(reinforceProjected?.variation_requirements.scenario_policy).toContain("禁止继续使用成绩")
+  })
+
+  test("shows public question history to the first-round assessment author", () => {
+    const priorAssessmentItems = [{
+        form_id: "FORM-1",
+        item_id: "ITEM-1",
+        objective_id: "O1",
+        modality: "mcq" as const,
+        prompt: "以前的公开题干",
+        options: ["选项一", "选项二"],
+      }, {
+        form_id: "FORM-0",
+        item_id: "ITEM-0",
+        objective_id: "O-PRIOR",
+        modality: "mcq" as const,
+        prompt: "其他目标的已发布题干",
+        options: ["选项甲", "选项乙"],
+      }]
+    const evaluator = buildAssessmentAuthorModelInput({
+      generation_spec: {
+        spec_id: "SPEC-1",
+        run_id: "RUN-1",
+        path_node: {
+          node_id: "NODE-1",
+          target_source_ids: ["K007"],
+          prerequisite_source_ids: [],
+          goal: "goal",
+          objectives: [{
+            objective_id: "O1",
+            source_id: "K007",
+            required_fact_ids: ["F1"],
+            observable_behavior: "trace",
+            importance: "core",
+          }],
+          assessment_blueprint: {
+            tier_1_count: 1,
+            tier_2_count: 0,
+            tier_3_count: 0,
+            required_modalities: ["mcq"],
+          },
+        },
+        targets: [{
+          objective_id: "O1",
+          source_id: "K007",
+          required_fact_ids: ["F1"],
+          observable_behavior: "trace",
+          importance: "core",
+        }],
+        learner_adaptation: { scaffold_level: 1, reading_density: "medium" },
+        difficulty: { domain_complexity: 1, cognitive_demand: 1, reasoning_steps: 1, code_complexity: 1, prerequisite_load: 1, scaffold_strength: 1 },
+        policies: { seed: 7, max_semantic_revision: 1, max_tool_retry: 1 },
+      },
+      evidence_pack: { retrieval_id: "RAG-1", results: [] },
+      concept_artifact: {
+        artifact_id: "CONCEPT-1",
+        payload: {
+          objective_coverage: [],
+          misconceptions: [],
+          objective_ids: [],
+          explanation_blocks: [],
+          worked_examples: [],
+          summary: [],
+        },
+      },
+      prior_assessment_items: priorAssessmentItems,
+    } as never)
+
+    expect(evaluator.upstream.next_round_context).toBeUndefined()
+    expect(evaluator.upstream.prior_assessment_items?.[0]?.prompt).toBe("以前的公开题干")
+    expect(evaluator.upstream.prior_assessment_items).toHaveLength(2)
+    expect(evaluator.upstream.novelty_brief?.history_count).toBe(2)
+    expect(evaluator.upstream.novelty_brief?.variant_id).toContain("SPEC-1-NOVEL-2")
+    expect(evaluator.upstream.novelty_brief?.required_design_moves).toHaveLength(4)
   })
 })

@@ -15,6 +15,7 @@ import {
   advanceToNextNode,
   startPath,
   getPathStatus,
+  isFormalPathMastered,
 } from "../src/role-b-profile/teaching-audit/formal-path"
 import type {
   BuildFormalPathInput,
@@ -301,7 +302,7 @@ describe("startPath", () => {
     expect(result.pathCompleted).toBe(false)
   })
 
-  test("empty path → pathCompleted immediately", async () => {
+  test("empty path reports unsupported goal instead of course completion", async () => {
     const kb = await getKB()
     const profile = makeProfile({
       known_concepts: [],
@@ -317,10 +318,15 @@ describe("startPath", () => {
     })
 
     expect(path.nodes).toEqual([])
+    expect(path.planning_outcome).toMatchObject({
+      status: "unsupported_goal",
+      code: "UNSUPPORTED_GOAL",
+    })
 
     const result = startPath(path)
     expect(result.nextPathNode).toBeNull()
-    expect(result.pathCompleted).toBe(true)
+    expect(result.pathCompleted).toBe(false)
+    expect(isFormalPathMastered(result.path)).toBe(false)
   })
 })
 
@@ -482,6 +488,7 @@ describe("advanceToNextNode", () => {
     // 所有节点应为 completed
     expect(path.current_node_index).toBe(path.nodes.length)
     expect(result.pathCompleted).toBe(true)
+    expect(isFormalPathMastered(result.path)).toBe(true)
     expect(result.nextPathNode).toBeNull()
   })
 

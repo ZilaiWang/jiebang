@@ -154,17 +154,27 @@ function reviewArtifact(
   const blocks = extractReviewBlocks(target)
   const blocksById = new Map(blocks.map((block) => [block.review_block_id, block]))
   const claimBlocks = blocks.filter((block) => block.fact_audit_mode === "claim")
-  const factAudit = auditGeneratedContent({
-    artifactId: target.artifact.artifact_id,
-    ragResult,
-    generatedContent: {
-      blocks: claimBlocks.map((block) => ({
-        blockId: block.review_block_id,
-        text: block.text,
-        citations: block.citations.map(({ source_id, fact_id }) => ({ source_id, fact_id })),
-      })),
-    },
-  })
+  // Some artifact sections are intentionally reviewed by the citation-only or
+  // evidence-anchor checks below. An empty claim subset is therefore not an
+  // empty artifact and must not be sent to A's standalone empty-input guard.
+  const factAudit: FactAuditResult = claimBlocks.length === 0
+    ? {
+        artifactId: target.artifact.artifact_id,
+        status: "pass",
+        checkedClaims: [],
+        conflicts: [],
+      }
+    : auditGeneratedContent({
+        artifactId: target.artifact.artifact_id,
+        ragResult,
+        generatedContent: {
+          blocks: claimBlocks.map((block) => ({
+            blockId: block.review_block_id,
+            text: block.text,
+            citations: block.citations.map(({ source_id, fact_id }) => ({ source_id, fact_id })),
+          })),
+        },
+      })
   const citationAudit = auditCitationOnlyBlocks(
     blocks.filter((block) => block.fact_audit_mode === "citation_only"),
     request.evidence_pack,
@@ -199,7 +209,14 @@ function reviewArtifact(
     ...citationAudit.findings,
     ...evidenceAnchorAudit.findings,
     ...(includePathFindings ? teachingFindings(target, teachingAudit) : []),
-  ]
+  ].map((finding): ContentReviewFinding => ({
+    ...finding,
+    source_decision: finding.source === "teaching_audit"
+      ? blockingReviewDecision(teachingAudit.status)
+      : finding.source === "fact_audit"
+        ? blockingReviewDecision(factStatus)
+        : blockingReviewDecision(decision),
+  }))
   const objectiveIds = request.generation_spec.targets.map((target) => target.objective_id)
   const instructions = findings.flatMap((finding) =>
     toInstructions(
@@ -221,6 +238,10 @@ function reviewArtifact(
       revision_instructions: instructions,
     },
   }
+}
+
+function blockingReviewDecision(status: "pass" | "revise" | "reject"): "revise" | "reject" {
+  return status === "reject" ? "reject" : "revise"
 }
 
 /**

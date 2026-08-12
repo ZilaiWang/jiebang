@@ -14,6 +14,7 @@ import type { GenerationSpec } from "../contracts/generation-spec"
 import type { FactAuditPacket, FactAuditPort, RagEvidencePack } from "../contracts/evidence-pack"
 import type {
   NextRoundGenerationContext,
+  PriorAssessmentItem,
   RoleCAgents,
   TieredEvaluatorRequest,
 } from "../agents/types"
@@ -38,6 +39,8 @@ export interface CPipelineInput {
   evidence_pack: RagEvidencePack
   /** Frozen trigger and focus shared by all three Agents in a follow-up round. */
   next_round_context?: NextRoundGenerationContext
+  /** Public question history is independent of learning action and exists on the first round too. */
+  prior_assessment_items?: PriorAssessmentItem[]
 }
 
 export interface CPipelineResult {
@@ -224,6 +227,37 @@ function validateNextRoundContext(
   return issues
 }
 
+function validateAssessmentHistory(
+  history: CPipelineInput["prior_assessment_items"],
+): Array<{ path: string; message: string }> {
+  const issues: Array<{ path: string; message: string }> = []
+  if (history !== undefined) {
+    if (!Array.isArray(history) || history.some((item) =>
+      !item || typeof item !== "object"
+      || !item.form_id?.trim()
+      || !item.item_id?.trim()
+      || !item.objective_id?.trim()
+      || !["mcq", "true_false", "trace", "short_answer", "code"].includes(item.modality)
+      || !item.prompt?.trim()
+      || !Array.isArray(item.options)
+      || item.options.some((option) => typeof option !== "string"))) {
+      issues.push({
+        path: "$.prior_assessment_items",
+        message: "必须只包含已发布题面的结构化摘要",
+      })
+    } else {
+      const identities = history.map((item) => `${item.form_id}:${item.item_id}`)
+      if (new Set(identities).size !== identities.length) {
+        issues.push({
+          path: "$.prior_assessment_items",
+          message: "历史题目身份不得重复",
+        })
+      }
+    }
+  }
+  return issues
+}
+
 async function runCPipelineCore(
   input: CPipelineInput,
   agents: RoleCAgents,
@@ -255,6 +289,7 @@ async function runCPipelineCore(
     ...validateRoleCSchema("generation_spec.schema.json", input.generation_spec).issues,
     ...validateRoleCSchema("rag_evidence_pack.schema.json", input.evidence_pack).issues,
     ...validateNextRoundContext(input),
+    ...validateAssessmentHistory(input.prior_assessment_items),
   ]
   if (inputSchemaIssues.length > 0) {
     state = transitionCState(state, "BLOCKED")
@@ -523,6 +558,7 @@ async function runCPipelineCore(
             }
           : {}),
         next_round_context: input.next_round_context,
+        prior_assessment_items: input.prior_assessment_items,
       })
     } catch (error) {
       state = transitionCState(state, "FAILED")
@@ -710,6 +746,7 @@ async function runCPipelineCore(
           evidence_pack: input.evidence_pack,
           concept_artifact: concept,
           next_round_context: input.next_round_context,
+          prior_assessment_items: input.prior_assessment_items,
           code_lab_summary: toCodeLabSummary(labPair),
           revision_objections: blockingObjections.filter((entry) =>
             entry.target_artifact_id === assessmentPair.public_artifact.artifact_id

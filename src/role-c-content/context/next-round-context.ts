@@ -32,8 +32,9 @@ export function projectNextRoundContext(
     : context.action === "reinforce"
       ? "same_difficulty_new_variant"
       : "hold_current_path"
+  const projected = structuredClone(context)
   return {
-    ...structuredClone(context),
+    ...projected,
     focus_objective_ids: focusObjectiveIds,
     teaching_strategy: teachingStrategy,
     variation_requirements: variationRequirements(teachingStrategy),

@@ -160,6 +160,24 @@ describe("fact audit MVP", () => {
     })
   })
 
+  test("rejects an empty audit surface instead of reporting a vacuous pass", async () => {
+    const ragResult = await retrieveKnowledge({ query: "for 循环", learnerLevel: "beginner", topK: 1 })
+    const result = auditGeneratedContent({
+      artifactId: "artifact-empty",
+      ragResult,
+      generatedContent: { blocks: [] },
+    })
+
+    expect(result.status).toBe("reject")
+    expect(result.checkedClaims).toHaveLength(0)
+    expect(result.conflicts).toEqual([
+      expect.objectContaining({
+        blockId: "__generated_content__",
+        issue: "生成内容没有可审核的知识声明",
+      }),
+    ])
+  })
+
   test("reports a frozen evidence mismatch when a caller provides the wrong expected hash", async () => {
     const ragResult = await retrieveKnowledge({ query: "怎么让代码重复执行", learnerLevel: "beginner", topK: 3 })
     const evidencePack = adaptRagResult(ragResult, {

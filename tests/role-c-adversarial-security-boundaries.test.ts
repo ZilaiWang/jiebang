@@ -20,8 +20,14 @@ describe("Role C adversarial security boundaries", () => {
     ['frame locals reference', 'def solve(x):\n    return x.f_locals'],
     ['generator frame reference', 'def solve(x):\n    return x.gi_frame'],
     ['class hierarchy reflection', 'def solve(x):\n    return x.__class__.__subclasses__()'],
+    ['arbitrary dunder attribute', 'def solve(x):\n    return x.__len__()'],
   ])("blocks %s", (_name, source) => {
     expect(analyzePythonSource(source, contract).length).toBeGreaterThan(0)
+  })
+
+  test("allows dunder method definitions because the Docker policy does too", () => {
+    const source = "class Counter:\n    def __init__(self, value):\n        self.value = value\n\ndef solve(x):\n    return Counter(x).value"
+    expect(analyzePythonSource(source, contract)).toEqual([])
   })
 
   test("does not disable forbidden-key scanning below public input", () => {

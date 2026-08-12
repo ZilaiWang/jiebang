@@ -33,7 +33,7 @@ export interface SelfAssessmentEvidence {
 
 export type DiagnosisVerdict = "correct" | "incorrect" | "unanswered"
 
-// 客观诊断的单题记录：题目必须来自知识库 quizItems，因此天然携带 source_id/fact_id 溯源
+// 客观诊断的单题记录：题面由 AI 根据 A 提供的事实当次生成，并绑定 source_id/fact_id 溯源
 export interface DiagnosisItem {
   source_id: string
   fact_id: string | null

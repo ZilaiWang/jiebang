@@ -20,8 +20,8 @@ export const WORKER_DEFINITIONS = [
   {
     name: "objective-diagnostician",
     stage: "objective_diagnosis",
-    description: "Grades actual learner answers against knowledge-base quiz items with source_id traceability.",
-    responsibility: "Produce objective diagnostic evidence tied to knowledge-base source_id.",
+    description: "Grades actual learner answers to AI-authored, A-fact-grounded diagnosis items.",
+    responsibility: "Produce objective diagnostic evidence tied to A source_id/fact_id.",
     next: "build_profile",
   },
   {
