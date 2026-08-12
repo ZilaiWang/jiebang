@@ -752,7 +752,7 @@ function PythonCodeBlock({ code, className = "" }: { code: string; className?: s
 }
 
 function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Python 代码编辑器" }: { value: string; onChange: (value: string) => void; minHeight?: number; ariaLabel?: string }) {
-  return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /></div>
+  return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">请提交完整函数定义（含 def 行），不要只贴函数体。</p></div>
 }
 
 function CodeViewer({ code }: { code: string }) {

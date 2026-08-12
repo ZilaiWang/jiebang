@@ -25,11 +25,12 @@
 
 ## Day 1 · 最小闭环跑通
 
-- [ ] 至少一个学习者从输入目标跑到测评反馈+下一步决策
-- [ ] 生成三类资源：讲义 / 代码实验 / 正式测评
-- [ ] 保存完整 session 和 events
-- [ ] 标记所有人工介入点
-- [ ] 验收：能证明是学习闭环而不是单次生成
+- [x] 至少一个学习者从输入目标跑到测评反馈+下一步决策（L1 林晓：10/10 → advance，SESSION-dea8fbda）
+- [x] 生成三类资源：讲义 / 代码实验 / 正式测评（concept_lesson + code_lab + assessment 均审核通过）
+- [x] 保存完整 session 和 events（from-1号-main-flow/ 及 learner-beginner-input.json）
+- [x] 标记所有人工介入点（建档 / 诊断答题 / 正式测评答题，3处）
+- [x] 验收：能证明是学习闭环而不是单次生成（诊断→画像→路径→RAG→资源→审核→测评→反馈→决策完整链路）
+- [x] 4号补充：前端代码题提交提示已修复（P7，完整函数提示）；三组样例 learners.json 契约校验通过
 
 ## Day 2 · OpenCode 风格多 Agent 调度证据
 

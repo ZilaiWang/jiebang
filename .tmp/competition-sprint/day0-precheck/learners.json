@@ -9,54 +9,49 @@
       "archetype": "零基础学习者",
       "learner_request": {
         "learner_id": "learner-demo-beginner-001",
-        "goal": "能读懂最简单的 Python 代码",
-        "background": "姓名：林晓；学习背景：高中生，未学过编程；每周预计学习：3小时；Python基础：new；偏好：balanced；其他编程语言：无",
+        "goal": "学习 Python for 循环",
+        "background": "姓名：林晓；学习背景：零基础入门；每周预计学习：5小时；Python基础：new；偏好：balanced；其他编程语言：无",
         "self_rating": "new",
         "learning_goal_spec": {
-          "mode": "custom_goal",
-          "custom_goal": "能读懂最简单的 Python 代码"
+          "mode": "curriculum_node",
+          "selected_node_ids": [
+            "PY-CH02-S02"
+          ]
         }
       },
       "expected_evidence": {
         "background": {
           "evidence_type": "background",
           "learner_id": "learner-demo-beginner-001",
-          "education_context": "高中生，未学过编程",
+          "education_context": "零基础入门，完全没接触过 Python",
           "prior_languages": [],
-          "prior_topics": [
-            "Python 是什么"
-          ],
-          "goal_raw": "能读懂最简单的 Python 代码",
-          "time_budget": "3 小时/周",
+          "prior_topics": [],
+          "goal_raw": "学习 Python for 循环",
+          "time_budget": "5 小时/周",
           "quotes": [
             {
               "field": "education_context",
-              "text": "高中生，未学过编程"
+              "text": "零基础入门，完全没接触过 Python"
             },
             {
               "field": "goal_raw",
-              "text": "能读懂最简单的 Python 代码"
+              "text": "学习 Python for 循环"
             }
           ]
         },
         "self_assessment": {
           "evidence_type": "self_assessment",
           "self_rating": "beginner",
-          "claimed_known": [
-            "Python 是什么"
-          ],
+          "claimed_known": [],
           "claimed_weak": [
+            "Python 是什么",
             "变量与赋值",
-            "基本数据类型"
+            "for 循环"
           ],
           "quotes": [
             {
-              "field": "claimed_known",
-              "text": "知道 Python 是一种编程语言"
-            },
-            {
               "field": "claimed_weak",
-              "text": "变量和数据类型还不太懂"
+              "text": "完全没接触过，变量和循环都不懂"
             }
           ]
         },
@@ -97,18 +92,17 @@
       "expected_profile": {
         "learner_id": "learner-demo-beginner-001",
         "level": "beginner",
-        "known_concepts": [
-          "Python 是什么",
-          "变量与赋值"
-        ],
+        "known_concepts": [],
         "weak_concepts": [
-          "基本数据类型"
+          "Python 是什么",
+          "变量与赋值",
+          "for 循环"
         ],
-        "goal": "能读懂最简单的 Python 代码",
+        "goal": "学习 Python for 循环",
         "ability_dimensions": [
           {
             "label": "概念理解",
-            "value": 0.67
+            "value": 0.0
           },
           {
             "label": "代码认知",
@@ -116,10 +110,11 @@
           },
           {
             "label": "诊断表现",
-            "value": 0.67
+            "value": 0.0
           }
         ]
-      }
+      },
+      "note": "按 1号 Day1 实际学习者描述更新：完全没接触过 Python；每周 5 小时；目标 for 循环；零基础入门。"
     },
     {
       "profile_id": "L2_weak_chenhao",

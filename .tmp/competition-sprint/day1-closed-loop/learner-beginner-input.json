@@ -1,0 +1,677 @@
+{
+  "learner_id": "learner-day1-l1-final",
+  "goal": "学习 Python for 循环",
+  "background": "姓名：林晓；学习背景：零基础入门；每周预计学习：5小时；Python基础：new；偏好：balanced；其他编程语言：无",
+  "node": "PY-CH02-S02",
+  "session_id": "SESSION-dea8fbda-2761-4f10-aa72-b81b79c33de7",
+  "diagnosis_questions": [
+    {
+      "item_id": "DIAG-1-K007",
+      "question": "for 循环最适合用于什么场景？",
+      "options": [
+        "遍历序列",
+        "定义变量",
+        "捕获异常",
+        "导入模块"
+      ]
+    },
+    {
+      "item_id": "DIAG-2-K002",
+      "question": "变量赋值在 Python 中使用哪个符号？",
+      "options": [
+        "=",
+        "==",
+        ":=",
+        "=>"
+      ]
+    },
+    {
+      "item_id": "DIAG-3-K003",
+      "question": "\"95\" 在 Python 中通常属于哪种类型？",
+      "options": [
+        "int",
+        "float",
+        "str",
+        "bool"
+      ]
+    }
+  ],
+  "diagnosis_answers": {
+    "DIAG-1-K007": "遍历序列",
+    "DIAG-2-K002": "=",
+    "DIAG-3-K003": "str"
+  },
+  "profile": {
+    "learner_id": "learner-day1-l1-final",
+    "level": "beginner",
+    "known_concepts": [
+      "for 循环",
+      "变量与赋值",
+      "基本数据类型"
+    ],
+    "weak_concepts": [],
+    "goal": "学习 Python for 循环",
+    "ability_dimensions": [
+      {
+        "label": "概念理解",
+        "value": 0.95
+      },
+      {
+        "label": "代码认知",
+        "value": 0.2
+      },
+      {
+        "label": "诊断表现",
+        "value": 1
+      }
+    ]
+  },
+  "formal_path": {
+    "original_goal": "学习 Python for 循环",
+    "nodes": [
+      {
+        "node_id": "FN-K007-S1-1786508464492",
+        "title": null,
+        "status": "in_progress"
+      }
+    ]
+  },
+  "assessment": {
+    "run_id": "RUN-1368d44b-ed02-4c41-8992-b61ad62ca63f-R1-C1-R2",
+    "form_id": "FORM-5a5c8238"
+  },
+  "assessment_questions": [
+    {
+      "item_id": "ITEM-7a71a496",
+      "modality": "mcq",
+      "prompt": "for 循环的主要用途是什么？",
+      "starter_code": ""
+    },
+    {
+      "item_id": "ITEM-1b19d9f3",
+      "modality": "mcq",
+      "prompt": "for 循环适合处理哪些对象？",
+      "starter_code": ""
+    },
+    {
+      "item_id": "ITEM-216ae8a5",
+      "modality": "trace",
+      "prompt": "请追踪以下代码的输出结果：\n\n```python\nfor i in range(3):\n    print(i)\n```",
+      "starter_code": ""
+    },
+    {
+      "item_id": "ITEM-7fd55514",
+      "modality": "code",
+      "prompt": "补全代码，使用 for 循环遍历列表 `names` 并打印每个名字。\n\n```python\ndef print_names(names):\n    # 在此处补全代码\n    pass\n```",
+      "starter_code": "def print_names(names):\n    # 在此处补全代码\n    pass"
+    },
+    {
+      "item_id": "ITEM-73e481c8",
+      "modality": "code",
+      "prompt": "补全代码，使用 for 循环计算 1 到 5 的整数之和，并返回结果。\n\n```python\ndef sum_numbers():\n    total = 0\n    # 在此处补全代码\n    return total\n```",
+      "starter_code": "def sum_numbers():\n    total = 0\n    # 在此处补全代码\n    return total"
+    }
+  ],
+  "assessment_answers": [
+    {
+      "item_id": "ITEM-7a71a496",
+      "selected_option_id": "OPTION-41ff45ad",
+      "hint_level_used": 0
+    },
+    {
+      "item_id": "ITEM-1b19d9f3",
+      "selected_option_id": "OPTION-8eae296f",
+      "hint_level_used": 0
+    },
+    {
+      "item_id": "ITEM-216ae8a5",
+      "text_response": "0\n1\n2",
+      "hint_level_used": 0
+    },
+    {
+      "item_id": "ITEM-7fd55514",
+      "code_response": "[参考实现已脱敏：完整函数代码仅存于 C 私有 secure 产物，公开记录不复制]",
+      "hint_level_used": 0,
+      "_redacted": true
+    },
+    {
+      "item_id": "ITEM-73e481c8",
+      "code_response": "[参考实现已脱敏：完整函数代码仅存于 C 私有 secure 产物，公开记录不复制]",
+      "hint_level_used": 0,
+      "_redacted": true
+    }
+  ],
+  "answer_strategy": "secure参考答案(2号同款)",
+  "feedback": {
+    "schema_version": "1.0",
+    "feedback_id": "DFR-2e388257",
+    "run_id": "RUN-1368d44b-ed02-4c41-8992-b61ad62ca63f-R1-C1-R2",
+    "session_id": "C-RUN-1368d44b-ed02-4c41-8992-b61ad62ca63f-R1-C1-R2-SESSION-1",
+    "submission_id": "SUB-SESSION-dea8fbda-2761-4f10-aa72-b81b79c33de7-R1-day1-l1-assess-c60c7ba86cee4d0b9f92d1aa25e72d75",
+    "learner_id_hash": "learner-day1-l1-final",
+    "profile_version": "RUN-1368d44b-ed02-4c41-8992-b61ad62ca63f-profile-E0",
+    "path_node_id": "FN-K007-S1-1786508464492",
+    "form_id": "FORM-5a5c8238",
+    "attempt_no": 1,
+    "round_score": {
+      "raw_score": 10,
+      "max_score": 10,
+      "accuracy": 1,
+      "evidence_score": 1
+    },
+    "objective_results": [
+      {
+        "objective_id": "OBJ-K007",
+        "raw_score": 10,
+        "max_score": 10,
+        "accuracy": 1,
+        "evidence_score": 1,
+        "misconception_tags": []
+      }
+    ],
+    "grade_result": {
+      "schema_version": "1.0",
+      "run_id": "RUN-1368d44b-ed02-4c41-8992-b61ad62ca63f-R1-C1-R2",
+      "artifact_id": "ART-c8ac3c60",
+      "artifact_type": "grade_result",
+      "agent": "tiered-evaluator",
+      "status": "ready",
+      "versions": {
+        "prompt_version": "c-prompts-1.16.9",
+        "model_config_hash": "MODEL-a54018547a29e463ea39ed85fb28e89564b7c613d55e5aaead755028568e9f40",
+        "runner_image_digest": "sha256:795ed9486f10d55376e185115d5d801bc3ed51398752109b271f4c63a8356a5b",
+        "profile_version": "RUN-1368d44b-ed02-4c41-8992-b61ad62ca63f-profile-E0",
+        "kb_version": "0.6.0",
+        "rag_version": "rule-rag-0.1",
+        "schema_version": "1.0"
+      },
+      "seed": 200343076264715,
+      "input_refs": [
+        "ART-8595472a",
+        "SUB-SESSION-dea8fbda-2761-4f10-aa72-b81b79c33de7-R1-day1-l1-assess-c60c7ba86cee4d0b9f92d1aa25e72d75"
+      ],
+      "citations": [],
+      "quality": {
+        "schema_ok": true,
+        "citation_coverage": 1,
+        "objective_coverage": 1,
+        "alignment_score": 1,
+        "answer_key_verified": true
+      },
+      "payload": {
+        "submission_id": "SUB-SESSION-dea8fbda-2761-4f10-aa72-b81b79c33de7-R1-day1-l1-assess-c60c7ba86cee4d0b9f92d1aa25e72d75",
+        "form_id": "FORM-5a5c8238",
+        "raw_score": 10,
+        "max_score": 10,
+        "evidence_score": 1,
+        "item_results": [
+          {
+            "item_id": "ITEM-7a71a496",
+            "objective_id": "OBJ-K007",
+            "raw_score": 1,
+            "max_score": 1,
+            "evidence_score": 1,
+            "grader_confidence": 1,
+            "hint_factor": 1,
+            "repeat_factor": 1,
+            "misconception_tags": [],
+            "feedback_code": "correct"
+          },
+          {
+            "item_id": "ITEM-1b19d9f3",
+            "objective_id": "OBJ-K007",
+            "raw_score": 1,
+            "max_score": 1,
+            "evidence_score": 1,
+            "grader_confidence": 1,
+            "hint_factor": 1,
+            "repeat_factor": 1,
+            "misconception_tags": [],
+            "feedback_code": "correct"
+          },
+          {
+            "item_id": "ITEM-216ae8a5",
+            "objective_id": "OBJ-K007",
+            "raw_score": 2,
+            "max_score": 2,
+            "evidence_score": 1,
+            "grader_confidence": 1,
+            "hint_factor": 1,
+            "repeat_factor": 1,
+            "misconception_tags": [],
+            "feedback_code": "correct"
+          },
+          {
+            "item_id": "ITEM-7fd55514",
+            "objective_id": "OBJ-K007",
+            "raw_score": 2,
+            "max_score": 2,
+            "evidence_score": 1,
+            "grader_confidence": 1,
+            "hint_factor": 1,
+            "repeat_factor": 1,
+            "misconception_tags": [],
+            "feedback_code": "passed"
+          },
+          {
+            "item_id": "ITEM-73e481c8",
+            "objective_id": "OBJ-K007",
+            "raw_score": 4,
+            "max_score": 4,
+            "evidence_score": 1,
+            "grader_confidence": 1,
+            "hint_factor": 1,
+            "repeat_factor": 1,
+            "misconception_tags": [],
+            "feedback_code": "passed"
+          }
+        ],
+        "score_frozen": true,
+        "recommendation": {
+          "action": "advance",
+          "confidence": 0.8,
+          "reason_codes": [
+            "round_accuracy_at_or_above_advancement_threshold"
+          ]
+        },
+        "feedback": {
+          "generated_after_score_freeze": true,
+          "mode": "formative",
+          "summary": "本次完成 5 题，其中 5 题达到完整要求；证据分为 100%。",
+          "item_feedback": [
+            {
+              "item_id": "ITEM-7a71a496",
+              "feedback_code": "correct",
+              "message": "作答已满足当前评分要求。",
+              "next_step": "继续完成目标 OBJ-K007 的迁移练习。",
+              "revealed_answer": {
+                "kind": "choice",
+                "option_id": "OPTION-41ff45ad"
+              }
+            },
+            {
+              "item_id": "ITEM-1b19d9f3",
+              "feedback_code": "correct",
+              "message": "作答已满足当前评分要求。",
+              "next_step": "继续完成目标 OBJ-K007 的迁移练习。",
+              "revealed_answer": {
+                "kind": "choice",
+                "option_id": "OPTION-8eae296f"
+              }
+            },
+            {
+              "item_id": "ITEM-216ae8a5",
+              "feedback_code": "correct",
+              "message": "作答已满足当前评分要求。",
+              "next_step": "继续完成目标 OBJ-K007 的迁移练习。",
+              "revealed_answer": {
+                "kind": "text",
+                "accepted": [
+                  "0\n1\n2"
+                ]
+              }
+            },
+            {
+              "item_id": "ITEM-7fd55514",
+              "feedback_code": "passed",
+              "message": "作答已满足当前评分要求。",
+              "next_step": "继续完成目标 OBJ-K007 的迁移练习。",
+              "revealed_answer": {
+                "kind": "code",
+                "code": "def print_names(names):\n    return names"
+              }
+            },
+            {
+              "item_id": "ITEM-73e481c8",
+              "feedback_code": "passed",
+              "message": "作答已满足当前评分要求。",
+              "next_step": "继续完成目标 OBJ-K007 的迁移练习。",
+              "revealed_answer": {
+                "kind": "code",
+                "code": "def sum_numbers():\n    total = 0\n    for i in range(1, 6):\n        total += i\n    return total"
+              }
+            }
+          ]
+        }
+      },
+      "trace_ref": "TRACE-6db8cc7e"
+    },
+    "mastery_snapshot": [
+      {
+        "objective_id": "OBJ-K007",
+        "mastery": 0.666667,
+        "evidence_batches": 1,
+        "observed_modalities": [
+          "mcq",
+          "trace",
+          "code"
+        ],
+        "revision": 1
+      }
+    ],
+    "final_decision": {
+      "action": "advance",
+      "basis": "round_accuracy",
+      "confidence": 0.8,
+      "reason_codes": [
+        "round_accuracy_at_or_above_advancement_threshold"
+      ],
+      "target_objective_ids": [],
+      "policy_ref": "role-c-round-accuracy-v1"
+    },
+    "assessment_items": {
+      "form_id": "FORM-5a5c8238",
+      "title": "for 循环基础练习",
+      "objective_ids": [
+        "OBJ-K007"
+      ],
+      "items": [
+        {
+          "item_id": "ITEM-7a71a496",
+          "family_id": "FAMILY-f9b72274",
+          "variant_id": "VARIANT-1c9e7f69",
+          "display_no": 1,
+          "objective_id": "OBJ-K007",
+          "tier": 1,
+          "modality": "mcq",
+          "max_score": 1,
+          "citations": [
+            {
+              "source_id": "K007",
+              "fact_id": "F001",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F002",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F003",
+              "relation": "derived_from"
+            }
+          ],
+          "prompt": "for 循环的主要用途是什么？",
+          "options": [
+            {
+              "option_id": "OPTION-3e017df8",
+              "label": "A",
+              "text": "一次性处理整个列表"
+            },
+            {
+              "option_id": "OPTION-41fd0716",
+              "label": "B",
+              "text": "只处理第一个元素"
+            },
+            {
+              "option_id": "OPTION-3dfac233",
+              "label": "C",
+              "text": "随机访问元素"
+            },
+            {
+              "option_id": "OPTION-41ff45ad",
+              "label": "D",
+              "text": "遍历序列中的元素"
+            }
+          ]
+        },
+        {
+          "item_id": "ITEM-1b19d9f3",
+          "family_id": "FAMILY-f9b72274",
+          "variant_id": "VARIANT-16d9e51a",
+          "display_no": 2,
+          "objective_id": "OBJ-K007",
+          "tier": 1,
+          "modality": "mcq",
+          "max_score": 1,
+          "citations": [
+            {
+              "source_id": "K007",
+              "fact_id": "F001",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F002",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F003",
+              "relation": "derived_from"
+            }
+          ],
+          "prompt": "for 循环适合处理哪些对象？",
+          "options": [
+            {
+              "option_id": "OPTION-8eae296f",
+              "label": "A",
+              "text": "列表、字符串等对象"
+            },
+            {
+              "option_id": "OPTION-92b2ace9",
+              "label": "B",
+              "text": "只能处理数字"
+            },
+            {
+              "option_id": "OPTION-8eb67834",
+              "label": "C",
+              "text": "只能处理列表"
+            },
+            {
+              "option_id": "OPTION-92b06e52",
+              "label": "D",
+              "text": "只能处理字符串"
+            }
+          ]
+        },
+        {
+          "item_id": "ITEM-216ae8a5",
+          "family_id": "FAMILY-3fa85712",
+          "variant_id": "VARIANT-514aa39a",
+          "display_no": 3,
+          "objective_id": "OBJ-K007",
+          "tier": 2,
+          "modality": "trace",
+          "max_score": 2,
+          "citations": [
+            {
+              "source_id": "K007",
+              "fact_id": "F001",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F002",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F003",
+              "relation": "derived_from"
+            }
+          ],
+          "prompt": "请追踪以下代码的输出结果：\n\n```python\nfor i in range(3):\n    print(i)\n```"
+        },
+        {
+          "item_id": "ITEM-7fd55514",
+          "family_id": "FAMILY-8940cce8",
+          "variant_id": "VARIANT-774faddd",
+          "display_no": 4,
+          "objective_id": "OBJ-K007",
+          "tier": 2,
+          "modality": "code",
+          "max_score": 2,
+          "citations": [
+            {
+              "source_id": "K007",
+              "fact_id": "F001",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F002",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F003",
+              "relation": "derived_from"
+            }
+          ],
+          "prompt": "补全代码，使用 for 循环遍历列表 `names` 并打印每个名字。\n\n```python\ndef print_names(names):\n    # 在此处补全代码\n    pass\n```",
+          "starter_code": "def print_names(names):\n    # 在此处补全代码\n    pass"
+        },
+        {
+          "item_id": "ITEM-73e481c8",
+          "family_id": "FAMILY-8940cce8",
+          "variant_id": "VARIANT-c66097bf",
+          "display_no": 5,
+          "objective_id": "OBJ-K007",
+          "tier": 3,
+          "modality": "code",
+          "max_score": 4,
+          "citations": [
+            {
+              "source_id": "K007",
+              "fact_id": "F001",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F002",
+              "relation": "derived_from"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": "F003",
+              "relation": "derived_from"
+            }
+          ],
+          "prompt": "补全代码，使用 for 循环计算 1 到 5 的整数之和，并返回结果。\n\n```python\ndef sum_numbers():\n    total = 0\n    # 在此处补全代码\n    return total\n```",
+          "starter_code": "def sum_numbers():\n    total = 0\n    # 在此处补全代码\n    return total"
+        }
+      ],
+      "submission_policy": {
+        "max_attempts": 3,
+        "formative": true
+      },
+      "routing": {
+        "anchor_item_ids": [
+          "ITEM-7a71a496",
+          "ITEM-1b19d9f3",
+          "ITEM-216ae8a5"
+        ],
+        "rules": [
+          {
+            "route_id": "ROUTE-REMEDIATE",
+            "min_anchor_score_ratio": 0,
+            "max_anchor_score_ratio": 0.4,
+            "action": "remediate",
+            "reveal_tiers": [
+              1
+            ]
+          },
+          {
+            "route_id": "ROUTE-REINFORCE",
+            "min_anchor_score_ratio": 0.4,
+            "max_anchor_score_ratio": 0.8,
+            "action": "reinforce",
+            "reveal_tiers": [
+              1,
+              2
+            ]
+          },
+          {
+            "route_id": "ROUTE-ADVANCE",
+            "min_anchor_score_ratio": 0.8,
+            "max_anchor_score_ratio": 1,
+            "action": "advance",
+            "reveal_tiers": [
+              2,
+              3
+            ]
+          }
+        ]
+      },
+      "objective_coverage": [
+        {
+          "objective_id": "OBJ-K007",
+          "item_ids": [
+            "ITEM-7a71a496",
+            "ITEM-1b19d9f3",
+            "ITEM-216ae8a5",
+            "ITEM-7fd55514",
+            "ITEM-73e481c8"
+          ],
+          "modalities": [
+            "mcq",
+            "trace",
+            "code"
+          ]
+        }
+      ],
+      "used_evidence": [
+        {
+          "source_id": "K007",
+          "fact_id": "F001",
+          "relation": "derived_from"
+        },
+        {
+          "source_id": "K007",
+          "fact_id": "F002",
+          "relation": "derived_from"
+        },
+        {
+          "source_id": "K007",
+          "fact_id": "F003",
+          "relation": "derived_from"
+        }
+      ]
+    },
+    "your_answers": [
+      {
+        "item_id": "ITEM-7a71a496",
+        "selected_option_id": "OPTION-41ff45ad",
+        "text_response": null,
+        "code_response": null
+      },
+      {
+        "item_id": "ITEM-1b19d9f3",
+        "selected_option_id": "OPTION-8eae296f",
+        "text_response": null,
+        "code_response": null
+      },
+      {
+        "item_id": "ITEM-216ae8a5",
+        "selected_option_id": null,
+        "text_response": "0\n1\n2",
+        "code_response": null
+      },
+      {
+        "item_id": "ITEM-7fd55514",
+        "selected_option_id": null,
+        "text_response": null,
+        "code_response": "def print_names(names):\n    return names"
+      },
+      {
+        "item_id": "ITEM-73e481c8",
+        "selected_option_id": null,
+        "text_response": null,
+        "code_response": "def sum_numbers():\n    total = 0\n    for i in range(1, 6):\n        total += i\n    return total"
+      }
+    ]
+  },
+  "final": {
+    "status": "completed",
+    "stage": "completed",
+    "round": 1,
+    "waiting_for": null,
+    "decision": "advance",
+    "raw_score": 10,
+    "max_score": 10,
+    "blocked_reason": null
+  },
+  "_note": "提交前脱敏：assessment_answers 中 code_response 的完整参考实现已替换为占位说明，避免泄露 C 私有判题答案（2号交付红线）。"
+}
