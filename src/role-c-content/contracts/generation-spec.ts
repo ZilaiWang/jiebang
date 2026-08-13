@@ -17,6 +17,7 @@ import type {
   LearningPathNode,
 } from "./profile-adapter"
 import { assessmentBlueprintCanMeasureCoreObjectives } from "./assessment-measurement"
+import { modalityMeasuresBehavior } from "./assessment-measurement"
 
 export type { AssessmentBlueprint } from "./profile-adapter"
 
@@ -321,6 +322,12 @@ function validateInputShape(input: BuildGenerationSpecInput): string[] {
   const allowedModalities = new Set(["mcq", "true_false", "trace", "short_answer", "code"])
   for (const modality of blueprint.required_modalities as string[]) {
     if (!allowedModalities.has(modality)) errors.push(`不支持的 assessment modality：${modality}`)
+  }
+  for (const modality of blueprint.required_modalities) {
+    if (!input.path_node.objectives.some((objective) =>
+      modalityMeasuresBehavior(objective.observable_behavior, modality))) {
+      errors.push(`必选题型 ${modality} 无法直接测量当前任一 objective`)
+    }
   }
   const total = blueprint.tier_1_count + blueprint.tier_2_count + blueprint.tier_3_count
   if (total < 1 || total > 30) errors.push("assessment blueprint 总题量必须在 1..30")

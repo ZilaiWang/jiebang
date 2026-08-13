@@ -1269,6 +1269,9 @@ function baseReviewOptions(
     ...(options.trace_seq_start !== undefined
       ? { trace_seq_start: options.trace_seq_start }
       : {}),
+    ...(options.checkpoint_store
+      ? { checkpoint_store: options.checkpoint_store }
+      : {}),
   }
 }
 

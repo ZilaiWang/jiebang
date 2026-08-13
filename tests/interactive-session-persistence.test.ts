@@ -153,14 +153,19 @@ test("keeps append-only worker ledger history while retaining latest worker ledg
     stage: "objective_diagnosis",
     status: "waiting_for_user",
     finished_at: null,
-    input_refs: [],
-    output_refs: [],
+    input_refs: expect.arrayContaining([
+      expect.objectContaining({ ref_id: "background-collector:session-input", verified_exists: true }),
+      expect.objectContaining({ ref_id: "self-assessor:session-input", verified_exists: true }),
+    ]),
+    output_refs: expect.arrayContaining([
+      expect.objectContaining({ ref_id: "objective-diagnostician:diagnosis-form", verified_exists: true }),
+    ]),
     evidence_refs: [],
-    execution_ref: null,
+    execution_ref: expect.objectContaining({ kind: "trace", source: "orchestrator", verified_exists: true }),
     errors: [],
     retry: null,
     manual_intervention: expect.objectContaining({ occurred: true, kind: "user_input" }),
-    observability: expect.objectContaining({ execution_observed: true, evidence_level: "E3" }),
+    observability: expect.objectContaining({ execution_observed: true, artifact_verified: true, evidence_level: "E3" }),
   })
   expect(initialDiagnosisEntries[0].entry_id).toStartWith(`${record.session_id}-objective-diagnostician-`)
   expect(initialDiagnosisEntries[0]).not.toHaveProperty("step_id")

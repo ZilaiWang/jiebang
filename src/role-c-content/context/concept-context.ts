@@ -20,11 +20,20 @@ export interface ConceptTutorModelInput {
     examples: EvidenceExample[]
   }>
   upstream: {
+    resource_blueprint?: {
+      blueprint_id: string
+      spec_id: string
+      objectives: Array<Pick<
+        NonNullable<ConceptTutorRequest["resource_blueprint"]>["objectives"][number],
+        "objective_id" | "source_id" | "observable_behavior" | "importance" | "required_fact_ids" | "concept"
+      >>
+    }
     next_round_context?: ConceptTutorRequest["next_round_context"] & {
       teaching_strategy?: "reduce_load" | "same_difficulty_new_variant" | "hold_current_path"
     }
     revision_objections?: ConceptTutorRequest["revision_objections"]
     external_revision_round?: ConceptTutorRequest["external_revision_round"]
+    generation_recovery?: ConceptTutorRequest["generation_recovery"]
   }
 }
 
@@ -78,10 +87,34 @@ export function buildConceptTutorModelInput(
     },
     evidence,
     upstream: {
+      ...(request.resource_blueprint
+        ? {
+            resource_blueprint: {
+              blueprint_id: request.resource_blueprint.blueprint_id,
+              // Concept requests may be provider-created segments. The projected
+              // contract follows that segment identity while blueprint_id keeps
+              // every segment tied to the same root teaching decision.
+              spec_id: request.generation_spec.spec_id,
+              objectives: request.resource_blueprint.objectives
+                .filter((objective) => targetObjectiveIds.includes(objective.objective_id))
+                .map((objective) => ({
+                  objective_id: objective.objective_id,
+                  source_id: objective.source_id,
+                  observable_behavior: objective.observable_behavior,
+                  importance: objective.importance,
+                  required_fact_ids: [...objective.required_fact_ids],
+                  concept: structuredClone(objective.concept),
+                })),
+            },
+          }
+        : {}),
       ...(nextRoundContext ? { next_round_context: nextRoundContext } : {}),
       ...(request.revision_objections ? { revision_objections: structuredClone(request.revision_objections) } : {}),
       ...(request.external_revision_round !== undefined
         ? { external_revision_round: request.external_revision_round }
+        : {}),
+      ...(request.generation_recovery
+        ? { generation_recovery: structuredClone(request.generation_recovery) }
         : {}),
     },
   }

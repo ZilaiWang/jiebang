@@ -15,6 +15,7 @@ import type { FactAuditPacket, FactAuditPort, RagEvidencePack } from "../contrac
 import type {
   NextRoundGenerationContext,
   PriorAssessmentItem,
+  GenerationRecoveryContext,
   RoleCAgents,
   TieredEvaluatorRequest,
 } from "../agents/types"
@@ -33,6 +34,7 @@ import type { CPipelineCheckpoint, CPipelineCheckpointStore } from "../reliabili
 import type { AgentTraceStore } from "../reliability/trace-store"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
 import { validatePublicArtifactNoSecrets } from "../validators/public-secure-leak-validator"
+import { buildResourceBlueprint } from "../planning/resource-blueprint"
 
 export interface CPipelineInput {
   generation_spec: GenerationSpec
@@ -41,6 +43,8 @@ export interface CPipelineInput {
   next_round_context?: NextRoundGenerationContext
   /** Public question history is independent of learning action and exists on the first round too. */
   prior_assessment_items?: PriorAssessmentItem[]
+  /** Changes only the failed model stage while preserving the frozen Spec identity. */
+  generation_recovery?: GenerationRecoveryContext
 }
 
 export interface CPipelineResult {
@@ -81,7 +85,7 @@ export async function runCPipeline(
   secureStore: SecureArtifactStore,
   options: CPipelineOptions = {},
 ): Promise<CPipelineResult> {
-  const inputHash = pipelineInputHash(input)
+  const checkpointHash = pipelineCheckpointHash(input)
   const cacheKey = secureStore.namespace_id
     ? pipelineInputHash({ input, secure_store_namespace: secureStore.namespace_id })
     : undefined
@@ -128,7 +132,7 @@ export async function runCPipeline(
     agents,
     secureStore,
     options,
-    inputHash,
+    checkpointHash,
     cacheKey,
   )
   activePipelineFlights.set(flightKey, flight)
@@ -146,7 +150,7 @@ async function executePipeline(
   agents: RoleCAgents,
   secureStore: SecureArtifactStore,
   options: CPipelineOptions,
-  inputHash: string,
+  checkpointHash: string,
   cacheKey: string | undefined,
 ): Promise<CPipelineResult> {
   let traceSeqStart = options.trace_seq_start ?? 1
@@ -154,13 +158,35 @@ async function executePipeline(
     const prior = await options.trace_store?.read(input.generation_spec.run_id)
     if (prior?.length) traceSeqStart = Math.max(...prior.map((event) => event.seq)) + 1
   } catch { /* return trace remains available even if persistence is unavailable */ }
-  const result = await runCPipelineCore(input, agents, secureStore, { ...options, trace_seq_start: traceSeqStart }, inputHash)
+  const result = await runCPipelineCore(input, agents, secureStore, { ...options, trace_seq_start: traceSeqStart }, checkpointHash)
   try { if (options.trace_store) await options.trace_store.append(result.trace_events) } catch { /* result still carries the complete trace */ }
   if (result.status === "ready") {
     try { if (cacheKey) await options.cache?.put(cacheKey, result) } catch { /* cache is non-authoritative */ }
-    try { await options.checkpoint_store?.delete(inputHash) } catch { /* stale input-hashed checkpoint is safe */ }
+    try { await options.checkpoint_store?.delete(checkpointHash) } catch { /* stale checkpoint is safe */ }
   }
   return result
+}
+
+export function pipelineCheckpointHash(input: CPipelineInput): string {
+  return pipelineInputHash({
+    generation_spec: input.generation_spec,
+    evidence_pack: input.evidence_pack,
+    next_round_context: input.next_round_context,
+    prior_assessment_items: input.prior_assessment_items,
+  })
+}
+
+function recoveryForAgent(
+  input: CPipelineInput,
+  agent: "concept" | "code_lab" | "assessment",
+): GenerationRecoveryContext | undefined {
+  const recovery = input.generation_recovery
+  if (!recovery) return undefined
+  return recovery.failed_stage === agent
+    || recovery.failed_stage === "provider"
+    || recovery.failed_stage === "unknown"
+    ? recovery
+    : undefined
 }
 
 function localDependencyId(value: object | undefined): string {
@@ -258,6 +284,25 @@ function validateAssessmentHistory(
   return issues
 }
 
+function validateGenerationRecovery(
+  recovery: CPipelineInput["generation_recovery"],
+): Array<{ path: string; message: string }> {
+  if (!recovery) return []
+  const validStage = ["concept", "code_lab", "assessment", "provider", "unknown"]
+    .includes(recovery.failed_stage)
+  const validCodes = Array.isArray(recovery.issue_codes)
+    && recovery.issue_codes.length > 0
+    && recovery.issue_codes.every((code) => typeof code === "string" && code.trim())
+  if (!Number.isSafeInteger(recovery.attempt) || recovery.attempt < 1
+    || !validStage || !validCodes || !recovery.failure_fingerprint?.trim()) {
+    return [{
+      path: "$.generation_recovery",
+      message: "必须包含有效的 attempt、failed_stage、issue_codes 和 failure_fingerprint",
+    }]
+  }
+  return []
+}
+
 async function runCPipelineCore(
   input: CPipelineInput,
   agents: RoleCAgents,
@@ -290,6 +335,7 @@ async function runCPipelineCore(
     ...validateRoleCSchema("rag_evidence_pack.schema.json", input.evidence_pack).issues,
     ...validateNextRoundContext(input),
     ...validateAssessmentHistory(input.prior_assessment_items),
+    ...validateGenerationRecovery(input.generation_recovery),
   ]
   if (inputSchemaIssues.length > 0) {
     state = transitionCState(state, "BLOCKED")
@@ -379,6 +425,10 @@ async function runCPipelineCore(
     validator_results: [{ validator: "spec-evidence", ok: true, issue_count: 0 }],
   })
   state = transitionCState(state, "GENERATING")
+  const resourceBlueprint = buildResourceBlueprint(
+    input.generation_spec,
+    input.evidence_pack,
+  )
 
   let checkpoint: CPipelineCheckpoint | undefined
   try {
@@ -401,6 +451,8 @@ async function runCPipelineCore(
       generation_spec: input.generation_spec,
       evidence_pack: input.evidence_pack,
       next_round_context: input.next_round_context,
+      resource_blueprint: resourceBlueprint,
+      generation_recovery: recoveryForAgent(input, "concept"),
     })
     if (!checkpoint && concept.status === "ready") {
       try { await options.checkpoint_store?.save({ input_hash: inputHash, stage: "concept_ready", concept }) } catch { /* checkpoint is non-authoritative */ }
@@ -453,6 +505,8 @@ async function runCPipelineCore(
   const resumedBranches = checkpoint?.stage === "branches_ready"
     && checkpoint.code_lab !== undefined
     && checkpoint.assessment !== undefined
+  const resumedCodeLab = checkpoint?.code_lab !== undefined
+    && (checkpoint.stage === "code_lab_ready" || resumedBranches)
   if (resumedBranches) {
     labPair = checkpoint!.code_lab!
     assessmentPair = checkpoint!.assessment!
@@ -474,51 +528,68 @@ async function runCPipelineCore(
       agent: "code-lab",
       status: "started",
       input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
-      summary: "code-lab 开始生成",
+      summary: resumedCodeLab
+        ? "code-lab 从已验证检查点恢复"
+        : "code-lab 开始生成",
+      ...(resumedCodeLab ? { retry_kind: "resume" as const } : {}),
     })
-    try {
-      labPair = await agents.code_lab.generate({
-        generation_spec: input.generation_spec,
-        evidence_pack: input.evidence_pack,
-        concept_artifact: concept,
-        next_round_context: input.next_round_context,
-      })
-    } catch (error) {
-      state = transitionCState(state, "FAILED")
-      const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
-      pushTrace({
-        event_type: "c.pipeline.failed",
-        run_id: input.generation_spec.run_id,
-        agent: "code-lab",
-        status: "failed",
-        input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
-        summary: failure.message,
-      })
-      return failedResult(input.generation_spec, state, trace, failure, {
-        concept_lesson: concept,
-      })
-    }
-    const blockedLab = [labPair.public_artifact, labPair.secure_artifact]
-      .find((artifact) => artifact.status !== "ready")
-    if (blockedLab) {
-      state = transitionCState(state, "BLOCKED")
-      pushTrace({
-        event_type: "c.pipeline.blocked",
-        run_id: input.generation_spec.run_id,
-        agent: "code-lab",
-        status: "blocked",
-        input_refs: blockedLab.input_refs,
-        output_ref: blockedLab.artifact_id,
-        summary: blockedLab.blocked_reason?.message ?? "code-lab 产物未就绪",
-      })
-      return blockedResult(
-        input.generation_spec,
-        state,
-        trace,
-        blockedLab.blocked_reason
-          ?? { code: "BLOCKED_PROVIDER_UNAVAILABLE", message: "code-lab 产物未就绪" },
-        { concept_lesson: concept, code_lab: labPair.public_artifact },
-      )
+    if (resumedCodeLab) {
+      labPair = checkpoint!.code_lab!
+    } else {
+      try {
+        labPair = await agents.code_lab.generate({
+          generation_spec: input.generation_spec,
+          evidence_pack: input.evidence_pack,
+          concept_artifact: concept,
+          next_round_context: input.next_round_context,
+          resource_blueprint: resourceBlueprint,
+          generation_recovery: recoveryForAgent(input, "code_lab"),
+        })
+      } catch (error) {
+        state = transitionCState(state, "FAILED")
+        const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
+        pushTrace({
+          event_type: "c.pipeline.failed",
+          run_id: input.generation_spec.run_id,
+          agent: "code-lab",
+          status: "failed",
+          input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
+          summary: failure.message,
+        })
+        return failedResult(input.generation_spec, state, trace, failure, {
+          concept_lesson: concept,
+        })
+      }
+      const blockedLab = [labPair.public_artifact, labPair.secure_artifact]
+        .find((artifact) => artifact.status !== "ready")
+      if (blockedLab) {
+        state = transitionCState(state, "BLOCKED")
+        pushTrace({
+          event_type: "c.pipeline.blocked",
+          run_id: input.generation_spec.run_id,
+          agent: "code-lab",
+          status: "blocked",
+          input_refs: blockedLab.input_refs,
+          output_ref: blockedLab.artifact_id,
+          summary: blockedLab.blocked_reason?.message ?? "code-lab 产物未就绪",
+        })
+        return blockedResult(
+          input.generation_spec,
+          state,
+          trace,
+          blockedLab.blocked_reason
+            ?? { code: "BLOCKED_PROVIDER_UNAVAILABLE", message: "code-lab 产物未就绪" },
+          { concept_lesson: concept, code_lab: labPair.public_artifact },
+        )
+      }
+      try {
+        await options.checkpoint_store?.save({
+          input_hash: inputHash,
+          stage: "code_lab_ready",
+          concept,
+          code_lab: labPair,
+        })
+      } catch { /* checkpoint is non-authoritative */ }
     }
     pushTrace({
       event_type: "c.agent.ready",
@@ -527,7 +598,9 @@ async function runCPipelineCore(
       status: "success",
       input_refs: labPair.public_artifact.input_refs,
       output_ref: labPair.public_artifact.artifact_id,
-      summary: "code-lab public/secure 产物已通过发布前门禁",
+      summary: resumedCodeLab
+        ? "code-lab public/secure 产物已从检查点恢复"
+        : "code-lab public/secure 产物已通过发布前检查",
       validator_results: [{ validator: "code-lab-structure-execution", ok: true, issue_count: 0 }],
     })
 
@@ -559,6 +632,8 @@ async function runCPipelineCore(
           : {}),
         next_round_context: input.next_round_context,
         prior_assessment_items: input.prior_assessment_items,
+        resource_blueprint: resourceBlueprint,
+        generation_recovery: recoveryForAgent(input, "assessment"),
       })
     } catch (error) {
       state = transitionCState(state, "FAILED")
@@ -727,6 +802,8 @@ async function runCPipelineCore(
           evidence_pack: input.evidence_pack,
           next_round_context: input.next_round_context,
           revision_objections: blockingObjections.filter((entry) => entry.target_artifact_id === concept.artifact_id),
+          resource_blueprint: resourceBlueprint,
+          generation_recovery: recoveryForAgent(input, "concept"),
         })
       }
       if (labNeedsRevision) {
@@ -738,6 +815,8 @@ async function runCPipelineCore(
           revision_objections: blockingObjections.filter((entry) =>
             entry.target_artifact_id === labPair.public_artifact.artifact_id
               || entry.target_artifact_id === labPair.secure_artifact.artifact_id),
+          resource_blueprint: resourceBlueprint,
+          generation_recovery: recoveryForAgent(input, "code_lab"),
         })
       }
       if (assessmentNeedsRevision) {
@@ -751,6 +830,8 @@ async function runCPipelineCore(
           revision_objections: blockingObjections.filter((entry) =>
             entry.target_artifact_id === assessmentPair.public_artifact.artifact_id
               || entry.target_artifact_id === assessmentPair.secure_artifact.artifact_id),
+          resource_blueprint: resourceBlueprint,
+          generation_recovery: recoveryForAgent(input, "assessment"),
         })
       }
     } catch (error) {
@@ -937,11 +1018,16 @@ function checkpointIssues(
   const artifacts: Array<[unknown, "concept_artifact.schema.json" | "code_lab_public.schema.json" | "code_lab_secure.schema.json" | "assessment_public.schema.json" | "assessment_secure.schema.json"]> = [
     [checkpoint.concept, "concept_artifact.schema.json"],
   ]
-  if (checkpoint.stage === "branches_ready") {
-    if (!checkpoint.code_lab || !checkpoint.assessment) issues.push("branches_ready checkpoint 缺少分支")
+  if (checkpoint.stage === "code_lab_ready" || checkpoint.stage === "branches_ready") {
+    if (!checkpoint.code_lab) issues.push(`${checkpoint.stage} checkpoint 缺少代码实验分支`)
     else artifacts.push(
       [checkpoint.code_lab.public_artifact, "code_lab_public.schema.json"],
       [checkpoint.code_lab.secure_artifact, "code_lab_secure.schema.json"],
+    )
+  }
+  if (checkpoint.stage === "branches_ready") {
+    if (!checkpoint.assessment) issues.push("branches_ready checkpoint 缺少测评分支")
+    else artifacts.push(
       [checkpoint.assessment.public_artifact, "assessment_public.schema.json"],
       [checkpoint.assessment.secure_artifact, "assessment_secure.schema.json"],
     )

@@ -637,6 +637,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const chain = pathChainView(pathNodes as any, ragItems, profile?.known_concepts ?? [])
   const hasLesson = Boolean(activeSession.learning_resources.concept_lesson?.payload)
   const hasBlockedResource = activeSession.status === "blocked" || activeSession.status === "failed"
+  const recoveryAction = blockedSessionAction(activeSession)
   if (!activeSession.current_path_node) return <BlockedResourceState session={activeSession} busy={busy} onRetry={() => void retry()} onRestart={reset} title="学习方案尚未形成可恢复检查点" />
   return <div className="page path-page week2-plan-page">
     <PageHeading kicker="学习方案 · Week 2 可视化报告" title={`本次计划：${displayPlanName}`} description="诊断完成后先在这里查看主 Agent公开的画像、难度匹配、正式路径和Agent协同过程；只有你主动点击后才进入 C 生成的互动学习内容。" />
@@ -678,7 +679,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
       <article className="agent-collaboration-card"><header><div><small>Agent协同过程 · 主 Agent台账</small><h2>{activeSession.worker_ledger.length} 个Worker状态</h2></div><Bot size={22} /></header><div className="agent-collaboration-list">{activeSession.worker_ledger.map((worker) => <article key={worker.worker}><span className={`agent-status status-${worker.status}`} /><div><b>{workerLabel(worker.worker)}</b><p>{worker.summary ?? "主 Agent未公开摘要"}</p></div><em>{worker.status}</em></article>)}</div></article>
     </section>
 
-    {hasBlockedResource && <section className="plan-resource-status is-blocked"><ShieldCheck /><div><b>学习方案已保存，C互动资源尚未通过可信门禁</b><p>{activeSession.blocked_reason ?? "主 Agent未公开具体阻塞原因"}</p></div><button className="secondary-action" disabled={Boolean(busy)} type="button" onClick={() => void retry()}>{busy ? "正在原样重试…" : "原样重试 C 资源"}</button></section>}
+    {hasBlockedResource && <section className="plan-resource-status is-blocked"><ShieldCheck /><div><b>学习方案已保存，C互动资源尚未通过可信门禁</b><p>{activeSession.blocked_reason ?? "主 Agent未公开具体阻塞原因"}</p></div><button className="secondary-action" disabled={Boolean(busy)} type="button" onClick={recoveryAction.canRetry ? () => void retry() : reset}>{busy ? "正在恢复…" : recoveryAction.label}</button></section>}
     <section className="plan-enter-learning"><div><b>{hasLesson ? "互动学习资源已由主 Agent公开" : "互动学习资源尚未发布"}</b><p>{hasLesson ? "你可以主动进入C生成并经可信审核的讲义、代码实验和理解检查。" : "学习方案仍可查看；D不会用静态内容冒充C资源。"}</p></div><button className="primary-action" disabled={!hasLesson} type="button" onClick={onContinue}>进入互动学习 <ArrowRight /></button></section>
     <section className="provenance-note"><ShieldCheck /><div><b>Week 2 可视化只展示真实上游结果</b><p>画像和路径来自B，难度匹配与证据来自A，学习内容与测评来自C，协同状态来自主 Agent；D只负责可视化，不生成结论。</p></div></section>
   </div>

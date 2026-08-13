@@ -14,6 +14,7 @@ import type {
   RoleCReviewRecoveryStatusDelivery,
   SubmissionEnvelope,
 } from "../role-c-content"
+import type { GenerationRecoveryContext } from "../role-c-content"
 
 export const ROLE_C_API_PATHS = {
   generate: "/api/role-c/generate",
@@ -160,6 +161,47 @@ export interface RoleDFinalContentContext {
   evidencePack: PublicRagEvidencePack
 }
 
+export type RoleCGenerationFailureStage =
+  | "concept"
+  | "code_lab"
+  | "assessment"
+  | "evidence"
+  | "review"
+  | "provider"
+  | "unknown"
+
+export type RoleCGenerationRecoveryAction =
+  | "regenerate_concept"
+  | "regenerate_code_lab"
+  | "regenerate_assessment"
+  | "refresh_evidence"
+  | "replan_path"
+  | "reprofile_learner"
+  | "retry_provider"
+  | "change_goal"
+
+/**
+ * Machine-readable C failure contract consumed by the main Agent and D.
+ * Human-readable messages are display-only and never drive recovery decisions.
+ */
+export interface RoleCGenerationFailure {
+  code:
+    | "CONTENT_INVALID"
+    | "CONTENT_NOT_NOVEL"
+    | "EVIDENCE_UNAVAILABLE"
+    | "TARGET_UNSUPPORTED"
+    | "PROVIDER_UNAVAILABLE"
+    | "REVIEW_REJECTED"
+    | "INTERNAL_FAILURE"
+  stage: RoleCGenerationFailureStage
+  issueCodes: string[]
+  repairScope: "artifact" | "evidence" | "path" | "provider" | "none"
+  nextAction: RoleCGenerationRecoveryAction
+  canRetry: boolean
+  message: string
+  fingerprint: string
+}
+
 export type RoleCForRoleDResult =
   | {
       status: "ready"
@@ -188,6 +230,7 @@ export type RoleCForRoleDResult =
       workflow: RoleDWorkflowEvent[]
       runId: string
       reason: string
+      failure: RoleCGenerationFailure
       audit?: RoleDContentAuditSummary
       recovery?: RoleDReviewRecoverySummary
     }
@@ -209,6 +252,8 @@ export interface GenerateRoleCForRoleDInput {
   next_round_context?: NextRoundGenerationContext
   /** Previously published answer-free questions for AI anti-repetition. */
   prior_assessment_items?: PriorAssessmentItem[]
+  /** Private retry context; preserves Spec identity and regenerates only the failed stage. */
+  generation_recovery?: GenerationRecoveryContext
 }
 
 export interface SubmitRoleCAssessmentInput {

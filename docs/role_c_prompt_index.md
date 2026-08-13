@@ -6,7 +6,7 @@
 
 | 文件 | 说明 |
 |------|------|
-| `common-policy.ts` | 版本号（`c-prompts-1.20.2`）、权威边界、外审修订协议、个性化边界、next_round 语义 |
+| `common-policy.ts` | 版本号（`c-prompts-1.21.1`）、教学蓝图字段权威、失败阶段恢复、外审修订协议、个性化边界和 next_round 语义 |
 | `staged-repair.prompt.ts` | 分阶段生成通用修复模板，包含隐藏测试修复与重复题完整重命题要求 |
 
 ## Concept Tutor

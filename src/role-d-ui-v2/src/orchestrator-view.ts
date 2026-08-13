@@ -266,6 +266,19 @@ export function initialGoalSelection(): { mode: "catalog"; selectedNodeId: strin
 
 export function blockedSessionAction(session: any): { canRetry: boolean; label: string } {
   const outcome = session?.terminal_outcome
+  const generationFailure = outcome?.generation_failure
+  if (outcome?.kind === "content_generation_failed" && generationFailure) {
+    const labels: Record<string, string> = {
+      regenerate_concept: "重新生成概念讲解",
+      regenerate_code_lab: "重新生成代码实验",
+      regenerate_assessment: "重新生成正式测评",
+      retry_provider: "重试内容生成服务",
+    }
+    return {
+      canRetry: generationFailure.canRetry === true,
+      label: labels[generationFailure.nextAction] ?? "调整学习目标",
+    }
+  }
   if (outcome?.kind === "unsupported_goal") {
     return { canRetry: false, label: "调整学习目标" }
   }
@@ -280,7 +293,7 @@ export function blockedSessionAction(session: any): { canRetry: boolean; label: 
   }
   const hasGenerationCheckpoint = Boolean(session?.profile && session?.formal_path && session?.current_path_node)
   return hasGenerationCheckpoint
-    ? { canRetry: true, label: "原样重试 C 资源生成" }
+    ? { canRetry: true, label: "重新生成当前学习资源" }
     : { canRetry: false, label: "重新诊断" }
 }
 

@@ -791,8 +791,11 @@ function basePipelineOptions(
     ...(options.critic ? { critic: options.critic } : {}),
     ...(options.fact_audit_port ? { fact_audit_port: options.fact_audit_port } : {}),
     ...(options.trace_seq_start !== undefined ? { trace_seq_start: options.trace_seq_start } : {}),
-    // cache and checkpoint_store are intentionally absent: reviewed candidates cannot
-    // consume a historical READY result produced without the current review policy.
+    ...(options.checkpoint_store ? { checkpoint_store: options.checkpoint_store } : {}),
+    // READY cache is intentionally absent: reviewed candidates cannot consume a
+    // historical release produced without the current review policy. A private
+    // partial checkpoint only reuses stage-valid drafts; the completed candidate
+    // still passes the current cross-artifact and A/B review before publication.
     // trace_store is also absent because a candidate's internal READY event must not
     // be persisted before the external publication gate has passed.
   }

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { buildAssessmentItemPlan } from "../src/role-c-content/providers/staged-generation"
 
-describe("formal assessment code-pair contract", () => {
-  test("replaces subjective assessment with a simple 2-point code task and a 4-point comprehensive code task", () => {
+describe("formal assessment behavior-aware plan", () => {
+  test("keeps B-required code while using flexible slots for direct apply evidence", () => {
     const plan = buildAssessmentItemPlan({
       spec_id: "SPEC-CODE-PAIR",
       run_id: "RUN-CODE-PAIR",
@@ -22,7 +22,7 @@ describe("formal assessment code-pair contract", () => {
       ["mcq", 1],
       ["mcq", 1],
       ["trace", 2],
-      ["code", 2],
+      ["trace", 2],
       ["code", 4],
     ])
   })

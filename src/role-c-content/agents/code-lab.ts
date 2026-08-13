@@ -10,10 +10,11 @@ import {
   finalizeDraft,
   invalidOutputEnvelope,
   providerBlockedEnvelope,
+  safeValidationIssueCodes,
   unsupportedTargetEnvelope,
 } from "./harness"
 import type { CodeLabAgent, CodeLabDraftVerifier, CodeLabRequest, RoleCContentProvider } from "./types"
-import { validateCodeLabDraftStructure, classifyCodeLabVerificationFailure } from "../validators/code-lab-validator"
+import { validateCodeLabDraftStructure, classifyCodeLabVerificationFailure, isTrustedExpectedDerivationIssue } from "../validators/code-lab-validator"
 
 export function generateCodeLab(
   request: CodeLabRequest,
@@ -43,11 +44,14 @@ export function createCodeLabAgent(
           await provider.generateCodeLab(request),
         )
         let structural = validateCodeLabDraftStructure(request, draft)
-        if (!structural.ok) {
+        const canDeriveExpectedThroughTrustedExecution = Boolean(verifier)
+          && structural.issues.length > 0
+          && structural.issues.every((issue) => isTrustedExpectedDerivationIssue(issue.code))
+        if (!structural.ok && !canDeriveExpectedThroughTrustedExecution) {
           return invalidPair(
             common,
             "code-lab Draft 未通过结构、引用、public/secure 或目标覆盖门禁",
-            structural.issues.map((issue) => `${issue.path}: ${issue.message}`),
+            structural.issues.map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
           )
         }
         let verification = verifier
@@ -97,7 +101,7 @@ export function createCodeLabAgent(
             return invalidPair(
               common,
               "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁",
-              structural.issues.map((issue) => `${issue.path}: ${issue.message}`),
+              structural.issues.map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
             )
           }
           verification = await activeVerifier.verifyCodeLab(
@@ -208,7 +212,7 @@ function invalidPair(
   common: { spec: GenerationSpec; evidence: RagEvidencePack; input_refs: string[] },
   message: string,
   details: string[],
-  publicDetails: string[] = ["code-lab Draft 未通过可信门禁"],
+  publicDetails: string[] = safeValidationIssueCodes(details),
 ): CodeLabArtifactPair {
   return {
     public_artifact: invalidOutputEnvelope({

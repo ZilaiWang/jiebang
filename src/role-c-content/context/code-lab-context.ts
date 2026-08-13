@@ -35,6 +35,16 @@ export interface CodeLabModelInput {
   }
   revision_objections?: CodeLabRequest["revision_objections"]
   external_revision_round?: CodeLabRequest["external_revision_round"]
+  resource_blueprint?: {
+    blueprint_id: string
+    spec_id: string
+    code_lab: NonNullable<CodeLabRequest["resource_blueprint"]>["code_lab"]
+    objectives: Array<Pick<
+      NonNullable<CodeLabRequest["resource_blueprint"]>["objectives"][number],
+      "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "code_lab"
+    >>
+  }
+  generation_recovery?: CodeLabRequest["generation_recovery"]
 }
 
 /** Builds the model-visible lab context without learner identity or answer-bearing quiz seeds. */
@@ -105,6 +115,23 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
       ? structuredClone(request.revision_objections)
       : undefined,
     external_revision_round: request.external_revision_round,
+    resource_blueprint: request.resource_blueprint
+      ? {
+          blueprint_id: request.resource_blueprint.blueprint_id,
+          spec_id: request.resource_blueprint.spec_id,
+          code_lab: structuredClone(request.resource_blueprint.code_lab),
+          objectives: request.resource_blueprint.objectives.map((objective) => ({
+            objective_id: objective.objective_id,
+            source_id: objective.source_id,
+            observable_behavior: objective.observable_behavior,
+            required_fact_ids: [...objective.required_fact_ids],
+            code_lab: structuredClone(objective.code_lab),
+          })),
+        }
+      : undefined,
+    generation_recovery: request.generation_recovery
+      ? structuredClone(request.generation_recovery)
+      : undefined,
   }
 }
 

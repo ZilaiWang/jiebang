@@ -81,7 +81,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 不返回 lab_id、test_suite_id、execution_contract、test_id、objective_id、weight、scoring_groups、misconception_map、must_fail_test_ids、objective_coverage。
 
-reference 不得动态访问双下划线属性或使用 __name__ main guard；普通类的 __init__ 定义可用。不得使用动态执行、内省、文件或进程能力；import 只能来自 execution_contract.allowed_imports。不得声称代码已经运行或验证。
+reference 不得动态访问双下划线属性或使用 __name__ main guard；普通类的 __init__ 定义可用。不得使用动态执行、内省、文件或进程能力；import 只能来自 execution_contract.allowed_imports。输出前逐行检查 reference_solution：当 allowed_imports=[] 时不得出现任何 import 或 from ... import 行，也不要为了类型注解导入 typing；优先使用 Python 内置语法完成基础任务。allowed_imports 非空时，每一条 import 的顶层模块名也必须逐字出现在该数组中。不得声称代码已经运行或验证。
 
 reference_solution 禁止调用：eval、exec、compile、open、breakpoint、__import__、globals、locals、vars、getattr、setattr、delattr、memoryview。如果任务看起来需要这些能力，请用纯 Python 等价实现（如 JSON 解析用 json 模块、文件内容作为函数参数传入），而不是调用它们。
 

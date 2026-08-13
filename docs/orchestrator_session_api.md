@@ -130,7 +130,17 @@ Content-Type: application/json
 
 `answers` 必须覆盖会话返回的全部诊断题 ID，多答或少答返回 `INVALID_DIAGNOSIS_ANSWERS` (400)。
 
-完成诊断后，主 Agent 继续调用画像（profile-builder）和路径（path-planner）Worker，再经 C 生成概念课件、代码实验与正式测评，在测评处暂停：
+完成诊断后，主 Agent 先完成画像（profile-builder）和路径（path-planner），持久化 C 生成检查点并立即返回：
+
+```json
+{
+  "status": "running",
+  "current_stage": "assessment",
+  "waiting_for": null
+}
+```
+
+前端轮询会话。C 在后台生成概念课件、代码实验与正式测评，发布完成后进入：
 
 ```json
 {
@@ -143,7 +153,7 @@ Content-Type: application/json
 }
 ```
 
-正式测评结构为五题 code-pair：`mcq(1分) + true_false(1分) + trace(2分) + code(2分) + code(4分)`。题面、选项、数据场景、代码任务和私有答案由 AI 根据当前 Spec 与 A 证据当次生成；所有 citations 均绑定到 A 知识库真实 fact。
+正式测评的题量和 Tier 来自 B 的 `assessment_blueprint`；C 根据 objective 可观察行为选择能直接测量的 `mcq / true_false / trace / short_answer / code` 组合，并冻结每题分值。题面、选项、数据场景、代码任务和私有答案由 AI 根据当前 Spec 与 A 证据当次生成；所有 citations 均绑定到 A 知识库真实 fact。
 
 #### 运行代码实验
 
@@ -191,7 +201,7 @@ Content-Type: application/json
 
 reprofile 触发链路(2026-08-08 修复):画像预期现在来自 B 画像真实 known/weak_concepts(`profileExpectationForTarget` 按 source_id 映射,不再硬编码 weak);`profile_version` 跨轮稳定(`<run_id>-profile-E<epoch>`),同一画像纪元内多轮 evidence 跨轮累积,reprofile 后 epoch+1 使新画像从零累积;触发门槛 `profile_drift_minimum_conflicts=1` 适配每节点单 objective。
 
-提交测评后**下一轮内容在后台生成**：命令响应先返回评分反馈，会话状态为 `running`、`waiting_for` 为 `null`，`feedback` 已可用；前端轮询 `GET /orchestrator/sessions/:id` 直到再次进入 `waiting_for_user`（新 `assessment_answers` 到达）。后台生成失败时进入 `blocked` 或 `failed`，可用 `retry` 恢复。
+首次 C 内容和提交测评后的下一轮内容都在后台生成。命令响应先返回持久化的 `running` 检查点，前端轮询 `GET /orchestrator/sessions/:id`，直到进入 `waiting_for_user`、`blocked` 或 `failed`。
 
 #### 运行测评代码题（即时试运行）
 
@@ -221,7 +231,8 @@ reprofile 触发链路(2026-08-08 修复):画像预期现在来自 B 画像真�
 
 - 后台生成随服务重启中断的 `running` 会话：从持久化的 `next_round_context` 检查点恢复生成（`role_c_generation_attempt` 递增避免 run_id 碰撞；持久化 focus 与当前节点不符时自动对齐到当前节点目标）；
 - 含完整 `role_c` + `assessment` + 节点检查点的会话：恢复 `waiting_for_user` 等待测评；
-- 有画像/路径/节点/RAG 证据但缺内容的会话：按当前节点重新生成整套内容；
+- C 内容失败：按 `terminal_outcome.generation_failure.nextAction` 执行新的生成身份；同一轮连续两次内容生成失败后返回 `C_RECOVERY_EXHAUSTED`，要求调整目标，不再原样循环；
+- 有画像/路径/节点/RAG 证据但缺内容的旧会话：按当前节点恢复生成；
 - 仅有诊断答案的会话：以原答案重放诊断流程。
 
 ### 读取 Worker 事件
@@ -252,7 +263,9 @@ Authorization: Bearer learner-001
 - `code_execution`（最近一次 `run_assessment_code` 的公开摘要，无则 `null`）
 - `feedback`
 - `blocked_reason`
-- `terminal_outcome`（课程终态；`completed_mastered / unsupported_goal / insufficient_evidence / planning_failed / learning_support_required`，临时生成故障为 `null`）
+- `terminal_outcome`（`completed_mastered / unsupported_goal / insufficient_evidence / planning_failed / learning_support_required / content_generation_failed`）
+
+`content_generation_failed` 包含公开安全的 `generation_failure`：失败阶段、稳定问题码、修复范围、下一动作、是否可重试和失败指纹。展示文案不参与恢复判断。
 
 `status=completed` 只表示非空正式路径的全部节点均已通过测评，此时
 `terminal_outcome.code=PATH_MASTERED`。没有路径节点不会被解释为完成；目标不受支持、
