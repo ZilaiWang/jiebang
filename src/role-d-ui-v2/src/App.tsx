@@ -82,6 +82,19 @@ import {
 
 const WORKSPACE_STORAGE_KEY = "knowbalance-v4-workspace"
 
+/** 实时检查 Docker 是否就绪（每次创建前调用，不依赖页面加载时的缓存值）。 */
+export async function checkDockerReady(fetchImpl: typeof fetch = fetch): Promise<{ ready: boolean; error?: string }> {
+  try {
+    const response = await fetchImpl("/health")
+    const data = await response.json() as { docker?: { ready?: boolean; error?: string } }
+    return data?.docker?.ready
+      ? { ready: true }
+      : { ready: false, error: data?.docker?.error ?? "无法检测 Docker 状态" }
+  } catch {
+    return { ready: false, error: "无法连接主 Agent，请确认已启动" }
+  }
+}
+
 export type LiveContextValue = {
   session: PublicSessionFixture | null
   isLive: boolean
@@ -289,6 +302,14 @@ export function App() {
       }
       if (!provider.configured) {
         setOpenPlanAfterProvider(false)
+        setProviderOpen(true)
+        return
+      }
+      // 每次创建前实时检查 Docker（不用页面加载时的缓存值）
+      const docker = await checkDockerReady()
+      setDockerStatus(docker)
+      if (!docker.ready) {
+        setError("Docker 代码沙箱未就绪：请先打开右上角「API设置」→ 检查 Docker 状态 → 一键配置 Docker")
         setProviderOpen(true)
         return
       }
