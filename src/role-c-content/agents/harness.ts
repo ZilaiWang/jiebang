@@ -231,6 +231,23 @@ export function invalidOutputEnvelope<
   )
 }
 
+/** Keep only stable validator codes at public orchestration boundaries. */
+export function safeValidationIssueCodes(details: string[]): string[] {
+  const codes = details.map((detail) => {
+    const bracketed = /^\s*\[([^\]]+)\]/u.exec(detail)?.[1]
+    if (bracketed) return bracketed.trim().toUpperCase()
+    const conceptCode = /^\s*([A-Z][A-Z0-9_]+)\s*(?:@|:)/u.exec(detail)?.[1]
+    if (conceptCode) return conceptCode
+    if (/与已发布题目|与本卷.*重复/u.test(detail)) return "ASSESSMENT_DUPLICATE"
+    if (/reference_solution_leak/u.test(detail)) return "REFERENCE_SOLUTION_LEAK"
+    if (/invalid_expected_type/u.test(detail)) return "INVALID_EXPECTED_TYPE"
+    if (/starter_code/u.test(detail)) return "INVALID_STARTER_CODE"
+    if (/NO_REPAIR_PROGRESS/iu.test(detail)) return "NO_REPAIR_PROGRESS"
+    return "INVALID_OUTPUT"
+  })
+  return [...new Set(codes)]
+}
+
 function blockedEnvelope<
   TPayload,
   TArtifactType extends RoleCArtifactType,

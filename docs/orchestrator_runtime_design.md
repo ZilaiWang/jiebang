@@ -159,3 +159,18 @@ bun run check
 ```
 
 真实运行还需要模型 Provider 和 Docker。正式验收应从 HTTP 会话入口依次完成 AI 诊断、画像与路径、A 证据、C 三类资源、代码执行、正式评分、B 进展消费和至少一次 AI 新卷续轮。
+
+## 12. Agent 产物追溯
+
+`worker_ledger_history` 是主 Agent 的追加式执行台账。每条记录包含执行单元、阶段、状态、输入证据、输出产物、下一步、错误、重试和阻塞信息。已经形成的产物使用 `sessions/<session_id>.json#<JSON Pointer>` 定位到持久会话中的真实字段，并区分 A、B、C 与主 Agent 的产物归属。
+
+需要独立验收文件时，可从任意实际持久会话导出产物映射：
+
+```bash
+bun run scripts/export-agent-artifact-map.ts \
+  --session <data-root>/sessions/<session-id>.json \
+  --review <review.json> \
+  --output <evidence-directory>
+```
+
+导出的 `artifact-map.json` 逐 Agent 记录阶段、执行状态、输入引用、真实文件引用、下一步、错误、重试与阻塞状态。每个实际文件引用包含 SHA-256 和存在性结果；不存在的业务产物不会由导出器补造。诊断正确答案、代码实验参考实现、隐藏测试和正式测评答案不进入导出目录。

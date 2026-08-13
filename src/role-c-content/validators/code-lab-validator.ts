@@ -311,13 +311,17 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
 
   async verifyCodeLab(request: CodeLabRequest, draft: CodeLabDraft) {
     const report = validateCodeLabDraftStructure(request, draft)
-    const issues = report.issues.map((entry) => `${entry.path}: ${entry.message}`)
+    const deferredExpectedIssues = report.issues.filter((entry) =>
+      isTrustedExpectedDerivationIssue(entry.code))
+    const blockingStructureIssues = report.issues.filter((entry) =>
+      !isTrustedExpectedDerivationIssue(entry.code))
+    const issues = blockingStructureIssues.map((entry) => `${entry.path}: ${entry.message}`)
     const expectedDigest = request.generation_spec.versions.runner_image_digest
     if (!expectedDigest) issues.push("GenerationSpec 缺少 runner_image_digest")
     if (expectedDigest && expectedDigest !== this.runner.runner_image_digest) {
       issues.push("GenerationSpec.runner_image_digest 与 CodeRunner 不一致")
     }
-    if (!report.ok || issues.length > 0) return result(false, issues, this.runner.runner_image_digest, 0, 0, report.objective_coverage)
+    if (blockingStructureIssues.length > 0 || issues.length > 0) return result(false, issues, this.runner.runner_image_digest, 0, 0, report.objective_coverage)
 
     const publicPayload = draft.public_draft.payload
     const securePayload = draft.secure_draft.payload
@@ -355,6 +359,7 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
     if (referenceFailed) {
       issues.push(`reference_solution 未通过全部隐藏测试：${reference.failure_codes.join("、")}`)
     }
+    issues.push(...deferredExpectedIssues.map((entry) => `${entry.path}: ${entry.message}`))
     if (reference.runner_image_digest !== this.runner.runner_image_digest) {
       issues.push("执行结果 runner_image_digest 不一致")
     }
@@ -453,6 +458,10 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
       },
     )
   }
+}
+
+export function isTrustedExpectedDerivationIssue(code: string): boolean {
+  return code === "invalid_expected_type" || code === "invalid_test_comparison"
 }
 
 const DEFAULT_MUTATION_CONCURRENCY = 2

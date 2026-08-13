@@ -464,11 +464,12 @@ function createFormalNode(
 ): FormalPathNode {
   const nodeId = `FN-${item.sourceId}-S${stageOrder}-${Date.now()}`
 
+  const behavior = stageOrder <= 3 ? "recognize" as const : "apply" as const
   const objectives: LearningObjective[] = [{
     objective_id: `OBJ-${item.sourceId}`,
     source_id: item.sourceId,
     required_fact_ids: [],
-    observable_behavior: stageOrder <= 3 ? "recognize" as const : "apply" as const,
+    observable_behavior: behavior,
     importance: "core" as const,
   }]
 
@@ -476,7 +477,9 @@ function createFormalNode(
     tier_1_count: 2,
     tier_2_count: 2,
     tier_3_count: 1,
-    required_modalities: ["mcq", "trace", "code"],
+    required_modalities: behavior === "recognize"
+      ? ["mcq", "true_false"]
+      : ["mcq", "trace", "code"],
   }
 
   return {

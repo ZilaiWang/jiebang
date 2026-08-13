@@ -40,6 +40,16 @@ export interface AssessmentAuthorModelInput {
   }
   revision_objections?: TieredEvaluatorRequest["revision_objections"]
   external_revision_round?: TieredEvaluatorRequest["external_revision_round"]
+  resource_blueprint?: {
+    blueprint_id: string
+    spec_id: string
+    assessment: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["assessment"]
+    objectives: Array<Pick<
+      NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["objectives"][number],
+      "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "assessment"
+    >>
+  }
+  generation_recovery?: TieredEvaluatorRequest["generation_recovery"]
 }
 
 /** Keeps authoring context high-signal and excludes learner identity and quiz answers. */
@@ -128,6 +138,23 @@ export function buildAssessmentAuthorModelInput(
       ? structuredClone(request.revision_objections)
       : undefined,
     external_revision_round: request.external_revision_round,
+    resource_blueprint: request.resource_blueprint
+      ? {
+          blueprint_id: request.resource_blueprint.blueprint_id,
+          spec_id: request.resource_blueprint.spec_id,
+          assessment: structuredClone(request.resource_blueprint.assessment),
+          objectives: request.resource_blueprint.objectives.map((objective) => ({
+            objective_id: objective.objective_id,
+            source_id: objective.source_id,
+            observable_behavior: objective.observable_behavior,
+            required_fact_ids: [...objective.required_fact_ids],
+            assessment: structuredClone(objective.assessment),
+          })),
+        }
+      : undefined,
+    generation_recovery: request.generation_recovery
+      ? structuredClone(request.generation_recovery)
+      : undefined,
   }
 }
 

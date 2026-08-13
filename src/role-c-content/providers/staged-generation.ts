@@ -129,6 +129,17 @@ export interface AssessmentItemPlan {
   modality: AssessmentItemPublic["modality"]
   max_score: number
   citations: CitationRef[]
+  cognitive_operation:
+    | "recognize_fact"
+    | "explain_reasoning"
+    | "trace_execution"
+    | "apply_rule"
+    | "diagnose_error"
+    | "construct_solution"
+  context_strategy: {
+    kind: "preferred_context" | "neutral_context"
+    value?: string
+  }
 }
 
 /** Public question semantics before stable IDs, scoring, routing and citations are attached. */
@@ -278,7 +289,6 @@ export function validateConceptSegmentAuthorAgainstRequest(
 function withMicroCheckAnswer(
   authored: ConceptSegmentAuthorPayload["objectives"][number],
   identity: { spec_id: string; objective_id: string; source_id: string },
-  evidenceText: string,
 ): { answer_option_id: string; answer_explanation: string } | Record<string, never> {
   const optionIndex = authored.micro_check_options.findIndex((option) =>
     option.trim().toLocaleLowerCase()
@@ -289,7 +299,7 @@ function withMicroCheckAnswer(
       ...identity,
       option_index: optionIndex,
     }),
-    answer_explanation: `可依据本轮事实判断：${evidenceText}。`,
+    answer_explanation: authored.micro_check_explanation.trim(),
   }
 }
 
@@ -336,25 +346,6 @@ export function materializeConceptSegmentAuthorPayload(
       text: facts.get(`${citation.source_id}:${citation.fact_id}`) ?? "",
       citations: [structuredClone(citation)],
     }))
-    const evidenceText = citations
-      .map((citation) => facts.get(`${citation.source_id}:${citation.fact_id}`) ?? "")
-      .map((fact) => fact.trim().replace(/[。；;]+$/u, ""))
-      .filter(Boolean)
-      .join("；")
-    const evidenceItem = request.evidence_pack.results.find((entry) =>
-      entry.source_id === target.source_id)
-    const evidenceExample = evidenceItem?.examples[0]
-    const groundedExplanation = `本轮先逐条掌握这些可核对事实：${evidenceText}。学习和作答时，以这些事实为边界。`
-    const groundedWorkedExample = evidenceExample
-      ? [
-          `证据示例：${evidenceExample.title}`,
-          evidenceExample.code,
-          evidenceExample.explanation,
-          `这个示例用于观察本轮事实所描述的基本行为。`,
-        ].filter(Boolean).join("\n")
-      : `围绕“${request.generation_spec.path_node.goal}”完成一个基础观察，并逐条对照以下事实：${evidenceText}。`
-    const groundedMisconception = `可能的误解是把本轮结论缩小成单一情形，或扩大成证据未说明的能力。正确做法是只确认：${evidenceText}。自查时逐条核对，不把未提供证据的用途或结论当作已掌握事实。`
-    const groundedSummary = `本轮可确认的结论：${evidenceText}。`
     const explanationId = stableId("CONCEPT-EXPLANATION", identity)
     const workedExampleId = stableId("CONCEPT-EXAMPLE", identity)
     const checkId = stableId("CONCEPT-CHECK", identity)
@@ -362,18 +353,18 @@ export function materializeConceptSegmentAuthorPayload(
     explanationBlocks.push({
       block_id: explanationId,
       block_type: "paragraph",
-      text: groundedExplanation,
+      text: authored.explanation.trim(),
       claims: claims("explanation"),
     })
     workedExamples.push({
       block_id: workedExampleId,
       block_type: "paragraph",
-      text: groundedWorkedExample,
+      text: authored.worked_example.trim(),
       claims: claims("worked-example"),
     })
     misconceptions.push({
       misconception_tag: stableId("CONCEPT-MISCONCEPTION", identity),
-      explanation: groundedMisconception,
+      explanation: authored.misconception.trim(),
       objective_id: target.objective_id,
       citations: structuredClone(citations),
     })
@@ -390,7 +381,7 @@ export function materializeConceptSegmentAuthorPayload(
         label: String.fromCharCode(65 + optionIndex),
         text: text.trim(),
       })),
-      ...withMicroCheckAnswer(authored, identity, evidenceText),
+      ...withMicroCheckAnswer(authored, identity),
       citations: citations.map((citation) => ({
         ...citation,
         relation: "derived_from" as const,
@@ -410,7 +401,7 @@ export function materializeConceptSegmentAuthorPayload(
     summary.push({
       block_id: summaryId,
       block_type: "paragraph",
-      text: groundedSummary,
+      text: authored.summary.trim(),
       claims: claims("summary"),
     })
     objectiveCoverage.push({
@@ -1155,8 +1146,16 @@ export function deterministicAssessmentStarterRepair(
   return `${normalizedSig}\n${indent}    # TODO: 补全你的代码实现\n${indent}    pass\n`
 }
 
-export function assessmentCompositionForBehavior(_behavior: GenerationSpec["targets"][number]["observable_behavior"]): AssessmentItemPublic["modality"][] {
-  return ["mcq", "mcq", "trace", "code", "code"]
+export function assessmentCompositionForBehavior(behavior: GenerationSpec["targets"][number]["observable_behavior"]): AssessmentItemPublic["modality"][] {
+  const compositions: Record<GenerationSpec["targets"][number]["observable_behavior"], AssessmentItemPublic["modality"][]> = {
+    recognize: ["mcq", "true_false", "mcq", "true_false", "mcq"],
+    explain: ["mcq", "short_answer", "short_answer", "short_answer", "short_answer"],
+    trace: ["mcq", "trace", "trace", "trace", "code"],
+    apply: ["mcq", "true_false", "trace", "short_answer", "code"],
+    debug: ["mcq", "trace", "code", "code", "code"],
+    create: ["mcq", "short_answer", "code", "code", "code"],
+  }
+  return [...compositions[behavior]]
 }
 
 export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPlan[] {
@@ -1165,14 +1164,10 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
     ...Array.from({ length: spec.assessment_blueprint.tier_2_count }, () => 2 as const),
     ...Array.from({ length: spec.assessment_blueprint.tier_3_count }, () => 3 as const),
   ]
-  const primaryBehavior = spec.targets.find((target) => target.importance === "core")?.observable_behavior
-    ?? spec.targets[0]?.observable_behavior
-    ?? "apply"
-  const requiredComposition = assessmentCompositionForBehavior(primaryBehavior)
-  if (tiers.length !== requiredComposition.length) {
-    throw new ModelOutputValidationError("assessment.plan", ["正式测评必须固定为 5 题：2 道选择、1 道读代码、2 道代码题"])
+  if (tiers.length === 0) {
+    throw new ModelOutputValidationError("assessment.plan", ["正式测评至少需要一道题"])
   }
-  const modalities = [...requiredComposition]
+  const modalities = buildAssessmentModalities(spec, tiers)
 
   const assignments = assignObjectives(spec, modalities)
   return tiers.map((tier, index) => {
@@ -1188,6 +1183,16 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
       tier,
       modality,
       max_score: tier === 1 ? 1 : tier === 2 ? 2 : 4,
+      cognitive_operation: cognitiveOperationFor(
+        objective.observable_behavior,
+        modality,
+      ),
+      context_strategy: spec.learner_adaptation?.preferred_contexts?.[0]
+        ? {
+            kind: "preferred_context" as const,
+            value: spec.learner_adaptation.preferred_contexts[0],
+          }
+        : { kind: "neutral_context" as const },
       citations: objective.required_fact_ids.map((factId) => ({
         source_id: objective.source_id,
         fact_id: factId,
@@ -1195,6 +1200,56 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
       })),
     }
   })
+}
+
+function buildAssessmentModalities(
+  spec: GenerationSpec,
+  tiers: Array<1 | 2 | 3>,
+): AssessmentItemPublic["modality"][] {
+  const objectives = [
+    ...spec.targets.filter((target) => target.importance === "core"),
+    ...spec.targets.filter((target) => target.importance !== "core"),
+  ]
+  const modalities = tiers.map((tier, index) => {
+    const target = objectives[index % objectives.length]!
+    return preferredModalityForTier(target.observable_behavior, tier)
+  })
+  ensureRequiredModalities(
+    modalities,
+    tiers,
+    spec.assessment_blueprint.required_modalities,
+  )
+  return modalities
+}
+
+function preferredModalityForTier(
+  behavior: GenerationSpec["targets"][number]["observable_behavior"],
+  tier: 1 | 2 | 3,
+): AssessmentItemPublic["modality"] {
+  const preferences: Record<
+    GenerationSpec["targets"][number]["observable_behavior"],
+    Record<1 | 2 | 3, AssessmentItemPublic["modality"]>
+  > = {
+    recognize: { 1: "mcq", 2: "true_false", 3: "mcq" },
+    explain: { 1: "mcq", 2: "short_answer", 3: "short_answer" },
+    trace: { 1: "mcq", 2: "trace", 3: "code" },
+    apply: { 1: "mcq", 2: "trace", 3: "code" },
+    debug: { 1: "mcq", 2: "trace", 3: "code" },
+    create: { 1: "mcq", 2: "short_answer", 3: "code" },
+  }
+  return preferences[behavior][tier]
+}
+
+function cognitiveOperationFor(
+  behavior: GenerationSpec["targets"][number]["observable_behavior"],
+  modality: AssessmentItemPublic["modality"],
+): AssessmentItemPlan["cognitive_operation"] {
+  if (behavior === "debug") return "diagnose_error"
+  if (behavior === "create") return "construct_solution"
+  if (modality === "trace" || behavior === "trace") return "trace_execution"
+  if (behavior === "explain" || modality === "short_answer") return "explain_reasoning"
+  if (behavior === "apply" || modality === "code") return "apply_rule"
+  return "recognize_fact"
 }
 
 export function buildAssessmentFormId(spec: GenerationSpec): string {
@@ -1244,6 +1299,26 @@ export function validateAssessmentPublicAuthorAgainstPlan(
     }
   })
   return issues
+}
+
+/**
+ * The model may echo read-only item_plan fields in json_object mode. Only the
+ * three semantic author fields cross this boundary; plan-owned fields are
+ * materialized from ResourceBlueprint afterwards.
+ */
+export function projectAssessmentPublicAuthorPayload(
+  payload: AssessmentPublicAuthorPayload,
+): AssessmentPublicAuthorPayload {
+  return {
+    title: payload.title,
+    items: Array.isArray(payload.items)
+      ? payload.items.map((item) => ({
+          prompt: item?.prompt,
+          options: item?.options,
+          starter_code: item?.starter_code,
+        }))
+      : payload.items,
+  } as AssessmentPublicAuthorPayload
 }
 
 /**
@@ -1336,7 +1411,15 @@ export function materializeAssessmentPublicAuthorPayload(
       text,
     }))
     return {
-      ...structuredClone(expected),
+      item_id: expected.item_id,
+      family_id: expected.family_id,
+      variant_id: expected.variant_id,
+      display_no: expected.display_no,
+      objective_id: expected.objective_id,
+      tier: expected.tier,
+      modality: expected.modality,
+      max_score: expected.max_score,
+      citations: structuredClone(expected.citations),
       prompt: authored.prompt,
       ...(options ? { options } : {}),
       ...(authored.starter_code ? { starter_code: authored.starter_code } : {}),

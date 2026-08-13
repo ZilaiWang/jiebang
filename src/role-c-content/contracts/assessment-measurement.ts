@@ -7,12 +7,12 @@ import type {
 export type AssessmentModality = AssessmentBlueprint["required_modalities"][number]
 
 const MEASURING_MODALITIES: Record<ObservableBehavior, AssessmentModality[]> = {
-  recognize: ["mcq", "true_false", "trace", "short_answer", "code"],
-  explain: ["short_answer"],
+  recognize: ["mcq", "true_false"],
+  explain: ["mcq", "true_false", "short_answer"],
   trace: ["trace", "code"],
   apply: ["mcq", "true_false", "trace", "short_answer", "code"],
-  debug: ["code"],
-  create: ["code"],
+  debug: ["trace", "short_answer", "code"],
+  create: ["short_answer", "code"],
 }
 
 export function modalityMeasuresBehavior(

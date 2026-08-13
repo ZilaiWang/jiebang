@@ -10,6 +10,7 @@ import type {
   RoleDGeneratedArtifact,
   RoleDPublicCitation,
   RoleDWorkflowEvent,
+  RoleCGenerationFailure,
   RouteRoleCAssessmentAnchorsInput,
   RouteRoleCAssessmentAnchorsResult,
   RunRoleCCodeLabInput,
@@ -30,7 +31,6 @@ import {
 import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import { join, resolve } from "node:path"
 import { appendFile, mkdir } from "node:fs/promises"
-import { roleCGenerationBudgets, shouldRetryWholeGenerationReason } from "./generation-budget"
 import {
   adaptLearnerProfile,
   adaptRagResult,
@@ -92,12 +92,16 @@ import {
   type RoleDAdaptiveLearningLoopPort,
   type SecureArtifactStore,
   type SubmissionEnvelope,
+  AtomicFilePipelineCheckpointStore,
+  InMemoryPipelineCheckpointStore,
+  type CPipelineCheckpointStore,
 } from "../role-c-content"
 
 const defaultInMemoryLearningPersistence: RoleCLearningPersistence = {
   cycleStore: new InMemoryLearningCycleStore(),
   secureStore: new InMemorySecureArtifactStore(),
   masteryStore: new InMemoryMasteryStateStore(),
+  checkpointStore: new InMemoryPipelineCheckpointStore(),
 }
 
 /** Fail-closed convenience entry. Runtime adapters select model or explicit offline mode. */
@@ -160,6 +164,8 @@ export interface RoleCLearningPersistence {
   cycleStore: LearningCycleStore
   secureStore: SecureArtifactStore
   masteryStore: MasteryStateStore
+  /** Private resumable C artifact checkpoints; never exposed through Role D. */
+  checkpointStore?: CPipelineCheckpointStore
 }
 
 /**
@@ -181,6 +187,9 @@ export function createAtomicRoleCLearningPersistence(
     masteryStore: new AtomicFileMasteryStateStore({
       root_directory: join(root, "mastery"),
     }),
+    checkpointStore: new AtomicFilePipelineCheckpointStore(
+      join(root, "generation-checkpoints"),
+    ),
   }
 }
 
@@ -209,6 +218,12 @@ export async function generateRoleCForRoleDWithRuntime(
       }],
       runId: input.runId,
       reason,
+      failure: generationFailure({
+        code: "BLOCKED_PROVIDER_UNAVAILABLE",
+        message: reason,
+        details: ["[PROVIDER_CONFIGURATION]"],
+        stage: "provider",
+      }),
     }
   }
   const knowledgeBase = await loadKnowledgeBase()
@@ -245,6 +260,12 @@ export async function generateRoleCForRoleDWithRuntime(
       }],
       runId: input.runId,
       reason,
+      failure: generationFailure({
+        code: "BLOCKED_PROVIDER_UNAVAILABLE",
+        message: reason,
+        details: ["[PROVIDER_CONFIGURATION]"],
+        stage: "provider",
+      }),
     }
   }
   let runner: CodeRunner
@@ -265,12 +286,15 @@ export async function generateRoleCForRoleDWithRuntime(
       }],
       runId: input.runId,
       reason,
+      failure: generationFailure({
+        code: "PROVIDER_ERROR",
+        message: reason,
+        details: ["[CODE_RUNNER_UNAVAILABLE]"],
+        stage: "provider",
+      }),
     }
   }
 
-  // 真实模型生成可能在 code-lab secure 阶段或可信执行修复中失败。
-  // 重试次数统一由 generation budget 提供；每次使用新 runId 重建 spec
-  // 避免产物 ID 冲突，审核通过即停止。
   const provider = runtime.provider ?? new ModelBackedRoleCContentProvider(
     modelGateway!,
     {
@@ -290,13 +314,9 @@ export async function generateRoleCForRoleDWithRuntime(
     mastery_store: persistence.masteryStore,
     code_runner: runner,
   })
-  // 循环内必有赋值：built 失败直接 return，成功则 pipeline 一定被赋值。
-  let pipeline!: Awaited<ReturnType<typeof runRecoverableReviewedCPipeline>>
   let readyContext: RecoverableReviewedReadyContext | undefined
-  for (let attempt = 0; attempt < roleCGenerationBudgets().inner_attempts; attempt += 1) {
-    const attemptRunId = attempt === 0 ? input.runId : `${input.runId}-R${attempt + 1}`
-    const built = buildGenerationSpec({
-      run_id: attemptRunId,
+  const built = buildGenerationSpec({
+      run_id: input.runId,
       profile_snapshot: profileSnapshot,
       path_node: pathNode,
       evidence_pack: evidencePack,
@@ -309,30 +329,40 @@ export async function generateRoleCForRoleDWithRuntime(
       },
       // seed 由 run_id 派生：同一轮确定性结构稳定（幂等/审计可复现），
       // 不同轮/不同重试自然产生不同变体，不再全仓库写死同一 seed。
-      seed: seedFromRunId(attemptRunId),
+      seed: seedFromRunId(input.runId),
     })
-    if (!built.ok) {
-      return {
-        status: "blocked",
-        artifacts: [],
-        workflow: [],
-        runId: attemptRunId,
-        reason: built.errors.join("；"),
-      }
+  if (!built.ok) {
+    const message = built.errors.join("；")
+    return {
+      status: "blocked",
+      artifacts: [],
+      workflow: [],
+      runId: input.runId,
+      reason: message,
+      failure: generationFailure({
+        code: "BLOCKED_INVALID_OUTPUT",
+        message,
+        details: built.errors,
+        stage: "unknown",
+      }),
     }
-    const pipelineInput = {
-      generation_spec: built.spec,
-      evidence_pack: evidencePack,
-      ...(input.next_round_context ? { next_round_context: input.next_round_context } : {}),
-      ...(input.prior_assessment_items?.length
-        ? { prior_assessment_items: input.prior_assessment_items }
-        : {}),
-    }
-    pipeline = await runRecoverableReviewedCPipeline(
-      pipelineInput,
-      agents,
-      secureStore,
-      {
+  }
+  const pipelineInput = {
+    generation_spec: built.spec,
+    evidence_pack: evidencePack,
+    ...(input.next_round_context ? { next_round_context: input.next_round_context } : {}),
+    ...(input.prior_assessment_items?.length
+      ? { prior_assessment_items: input.prior_assessment_items }
+      : {}),
+    ...(input.generation_recovery
+      ? { generation_recovery: input.generation_recovery }
+      : {}),
+  }
+  const pipeline = await runRecoverableReviewedCPipeline(
+    pipelineInput,
+    agents,
+    secureStore,
+    {
       review_port: runtime.reviewPort
         ?? createLocalABContentReviewPort({ knowledge_base: knowledgeBase }),
       profile_snapshot: profileSnapshot,
@@ -346,6 +376,9 @@ export async function generateRoleCForRoleDWithRuntime(
       }),
       max_external_revisions: 2,
       max_recovery_attempts: 2,
+      ...(persistence.checkpointStore
+        ? { checkpoint_store: persistence.checkpointStore }
+        : {}),
       ...(runtime.critic ? { critic: runtime.critic } : {}),
       async on_ready(context) {
         await cycleService.registerReadyRun({
@@ -356,13 +389,8 @@ export async function generateRoleCForRoleDWithRuntime(
         })
         readyContext = context
       },
-    })
-    if (pipeline.status === "ready") break
-    const attemptReason = pipeline.blocked_reason
-      ? [pipeline.blocked_reason.message, ...(pipeline.blocked_reason.details ?? [])].join("；")
-      : pipeline.failure_reason?.message ?? ""
-    if (!shouldRetryWholeGenerationReason(attemptReason)) break
-  }
+    },
+  )
   const workflow = [
     ...pipeline.trace_events.map(toWorkflowEvent),
     ...recoveryWorkflowEvents(input.runId, pipeline.recovery, pipeline.recovery_history),
@@ -385,6 +413,15 @@ export async function generateRoleCForRoleDWithRuntime(
       workflow,
       runId: pipeline.generation_spec.run_id,
       reason: pipelineReason || pipeline.recovery.message || reviewReason || "A/B 审核未通过，内容未发布给 D。",
+      failure: generationFailure({
+        code: pipeline.blocked_reason?.code
+          ?? pipeline.failure_reason?.code
+          ?? "PROVIDER_ERROR",
+        message: pipelineReason || pipeline.recovery.message || reviewReason || "C 内容未能发布",
+        details: pipeline.blocked_reason?.details ?? [],
+        stage: failedPipelineStage(pipeline.trace_events),
+        recovery: pipeline.recovery,
+      }),
       ...(audit ? { audit } : {}),
       recovery: toRoleDRecovery(pipeline.recovery),
     }
@@ -624,6 +661,118 @@ function toRoleDRecovery(recovery: ReviewRecoverySummary) {
     attempts: recovery.recovery_attempts,
     message: recovery.message,
   }
+}
+
+function failedPipelineStage(events: AgentTraceEvent[]): RoleCGenerationFailure["stage"] {
+  const agent = [...events].reverse().find((entry) =>
+    entry.event_type === "c.pipeline.blocked" || entry.event_type === "c.pipeline.failed")?.agent
+  if (agent === "concept-tutor") return "concept"
+  if (agent === "code-lab") return "code_lab"
+  if (agent === "tiered-evaluator") return "assessment"
+  return "unknown"
+}
+
+export function generationFailure(input: {
+  code: string
+  message: string
+  details: string[]
+  stage: RoleCGenerationFailure["stage"]
+  recovery?: ReviewRecoverySummary
+}): RoleCGenerationFailure {
+  const issueCodes = safeGenerationIssueCodes(input.details, input.code)
+  const evidenceFailure = [
+    "BLOCKED_MISSING_EVIDENCE",
+    "BLOCKED_WEAK_EVIDENCE",
+    "BLOCKED_EVIDENCE_CONFLICT",
+    "BLOCKED_INVALID_CITATION",
+  ].includes(input.code)
+  const unsupported = input.code === "UNSUPPORTED_TARGET"
+  const providerFailure = input.code === "BLOCKED_PROVIDER_UNAVAILABLE"
+    || input.code === "PROVIDER_ERROR"
+  const reviewFailure = input.code === "BLOCKED_CONTENT_REVIEW"
+    || Boolean(input.recovery && input.recovery.required_action !== "none")
+  const noveltyFailure = issueCodes.includes("ASSESSMENT_DUPLICATE")
+  const recoveryAction = input.recovery?.required_action
+
+  const stage = evidenceFailure
+    ? "evidence" as const
+    : providerFailure
+      ? "provider" as const
+      : reviewFailure && input.stage === "unknown"
+        ? "review" as const
+      : input.stage
+  const code: RoleCGenerationFailure["code"] = unsupported
+    ? "TARGET_UNSUPPORTED"
+    : evidenceFailure
+      ? "EVIDENCE_UNAVAILABLE"
+      : providerFailure
+        ? "PROVIDER_UNAVAILABLE"
+        : reviewFailure
+          ? "REVIEW_REJECTED"
+          : noveltyFailure
+            ? "CONTENT_NOT_NOVEL"
+            : input.code === "SECURE_STORE_ERROR"
+              ? "INTERNAL_FAILURE"
+              : "CONTENT_INVALID"
+  const nextAction: RoleCGenerationFailure["nextAction"] = unsupported
+    ? "replan_path"
+    : recoveryAction === "request_new_evidence"
+      ? "refresh_evidence"
+      : recoveryAction === "replan_path"
+        ? "replan_path"
+        : recoveryAction === "reprofile_learner"
+          ? "reprofile_learner"
+    : evidenceFailure
+      ? "refresh_evidence"
+      : providerFailure
+        ? "retry_provider"
+        : stage === "assessment"
+          ? "regenerate_assessment"
+          : stage === "code_lab"
+            ? "regenerate_code_lab"
+            : stage === "concept"
+              ? "regenerate_concept"
+              : "change_goal"
+  const repairScope: RoleCGenerationFailure["repairScope"] = unsupported
+    ? "path"
+    : input.recovery?.fix_scope === "new_spec"
+      ? "path"
+      : input.recovery?.fix_scope === "new_evidence"
+        ? "evidence"
+    : evidenceFailure
+      ? "evidence"
+      : providerFailure
+        ? "provider"
+        : ["concept", "code_lab", "assessment"].includes(stage)
+          ? "artifact"
+          : "none"
+  const failure = {
+    code,
+    stage,
+    issueCodes,
+    repairScope,
+    nextAction,
+    canRetry: !["change_goal", "replan_path", "reprofile_learner"].includes(nextAction),
+    message: input.message,
+  } satisfies Omit<RoleCGenerationFailure, "fingerprint">
+  return {
+    ...failure,
+    fingerprint: contentHash(failure),
+  }
+}
+
+function safeGenerationIssueCodes(details: string[], fallbackCode: string): string[] {
+  const codes = details.flatMap((detail) => {
+    const bracketed = [...detail.matchAll(/\[([A-Z][A-Z0-9_]+)\]/gu)].map((match) => match[1]!)
+    if (bracketed.length > 0) return bracketed
+    const bare = detail.trim().toUpperCase()
+    if (/^[A-Z][A-Z0-9_]+$/u.test(bare)) return [bare]
+    const explicit = /^\s*([A-Z][A-Z0-9_]+)\s*(?:@|:)/u.exec(detail)?.[1]
+    if (explicit) return [explicit]
+    if (/与已发布题目|与本卷.*重复/u.test(detail)) return ["ASSESSMENT_DUPLICATE"]
+    return []
+  })
+  return [...new Set(codes.length > 0 ? codes : [fallbackCode])]
 }
 
 function recoveryWorkflowEvents(

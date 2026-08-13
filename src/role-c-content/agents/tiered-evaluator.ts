@@ -10,6 +10,7 @@ import {
   finalizeDraft,
   invalidOutputEnvelope,
   providerBlockedEnvelope,
+  safeValidationIssueCodes,
   unsupportedTargetEnvelope,
 } from "./harness"
 import type {
@@ -52,7 +53,7 @@ export function createTieredEvaluatorAgent(
           return invalidPair(
             common,
             "tiered-evaluator Draft 未通过结构、答案合同、public/secure 或蓝图门禁",
-            structural.issues.map((issue) => `${issue.path}: ${issue.message}`),
+            structural.issues.map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
           )
         }
         let verification: Awaited<ReturnType<AssessmentDraftVerifier["verifyAssessment"]>> = verifier
@@ -86,7 +87,7 @@ export function createTieredEvaluatorAgent(
             return invalidPair(
               common,
               "tiered-evaluator 可信验证修订稿未通过结构、答案合同、public/secure 或蓝图门禁",
-              structural.issues.map((issue) => `${issue.path}: ${issue.message}`),
+              structural.issues.map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
             )
           }
           verification = await activeVerifier.verifyAssessment(
@@ -196,7 +197,7 @@ function invalidPair(
   common: { spec: GenerationSpec; evidence: RagEvidencePack; input_refs: string[] },
   message: string,
   details: string[],
-  publicDetails: string[] = ["tiered-evaluator Draft 未通过可信门禁"],
+  publicDetails: string[] = safeValidationIssueCodes(details),
 ): AssessmentArtifactPair {
   return {
     public_artifact: invalidOutputEnvelope({

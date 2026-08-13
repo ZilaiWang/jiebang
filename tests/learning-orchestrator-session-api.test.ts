@@ -294,9 +294,16 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
         payload: { answers },
       }),
     }))
-    const body = await json(response)
+    const accepted = await json(response)
 
     expect(response.status).toBe(200)
+    expect(accepted).toMatchObject({
+      session_id: "SESSION-INTERACTIVE-001",
+      status: "running",
+      current_stage: "assessment",
+      waiting_for: null,
+    })
+    const body = await waitForSessionGeneration(handle, "SESSION-INTERACTIVE-001")
     expect(body).toMatchObject({
       session_id: "SESSION-INTERACTIVE-001",
       status: "waiting_for_user",
@@ -340,18 +347,21 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
         payload: { answers },
       }),
     }))
-    expect(await json(replay)).toEqual(body)
+    expect(await json(replay)).toEqual(accepted)
   })
 
   test("grades submitted assessment answers and dynamically opens the next round", async () => {
     const { data_root, handle } = await fixture()
     const created = await createSession(handle)
     const diagnosisAnswers = Object.fromEntries(created.body.waiting_for.items.map((item: any) => [item.item_id, item.options?.[0] ?? "不知道"]))
-    const prepared = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
+    const diagnosisAccepted = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ command_id: "CMD-DIAGNOSIS-001", type: "submit_diagnosis_answers", payload: { answers: diagnosisAnswers } }),
     })))
+    const prepared = diagnosisAccepted.status === "running"
+      ? await waitForSessionGeneration(handle, "SESSION-INTERACTIVE-001")
+      : diagnosisAccepted
 
     const lab = prepared.learning_resources.code_lab.payload
     const labExecution = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
@@ -440,11 +450,14 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
     const { handle } = await fixture()
     const created = await createSession(handle)
     const diagnosisAnswers = Object.fromEntries(created.body.waiting_for.items.map((item: any) => [item.item_id, item.options?.[0] ?? "不知道"]))
-    const prepared = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
+    const accepted = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ command_id: "CMD-DIAGNOSIS-001", type: "submit_diagnosis_answers", payload: { answers: diagnosisAnswers } }),
     })))
+    const prepared = accepted.status === "running"
+      ? await waitForSessionGeneration(handle, "SESSION-INTERACTIVE-001")
+      : accepted
     const correct: Record<string, Record<string, string>> = {
       "ITEM-O1-T1-MCQ": { selected_option_id: "opt_iterate" },
       "ITEM-O2-T1-TF": { selected_option_id: "opt_true" },

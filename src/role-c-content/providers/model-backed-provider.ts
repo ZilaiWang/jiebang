@@ -50,7 +50,7 @@ import {
   ROLE_C_PROMPT_MANIFEST_VERSION,
   stagedRepairPrompt,
 } from "../prompts"
-import { validateCodeLabDraftStructure, validateCodeLabPublicStage } from "../validators/code-lab-validator"
+import { isTrustedExpectedDerivationIssue, validateCodeLabDraftStructure, validateCodeLabPublicStage } from "../validators/code-lab-validator"
 import { validateAssessmentDraftStructure, validateAssessmentPublicStage } from "../validators/assessment-validator"
 import { validateConceptLesson } from "../validators/concept-validator"
 import { analyzePythonSource } from "../security/python-static-analyzer"
@@ -71,6 +71,7 @@ import {
   materializeConceptSegmentAuthorPayload,
   materializeAssessmentSecureAuthorPayload,
   materializeAssessmentPublicAuthorPayload,
+  projectAssessmentPublicAuthorPayload,
   materializeCodeLabPublicAuthorPayload,
   materializeCodeLabSecureAuthorPayload,
   mapWithConcurrency,
@@ -305,10 +306,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     if (this.generationStrategy === "monolithic") return this.generateCodeLabMonolithic(request)
 
     const modelInput = buildCodeLabModelInput(request)
-    const identity = buildLabIdentity(request.generation_spec)
-    const objectivePlan = buildCodeLabObjectivePlan(
-      request.generation_spec,
-    )
+    const identity = request.resource_blueprint?.code_lab ?? buildLabIdentity(request.generation_spec)
+    const objectivePlan = request.resource_blueprint?.code_lab.objective_plan
+      ?? buildCodeLabObjectivePlan(request.generation_spec)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const publicAuthor = await this.generateStage<CodeLabPublicAuthorPayload>({
       task: "role-c.code-lab.public",
@@ -367,10 +367,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       identity.lab_id,
       objectivePlan,
     )
-    const securePlan = buildCodeLabSecurePlan(
-      request.generation_spec,
-      identity.test_suite_id,
-    )
+    const securePlan = request.resource_blueprint?.code_lab.secure_plan
+      ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
     const publicTestInputs = normalizedPublic.public_tests.map((test) => test.input)
     const secureInputRules = `\n\nPRIVATE INPUT RULES (must follow):\n- Compare every hidden_tests[].input against these public inputs using exact JSON equality: ${JSON.stringify(publicTestInputs)}\n- No hidden input may be exactly equal to any public input.\n- Do not copy any concrete value from public tests, starter, examples, hints, or prompt.\n- For function entries with parameters, use a structurally different non-empty envelope and recompute expected.`
     const secureAuthorPayload = await this.generateStage<CodeLabSecureAuthorPayload>({
@@ -480,10 +478,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       public_draft: { payload: normalizedPublic },
       secure_draft: { payload: securePayload },
     })
-    if (!finalReport.ok) {
+    const blockingFinalIssues = finalReport.issues.filter((issue) =>
+      !isTrustedExpectedDerivationIssue(issue.code))
+    if (blockingFinalIssues.length > 0) {
       throw new ModelOutputValidationError(
         "role-c.code-lab.compose",
-        validationIssues(finalReport),
+        validationIssueStrings({ issues: blockingFinalIssues }),
       )
     }
     return {
@@ -682,7 +682,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     if (this.generationStrategy === "monolithic") return this.generateAssessmentMonolithic(request)
 
     const modelInput = buildAssessmentAuthorModelInput(request)
-    const plan = buildAssessmentItemPlan(request.generation_spec)
+    const plan = request.resource_blueprint?.assessment.item_plan
+      ?? buildAssessmentItemPlan(request.generation_spec)
     const formId = buildAssessmentFormId(request.generation_spec)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const publicAuthorPayload = await this.generateStage<AssessmentPublicAuthorPayload>({
@@ -709,11 +710,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       max_repairs: maxRepairs,
       diagnostic_sink: this.stageFailureDiagnosticSink,
       validate: (payload) => {
+        const authored = projectAssessmentPublicAuthorPayload(payload)
         // item_plan 已冻结题型，因此先把模型容易写错的空值和代码骨架
         // 规范为该题型的唯一合法形态；题干、选项语义与任务仍由模型生成。
-        if (Array.isArray((payload as any).items)) {
-          for (let i = 0; i < (payload as any).items.length; i++) {
-            const item = (payload as any).items[i]
+        if (Array.isArray((authored as any).items)) {
+          for (let i = 0; i < (authored as any).items.length; i++) {
+            const item = (authored as any).items[i]
             const expected = plan[i]
             if (!expected) continue
             const isChoice = expected.modality === "mcq"
@@ -728,13 +730,13 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             }
           }
         }
-        const schema = validateRoleCSchemaFragment("assessment_draft.schema.json", "/$defs/public_author_payload", payload)
+        const schema = validateRoleCSchemaFragment("assessment_draft.schema.json", "/$defs/public_author_payload", authored)
         if (!schema.ok) return validationIssues(schema)
-        const planIssues = validateAssessmentPublicAuthorAgainstPlan(payload, plan)
+        const planIssues = validateAssessmentPublicAuthorAgainstPlan(authored, plan)
         if (planIssues.length > 0) return planIssues
         const normalized = materializeAssessmentPublicAuthorPayload(
           request.generation_spec,
-          payload,
+          authored,
           plan,
           formId,
         )
@@ -749,7 +751,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     })
     const normalizedPublic = materializeAssessmentPublicAuthorPayload(
       request.generation_spec,
-      publicAuthorPayload,
+      projectAssessmentPublicAuthorPayload(publicAuthorPayload),
       plan,
       formId,
     )
@@ -845,7 +847,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     }
 
     const modelInput = buildAssessmentAuthorModelInput(request)
-    const plan = buildAssessmentItemPlan(request.generation_spec)
+    const plan = request.resource_blueprint?.assessment.item_plan
+      ?? buildAssessmentItemPlan(request.generation_spec)
     const formId = buildAssessmentFormId(request.generation_spec)
     const publicPayload = structuredClone(draft.public_draft.payload)
     const expectedOnlyCodes = assessmentExpectedOnlyReferenceFailureCodes(feedback)
@@ -1524,7 +1527,9 @@ function validationIssuesExcludingRepairablePublicAnswerLeak(
   report: ReturnType<typeof validateCodeLabDraftStructure>,
 ): string[] {
   return validationIssueStrings({
-    issues: report.issues.filter((issue) => !REPAIRABLE_STARTER_LEAK_CODES.has(issue.code)),
+    issues: report.issues.filter((issue) =>
+      !REPAIRABLE_STARTER_LEAK_CODES.has(issue.code)
+      && !isTrustedExpectedDerivationIssue(issue.code)),
   })
 }
 

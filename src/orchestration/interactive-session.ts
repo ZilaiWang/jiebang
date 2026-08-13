@@ -14,7 +14,7 @@ import { validateWorkerResult } from "./worker-contract"
 import type { LearnerRequest, OrchestrationMode, WorkerName } from "./types"
 import type { BackgroundEvidence, DiagnosisItem, ObjectiveDiagnosisEvidence, SelfAssessmentEvidence } from "../role-b-profile/types"
 import type { SubmissionAnswer } from "../role-c-content/contracts/artifacts"
-import type { NextRoundGenerationContext, PriorAssessmentItem } from "../role-c-content/agents/types"
+import type { GenerationRecoveryContext, NextRoundGenerationContext, PriorAssessmentItem } from "../role-c-content/agents/types"
 import type { RoleCAdaptationInfo } from "../role-c-content/contracts/external-api"
 import type { DynamicFeedbackResult, ObjectiveRoundResult } from "../role-c-content/contracts/dynamic-feedback"
 import { DEFAULT_ROUND_ACTION_POLICY } from "../role-c-content/contracts/dynamic-feedback"
@@ -22,6 +22,7 @@ import type { RagResult } from "../rag/retriever"
 import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import {
   createAtomicRoleCLearningPersistence,
+  generationFailure,
   generateRoleCForRoleDWithRuntime,
   runRoleCAssessmentCode,
   runRoleCCodeLab,
@@ -29,7 +30,7 @@ import {
   createRoleCRecoveryEvidenceRefreshPort,
   type RoleCForRoleDRuntimeOptions,
 } from "../role-d-integration/role-c-service"
-import { roleCGenerationBudgets, shouldRetryWholeGenerationReason } from "../role-d-integration/generation-budget"
+import type { RoleCGenerationFailure } from "../role-d-integration/contracts"
 import type { LearnerProfile } from "../role-b-profile/types"
 import type { LearningPathNode } from "../role-c-content/contracts/profile-adapter"
 import { buildFormalPath, advanceToNextNode, isFormalPathMastered, startPath, type FormalLearningPath } from "../role-b-profile/teaching-audit/formal-path"
@@ -51,11 +52,12 @@ const STALE_LOCK_MS = 60_000
 export const LEARNING_SUPPORT_REQUIRED = "LEARNING_SUPPORT_REQUIRED"
 
 export interface LearningTerminalOutcome {
-  kind: "completed_mastered" | "unsupported_goal" | "insufficient_evidence" | "planning_failed" | "learning_support_required"
-  code: "PATH_MASTERED" | "UNSUPPORTED_GOAL" | "INSUFFICIENT_EVIDENCE" | "PATH_PLANNING_FAILED" | "LEARNING_SUPPORT_REQUIRED"
+  kind: "completed_mastered" | "unsupported_goal" | "insufficient_evidence" | "planning_failed" | "learning_support_required" | "content_generation_failed"
+  code: "PATH_MASTERED" | "UNSUPPORTED_GOAL" | "INSUFFICIENT_EVIDENCE" | "PATH_PLANNING_FAILED" | "LEARNING_SUPPORT_REQUIRED" | "C_GENERATION_FAILED"
   message: string
-  recommended_actions: Array<"return_home" | "change_goal" | "expand_knowledge_base" | "retry_retrieval" | "retry_planning" | "reprofile">
+  recommended_actions: Array<"return_home" | "change_goal" | "expand_knowledge_base" | "retry_retrieval" | "retry_planning" | "reprofile" | "regenerate_concept" | "regenerate_code_lab" | "regenerate_assessment" | "retry_provider">
   evidence_refs: string[]
+  generation_failure?: RoleCGenerationFailure
 }
 
 export interface PublicWorkerLedgerEntry {
@@ -168,6 +170,10 @@ export interface InteractiveSessionRecord {
     /** 全部已发布的纯公开题面历史；确定性防重使用全量，模型只接收最近 200 道。 */
     assessment_history: PriorAssessmentItem[]
     role_c_generation_attempt: number
+    /** Consecutive artifact-generation failures in the current round; reset on publication. */
+    role_c_failed_generations: number
+    /** Private stage-local retry directive; cleared after a successful publication. */
+    role_c_generation_recovery: GenerationRecoveryContext | null
     /** 画像纪元：初始 0，reprofile 重建画像时 +1，作为 profile_version 的一部分，
      *  使新画像的 mastery 状态不与旧画像累积串扰（旧画像 evidence 不污染新画像）。 */
     profile_epoch: number
@@ -315,9 +321,9 @@ export class InteractiveSessionStore {
         { worker: "objective-diagnostician", status: "waiting_for_user", summary: "等待诊断作答", updated_at: now },
       ],
       worker_ledger_history: [
-        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 1, 1, "background-collector", "completed", "已收集学习背景", "objective_diagnosis", now, now, "session_logic", false),
-        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 2, 1, "self-assessor", "completed", "已收集学习者自评", "objective_diagnosis", now, now, "session_logic", false),
-        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待诊断作答", "objective_diagnosis", now, null, "session_logic", true),
+        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 1, 1, "background-collector", "completed", "已收集学习背景", "objective_diagnosis", now, now, "session_logic", false, [], ["background-collector:session-input"]),
+        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 2, 1, "self-assessor", "completed", "已收集学习者自评", "objective_diagnosis", now, now, "session_logic", false, ["background-collector:session-input"], ["self-assessor:session-input"]),
+        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待诊断作答", "objective_diagnosis", now, null, "session_logic", true, ["background-collector:session-input", "self-assessor:session-input"], ["objective-diagnostician:diagnosis-form"]),
       ],
       profile: null,
       formal_path: null,
@@ -331,7 +337,7 @@ export class InteractiveSessionStore {
       terminal_outcome: null,
       events,
       processed_commands: {},
-      private: { diagnosis_answer_key: answerKey, diagnosis_answers: null, diagnosis_items: diagnosisItems, upstream_artifacts: {}, next_round_context: null, assessment_history: mergeAssessmentHistory(learnerMemory.recent_assessment_items ?? [], diagnosis.history), role_c_generation_attempt: 0, profile_epoch: 0, node_remediate_rounds: 0, node_reinforce_rounds: 0, role_c: null },
+      private: { diagnosis_answer_key: answerKey, diagnosis_answers: null, diagnosis_items: diagnosisItems, upstream_artifacts: {}, next_round_context: null, assessment_history: mergeAssessmentHistory(learnerMemory.recent_assessment_items ?? [], diagnosis.history), role_c_generation_attempt: 0, role_c_failed_generations: 0, role_c_generation_recovery: null, profile_epoch: 0, node_remediate_rounds: 0, node_reinforce_rounds: 0, role_c: null },
       code_execution: null,
       created_at: now,
       updated_at: now,
@@ -386,9 +392,7 @@ export class InteractiveSessionStore {
       const current = await this.load(sessionId)
       if (current.status !== "running" || current.round_no !== record.round_no) return
       if (!next.ok) {
-        current.status = "blocked"
-        current.current_stage = "blocked"
-        current.blocked_reason = next.reason
+        applyRoleCGenerationFailure(current, next)
         current.updated_at = new Date().toISOString()
         await this.save(current)
         return
@@ -437,6 +441,13 @@ export class InteractiveSessionStore {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for diagnosis answers", 409)
       }
       updated = await continueAfterDiagnosis(record, command, this.data_root)
+      if (updated.status === "running" && updated.profile && updated.formal_path && updated.current_path_node) {
+        const response = publicSessionView(updated)
+        updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
+        await this.save(updated)
+        void this.generateInitialRoundInBackground(sessionId)
+        return response
+      }
     } else if (command.type === "run_code_lab") {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session does not have a published code lab", 409)
@@ -499,6 +510,42 @@ export class InteractiveSessionStore {
         updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
         await this.save(updated)
         return response
+      }
+      const generationFailure = record.terminal_outcome?.generation_failure
+      if (record.terminal_outcome?.kind === "content_generation_failed"
+        && generationFailure?.canRetry
+        && record.profile && record.formal_path && record.current_path_node) {
+        record.status = "running"
+        record.current_stage = "assessment"
+        record.waiting_for = null
+        record.blocked_reason = null
+        record.terminal_outcome = null
+        const recovery = generationRecoveryContext(
+          generationFailure,
+          record.private.role_c_failed_generations + 1,
+        )
+        record.private.role_c_generation_recovery = recovery
+        const startedAt = new Date().toISOString()
+        upsertLedger(record, workerForRoleCFailure(generationFailure), "running", `${generationFailure.nextAction} 已开始`, { startedAt })
+        record.events.push(event(record.session_id, "session_updated", "assessment", `${generationFailure.nextAction} started`, startedAt, workerForRoleCFailure(generationFailure)))
+        record.updated_at = startedAt
+        const response = publicSessionView(record)
+        record.processed_commands[command.command_id] = { request_hash: requestHash, response }
+        await this.save(record)
+        if (record.private.next_round_context) {
+          void this.generateNextRoundInBackground(sessionId, record.private.next_round_context, recovery)
+        } else {
+          void this.generateInitialRoundInBackground(sessionId, recovery)
+        }
+        return response
+      }
+      if (record.terminal_outcome?.kind === "content_generation_failed"
+        && generationFailure && !generationFailure.canRetry) {
+        throw new InteractiveSessionError(
+          "C_RECOVERY_EXHAUSTED",
+          "当前生成策略未能产生有效内容，请调整学习目标后重新开始",
+          409,
+        )
       }
       const resumableNextRound = Boolean(record.private.next_round_context && record.formal_path && record.current_path_node)
       // running 会话的后台生成进程可能随服务重启中断（nrc 为 null 但 checkpoint 完整）：
@@ -586,6 +633,7 @@ export class InteractiveSessionStore {
   private async generateNextRoundInBackground(
     sessionId: string,
     nextRoundContext: NextRoundGenerationContext,
+    generationRecovery?: GenerationRecoveryContext,
   ): Promise<void> {
     try {
       const current = await this.load(sessionId)
@@ -600,6 +648,7 @@ export class InteractiveSessionStore {
         canonicalNode,
         this.data_root,
         nextRoundContext,
+        generationRecovery ?? record.private.role_c_generation_recovery ?? undefined,
       )
       // 乐观检查：保存前确认会话仍是"生成中"且轮次未被推进，避免覆盖并发写入。
       const currentBeforeSave = await this.load(sessionId)
@@ -608,9 +657,7 @@ export class InteractiveSessionStore {
         return
       }
       if (!next.ok) {
-        record.status = "blocked"
-        record.current_stage = "blocked"
-        record.blocked_reason = next.reason
+        applyRoleCGenerationFailure(record, next)
         record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString()))
         record.updated_at = new Date().toISOString()
         await this.save(record)
@@ -632,11 +679,54 @@ export class InteractiveSessionStore {
       try {
         const current = await this.load(sessionId)
         if (current.status !== "running") return
-        current.status = "failed"
-        current.current_stage = "failed"
-        current.blocked_reason = error instanceof Error
-          ? error.message
-          : "next round generation failed"
+        applyUnexpectedRoleCGenerationFailure(current, error, "next round generation failed")
+        current.updated_at = new Date().toISOString()
+        await this.save(current)
+      } catch { /* 后台失败时不再二次写入 */ }
+    }
+  }
+
+  private async generateInitialRoundInBackground(
+    sessionId: string,
+    generationRecovery?: GenerationRecoveryContext,
+  ): Promise<void> {
+    try {
+      const current = await this.load(sessionId)
+      if (current.status !== "running" || current.private.role_c) return
+      const record = structuredClone(current)
+      const path = record.formal_path as FormalLearningPath | null
+      const node = record.current_path_node as LearningPathNode | null
+      if (!path || !node) throw new Error("initial Role C generation missing path or node")
+      const next = await generateFormalRoleCRound(
+        record,
+        path,
+        node,
+        this.data_root,
+        undefined,
+        generationRecovery ?? record.private.role_c_generation_recovery ?? undefined,
+      )
+      const currentBeforeSave = await this.load(sessionId)
+      if (currentBeforeSave.status !== "running"
+        || currentBeforeSave.round_no !== record.round_no
+        || currentBeforeSave.private.role_c) return
+      if (!next.ok) {
+        applyRoleCGenerationFailure(record, next)
+        markRoleCWorkersFailed(record, next)
+        record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString(), workerForRoleCFailure(next.failure)))
+        record.updated_at = new Date().toISOString()
+        await this.save(record)
+        return
+      }
+      await applyFormalRoleCRound(record, next, this.data_root)
+      markReviewedRoleCWorkers(record)
+      record.updated_at = new Date().toISOString()
+      record.events.push(event(record.session_id, "waiting_for_user", "assessment", "waiting for assessment answers", record.updated_at, "tiered-evaluator"))
+      await this.save(record)
+    } catch (error) {
+      try {
+        const current = await this.load(sessionId)
+        if (current.status !== "running") return
+        applyUnexpectedRoleCGenerationFailure(current, error, "initial Role C generation failed")
         current.updated_at = new Date().toISOString()
         await this.save(current)
       } catch { /* 后台失败时不再二次写入 */ }
@@ -807,6 +897,8 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
       next_round_context: record.private?.next_round_context ?? null,
       assessment_history: record.private?.assessment_history ?? [],
       role_c_generation_attempt: record.private?.role_c_generation_attempt ?? 0,
+      role_c_failed_generations: record.private?.role_c_failed_generations ?? 0,
+      role_c_generation_recovery: record.private?.role_c_generation_recovery ?? null,
       profile_epoch: record.private?.profile_epoch ?? 0,
       node_remediate_rounds: record.private?.node_remediate_rounds ?? 0,
       node_reinforce_rounds: record.private?.node_reinforce_rounds ?? 0,
@@ -861,10 +953,7 @@ async function retryInteractiveSession(
     const currentNode = record.rag_result ? bindPathNodeFactsForRoleC(node, record.rag_result as RagResult) : node
     const next = await generateFormalRoleCRound(record, path, currentNode, dataRoot, retryContext)
     if (!next.ok) {
-      record.status = "blocked"
-      record.current_stage = "blocked"
-      record.waiting_for = null
-      record.blocked_reason = next.reason
+      applyRoleCGenerationFailure(record, next)
       record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString()))
       record.updated_at = new Date().toISOString()
       return record
@@ -895,10 +984,7 @@ async function retryInteractiveSession(
     const currentNode = record.rag_result ? bindPathNodeFactsForRoleC(node, record.rag_result as RagResult) : node
     const next = await generateFormalRoleCRound(record, path, currentNode, dataRoot, retryContext)
     if (!next.ok) {
-      record.status = "blocked"
-      record.current_stage = "blocked"
-      record.waiting_for = null
-      record.blocked_reason = next.reason
+      applyRoleCGenerationFailure(record, next)
       record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString()))
       record.updated_at = new Date().toISOString()
       return record
@@ -923,10 +1009,7 @@ async function retryInteractiveSession(
     const currentNode = bindPathNodeFactsForRoleC(node, record.rag_result as RagResult)
     const next = await generateFormalRoleCRound(record, path, currentNode, dataRoot)
     if (!next.ok) {
-      record.status = "blocked"
-      record.current_stage = "blocked"
-      record.waiting_for = null
-      record.blocked_reason = next.reason
+      applyRoleCGenerationFailure(record, next)
       record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString()))
       record.updated_at = new Date().toISOString()
       return record
@@ -1262,7 +1345,7 @@ interface FormalRoleCRound {
   adaptation?: RoleCAdaptationInfo
 }
 
-type FormalRoleCRoundResult = FormalRoleCRound | { ok: false; reason: string }
+type FormalRoleCRoundResult = FormalRoleCRound | { ok: false; reason: string; failure?: RoleCGenerationFailure }
 
 export function roleCRoundRunId(baseRunId: string, roundNo: number, generationAttempt: number): string {
   return `${baseRunId}-R${roundNo}-C${generationAttempt + 1}`
@@ -1473,6 +1556,7 @@ async function generateFormalRoleCRound(
   node: LearningPathNode,
   dataRoot: string,
   nextRoundContext?: NextRoundGenerationContext,
+  generationRecovery?: GenerationRecoveryContext,
 ): Promise<FormalRoleCRoundResult> {
   const ragResult = record.rag_result as RagResult | null
   if (!ragResult) return { ok: false, reason: "A RAG result is missing for Role C generation" }
@@ -1518,15 +1602,9 @@ async function generateFormalRoleCRound(
   const boundPathNode = bindPathNodeFactsForRoleC(node, currentRagResult)
   // C 的 GenerationSpec 必须使用绑定了 A 真实事实 ID 的节点；原始 B 节点可能只有 source_id，
   // 缺少 required_fact_ids 会让 code-lab secure 目标覆盖门禁拒绝整套互动资源。
-  // 模型生成 code-lab secure 内容时有可见的间歇性失败率（public/secure 值重复、参考实现不匹配），
-  // 模型阶段已有定向修复与 reviewed recovery；外层只做有限的完整重建，避免 6×5 级联等待。
-  const MAX_GENERATION_ATTEMPTS = roleCGenerationBudgets().outer_attempts
-  // 每次使用全新的 C 生成身份（runId 含 generation attempt），全部失败才返回 blocked。
   const baseAttempt = record.private.role_c_generation_attempt ?? 0
-  let lastReason = ""
-  for (let attempt = 0; attempt < MAX_GENERATION_ATTEMPTS; attempt++) {
-    const runId = roleCRoundRunId(record.run_id, record.round_no, baseAttempt + attempt)
-    const result = await generateRoleCForRoleDWithRuntime({
+  const runId = roleCRoundRunId(record.run_id, record.round_no, baseAttempt)
+  const result = await generateRoleCForRoleDWithRuntime({
       profile,
       ragResult: currentRagResult,
       kbVersion: await resolveRoleCKnowledgeBaseVersion(),
@@ -1541,34 +1619,133 @@ async function generateFormalRoleCRound(
       ...(record.private.assessment_history.length > 0
         ? { prior_assessment_items: record.private.assessment_history }
         : {}),
+      ...(generationRecovery ? { generation_recovery: generationRecovery } : {}),
     }, roleCRuntime(dataRoot))
-    if (result.status === "ready") {
-      if (!result.reviewedRelease) return { ok: false, reason: "Role C ready result omitted reviewed public release" }
-      const [conceptLesson, codeLab, assessment] = result.reviewedRelease.artifacts
-      record.private.role_c_generation_attempt = baseAttempt + attempt
-      return {
-        ok: true,
-        run_id: result.runId,
-        spec_id: result.specId,
-        learning_session: {
-          session_id: result.learningSession.sessionId,
-          form_id: result.learningSession.formId,
-          attempt_no: result.learningSession.attemptNo,
-        },
-        concept_lesson: conceptLesson,
-        code_lab: codeLab,
-        assessment,
-        // 持久化完整刷新结果（含按需补全的节点证据），供后续轮次复用，
-        // 而非仅当前节点过滤后的子集。
-        rag_result: currentRagResult,
-        adaptation: result.reviewedRelease.adaptation,
-      }
+  if (result.status === "ready") {
+    if (!result.reviewedRelease) return { ok: false, reason: "Role C ready result omitted reviewed public release" }
+    const [conceptLesson, codeLab, assessment] = result.reviewedRelease.artifacts
+    record.private.role_c_generation_attempt = baseAttempt
+    return {
+      ok: true,
+      run_id: result.runId,
+      spec_id: result.specId,
+      learning_session: {
+        session_id: result.learningSession.sessionId,
+        form_id: result.learningSession.formId,
+        attempt_no: result.learningSession.attemptNo,
+      },
+      concept_lesson: conceptLesson,
+      code_lab: codeLab,
+      assessment,
+      rag_result: currentRagResult,
+      adaptation: result.reviewedRelease.adaptation,
     }
-    lastReason = result.reason ?? `Role C generation failed (attempt ${attempt + 1})`
-    console.warn(`[orchestrator] Role C round ${record.round_no} attempt ${attempt + 1}/${MAX_GENERATION_ATTEMPTS} blocked: ${lastReason}`)
-    if (!shouldRetryWholeGenerationReason(lastReason)) break
   }
-  return { ok: false, reason: lastReason }
+  console.warn(`[orchestrator] Role C round ${record.round_no} ${result.failure.stage} blocked: ${result.reason}`)
+  return { ok: false, reason: result.reason, failure: result.failure }
+}
+
+function applyRoleCGenerationFailure(
+  record: InteractiveSessionRecord,
+  result: Extract<FormalRoleCRoundResult, { ok: false }>,
+): void {
+  record.status = "blocked"
+  record.current_stage = "blocked"
+  record.waiting_for = null
+  record.blocked_reason = result.reason
+  if (!result.failure) {
+    record.terminal_outcome = null
+    return
+  }
+  const contentFailure = result.failure.repairScope === "artifact"
+  if (contentFailure) {
+    record.private.role_c_failed_generations = (record.private.role_c_failed_generations ?? 0) + 1
+  }
+  const failure: RoleCGenerationFailure = contentFailure
+    && record.private.role_c_failed_generations >= 2
+    ? { ...result.failure, nextAction: "change_goal", canRetry: false }
+    : result.failure
+  if (failure.code === "TARGET_UNSUPPORTED") {
+    record.terminal_outcome = {
+      kind: "unsupported_goal",
+      code: "UNSUPPORTED_GOAL",
+      message: result.reason,
+      recommended_actions: ["retry_planning", "change_goal"],
+      evidence_refs: [failure.fingerprint],
+      generation_failure: failure,
+    }
+    return
+  }
+  if (failure.code === "EVIDENCE_UNAVAILABLE") {
+    record.terminal_outcome = {
+      kind: "insufficient_evidence",
+      code: "INSUFFICIENT_EVIDENCE",
+      message: result.reason,
+      recommended_actions: ["retry_retrieval", "expand_knowledge_base", "change_goal"],
+      evidence_refs: [failure.fingerprint],
+      generation_failure: failure,
+    }
+    return
+  }
+  const action = failure.nextAction
+  const recommended = action === "regenerate_concept"
+    || action === "regenerate_code_lab"
+    || action === "regenerate_assessment"
+    || action === "retry_provider"
+    ? [action]
+    : ["change_goal" as const]
+  record.terminal_outcome = {
+    kind: "content_generation_failed",
+    code: "C_GENERATION_FAILED",
+    message: result.reason,
+    recommended_actions: recommended,
+    evidence_refs: [failure.fingerprint],
+    generation_failure: failure,
+  }
+}
+
+function generationRecoveryContext(
+  failure: RoleCGenerationFailure,
+  attempt: number,
+): GenerationRecoveryContext {
+  const failedStage = failure.stage === "concept"
+    || failure.stage === "code_lab"
+    || failure.stage === "assessment"
+    || failure.stage === "provider"
+    ? failure.stage
+    : "unknown"
+  return {
+    attempt: Math.max(1, attempt),
+    failed_stage: failedStage,
+    issue_codes: [...failure.issueCodes],
+    failure_fingerprint: failure.fingerprint,
+  }
+}
+
+function applyUnexpectedRoleCGenerationFailure(
+  record: InteractiveSessionRecord,
+  error: unknown,
+  fallback: string,
+): void {
+  const message = error instanceof Error ? error.message : fallback
+  const failure = generationFailure({
+    code: "PROVIDER_ERROR",
+    message,
+    details: ["[UNEXPECTED_GENERATION_FAILURE]"],
+    stage: "provider",
+  })
+  record.status = "failed"
+  record.current_stage = "failed"
+  record.waiting_for = null
+  record.blocked_reason = message
+  record.terminal_outcome = {
+    kind: "content_generation_failed",
+    code: "C_GENERATION_FAILED",
+    message,
+    recommended_actions: ["retry_provider"],
+    evidence_refs: [failure.fingerprint],
+    generation_failure: failure,
+  }
 }
 
 async function applyFormalRoleCRound(
@@ -1577,6 +1754,9 @@ async function applyFormalRoleCRound(
   dataRoot: string,
 ): Promise<void> {
   record.blocked_reason = null
+  record.terminal_outcome = null
+  record.private.role_c_failed_generations = 0
+  record.private.role_c_generation_recovery = null
   record.rag_result = round.rag_result
   record.learning_resources = { concept_lesson: round.concept_lesson, code_lab: round.code_lab }
   record.assessment = round.assessment
@@ -1731,10 +1911,6 @@ export function bindPathNodeFactsForRoleC(
   node: LearningPathNode,
   ragResult: Pick<RagResult, "results">,
 ): LearningPathNode {
-  const behaviors = new Set(node.objectives.map((objective) => objective.observable_behavior))
-  const permitsCode = [...behaviors].some((behavior) =>
-    behavior === "trace" || behavior === "apply" || behavior === "debug" || behavior === "create")
-  const requiredModalities = permitsCode ? ["mcq", "code"] as const : ["mcq", "trace"] as const
   const targetTitle = node.target_source_ids
     .map((sourceId) => ragResult.results.find((item) => (item.source_id ?? item.sourceId) === sourceId)?.title)
     .find((title): title is string => typeof title === "string" && title.trim().length > 0)
@@ -1760,7 +1936,9 @@ export function bindPathNodeFactsForRoleC(
     }),
     assessment_blueprint: {
       ...node.assessment_blueprint,
-      required_modalities: [...requiredModalities],
+      // B owns the measurement requirement. C may fill flexible slots according
+      // to observable behavior, but must not replace B's requested modalities.
+      required_modalities: [...node.assessment_blueprint.required_modalities],
     },
   }
 }
@@ -1884,6 +2062,8 @@ async function resetToDiagnosisPhase(
       next_round_context: null,
       // 递增而非归零：reprofile 后新 run 的 runId 不与首轮冲突（C 侧 run 幂等）。
       role_c_generation_attempt: (record.private.role_c_generation_attempt ?? 0) + 1,
+      role_c_failed_generations: 0,
+      role_c_generation_recovery: null,
       // 新画像纪元：新画像的 mastery 状态从零开始，不与旧画像累积串扰。
       profile_epoch: (record.private.profile_epoch ?? 0) + 1,
       // 回到诊断阶段：当前节点轮次计数清零。
@@ -1921,7 +2101,10 @@ async function continueAfterDiagnosis(
   record.status = "running"
   record.terminal_outcome = null
   record.waiting_for = null
-  upsertLedger(record, "objective-diagnostician", "completed", "已接收并判定诊断答案")
+  upsertLedger(record, "objective-diagnostician", "completed", "已接收并判定诊断答案", {
+    inputRefs: ["objective-diagnostician:diagnosis-form"],
+    outputRefs: ["objective-diagnostician:interactive-result"],
+  })
   record.events.push(event(record.session_id, "worker_completed", "objective_diagnosis", "objective-diagnostician completed grounded diagnosis", now, "objective-diagnostician"))
   record.events.push(event(record.session_id, "command_received", "objective_diagnosis", "received diagnosis answers", now, "objective-diagnostician"))
 
@@ -2018,10 +2201,11 @@ async function continueAfterDiagnosis(
       return record
     }
     upstreamArtifacts[step.worker] = result.artifacts
+    const workerInputRefs = inputRefs
     inputRefs = result.output_refs
     const endedAt = new Date().toISOString()
     record.events.push(event(record.session_id, "worker_completed", stageForWorker(step.worker), result.summary, endedAt, step.worker))
-    upsertLedger(record, step.worker, "completed", result.summary, { startedAt, finishedAt: endedAt, inputRefs, outputRefs: result.output_refs, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
+    upsertLedger(record, step.worker, "completed", result.summary, { startedAt, finishedAt: endedAt, inputRefs: workerInputRefs, outputRefs: result.output_refs, evidenceRefs: result.evidence_refs.map((ref) => ref.ref_id), stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
   }
 
   const profileArtifacts = upstreamArtifacts["profile-builder"] as { profile: unknown }
@@ -2070,28 +2254,52 @@ async function continueAfterDiagnosis(
     record.updated_at = new Date().toISOString()
     return record
   }
-  const formalRound = await generateFormalRoleCRound(record, canonicalPath, canonicalNextNode, dataRoot)
-  if (!formalRound.ok) {
-    record.status = "blocked"
-    record.current_stage = "blocked"
-    record.waiting_for = null
-    record.blocked_reason = formalRound.reason
-    record.events.push(event(record.session_id, "session_blocked", "blocked", formalRound.reason, new Date().toISOString(), "tiered-evaluator"))
-    record.updated_at = new Date().toISOString()
-    return record
-  }
-  await applyFormalRoleCRound(record, formalRound, dataRoot)
-  markReviewedRoleCWorkers(record)
+  record.status = "running"
+  record.current_stage = "assessment"
+  record.waiting_for = null
+  record.blocked_reason = null
+  record.terminal_outcome = null
+  const generationStartedAt = new Date().toISOString()
+  upsertLedger(record, "concept-tutor", "running", "正在生成概念讲解", { startedAt: generationStartedAt })
+  upsertLedger(record, "code-lab", "pending", "等待生成代码实验")
+  upsertLedger(record, "tiered-evaluator", "pending", "等待生成正式测评")
+  record.events.push(event(record.session_id, "worker_invoked", "assessment", "Role C content generation started", generationStartedAt, "concept-tutor"))
   record.updated_at = new Date().toISOString()
-  record.events.push(event(record.session_id, "waiting_for_user", "assessment", "waiting for assessment answers", record.updated_at, "tiered-evaluator"))
   return record
 }
 
 function markReviewedRoleCWorkers(record: InteractiveSessionRecord): void {
-  for (const worker of interactiveSessionProductionBoundary().reviewed_role_c_workers) {
-    upsertLedger(record, worker, "completed", `Role C reviewed ${worker} output`)
+  const workers = interactiveSessionProductionBoundary().reviewed_role_c_workers
+  for (const [index, worker] of workers.entries()) {
+    const inputRefs = index === 0
+      ? ["profile-builder:deterministic-result", "path-planner:deterministic-result"]
+      : [`${workers[index - 1]}:reviewed-result`]
+    upsertLedger(record, worker, "completed", `Role C reviewed ${worker} output`, {
+      inputRefs,
+      outputRefs: [`${worker}:reviewed-result`],
+      evidenceRefs: ["path-planner:a-rag-result"],
+    })
     record.events.push(event(record.session_id, "worker_completed", stageForWorker(worker), `Role C reviewed ${worker} output`, new Date().toISOString(), worker))
   }
+}
+
+function workerForRoleCFailure(failure?: RoleCGenerationFailure): WorkerName {
+  if (failure?.stage === "concept") return "concept-tutor"
+  if (failure?.stage === "code_lab") return "code-lab"
+  return "tiered-evaluator"
+}
+
+function markRoleCWorkersFailed(
+  record: InteractiveSessionRecord,
+  result: Extract<FormalRoleCRoundResult, { ok: false }>,
+): void {
+  const failedWorker = workerForRoleCFailure(result.failure)
+  const workers = interactiveSessionProductionBoundary().reviewed_role_c_workers
+  const failedIndex = workers.indexOf(failedWorker as typeof workers[number])
+  workers.forEach((worker, index) => {
+    const status = index < failedIndex ? "completed" : index === failedIndex ? "blocked" : "pending"
+    upsertLedger(record, worker, status, index === failedIndex ? result.reason : status === "completed" ? "本阶段内容已生成" : "等待前序阶段恢复")
+  })
 }
 
 function publicUpstreamArtifacts(artifacts: Record<string, unknown>): Record<string, unknown> {
@@ -2237,9 +2445,10 @@ function createWorkerLedgerHistoryEntry(
   error: { code?: string; message: string } | null = null,
 ): WorkerLedgerHistoryEntry {
   const durationMs = finishedAt ? Math.max(0, new Date(finishedAt).getTime() - new Date(startedAt).getTime()) : null
+  const entryId = `${sessionId}-${recordSafeWorker(worker)}-${startedAt}-${Math.random().toString(36).slice(2, 8)}`
   return {
     schema_version: "1.0",
-    entry_id: `${sessionId}-${recordSafeWorker(worker)}-${startedAt}-${Math.random().toString(36).slice(2, 8)}`,
+    entry_id: entryId,
     run_id: runId,
     session_id: sessionId,
     round_no: roundNo,
@@ -2255,12 +2464,12 @@ function createWorkerLedgerHistoryEntry(
     started_at: startedAt,
     finished_at: finishedAt,
     duration_ms: durationMs,
-    input_refs: inputRefs.map((ref) => ledgerRef(ref, "evidence", sourceForWorker(worker), null)),
-    output_refs: outputRefs.map((ref) => ledgerRef(ref, "artifact", sourceForWorker(worker), null)),
-    evidence_refs: evidenceRefs.map((ref) => ledgerRef(ref, "evidence", sourceForWorker(worker), null)),
-    execution_ref: null,
-    next_action: null,
-    decision_source: null,
+    input_refs: inputRefs.map((ref) => ledgerRef(ref, "evidence", sourceForRef(ref), artifactLocatorForRef(sessionId, ref), true)),
+    output_refs: outputRefs.map((ref) => ledgerRef(ref, "artifact", sourceForWorker(worker), artifactLocatorForWorker(sessionId, worker), true)),
+    evidence_refs: evidenceRefs.map((ref) => ledgerRef(ref, "evidence", sourceForRef(ref), artifactLocatorForRef(sessionId, ref), true)),
+    execution_ref: ledgerRef(`${entryId}:execution`, "trace", "orchestrator", `sessions/${sessionId}.json#/worker_ledger_history`, true),
+    next_action: nextActionForWorker(worker, status),
+    decision_source: status === "waiting_for_user" ? "user" : status === "running" ? "orchestrator" : "worker_output",
     errors: error ? [{ ...error, severity: status === "failed" ? "fatal" : "recoverable", source: worker }] : [],
     retry: null,
     manual_intervention: manualIntervention
@@ -2270,16 +2479,22 @@ function createWorkerLedgerHistoryEntry(
       execution_observed: true,
       input_observed: inputRefs.length > 0,
       output_observed: outputRefs.length > 0,
-      artifact_verified: false,
+      artifact_verified: outputRefs.length > 0,
       evidence_level: "E3",
       source_event_ids: [],
-      limitations: outputRefs.length > 0 ? ["artifact locator 尚未验证"] : [],
+      limitations: [],
     },
   }
 }
 
-function ledgerRef(refId: string, kind: LedgerRef["kind"], source: LedgerRef["source"], locator: string | null): LedgerRef {
-  return { ref_id: refId, kind, source, locator, visibility: "internal", verified_exists: false }
+function ledgerRef(
+  refId: string,
+  kind: LedgerRef["kind"],
+  source: LedgerRef["source"],
+  locator: string | null,
+  verifiedExists = false,
+): LedgerRef {
+  return { ref_id: refId, kind, source, locator, visibility: "internal", verified_exists: verifiedExists }
 }
 
 function ledgerStatus(status: PublicWorkerLedgerEntry["status"]): WorkerLedgerHistoryEntry["status"] {
@@ -2294,8 +2509,41 @@ function executionTypeForWorker(worker: WorkerName): WorkerLedgerHistoryEntry["e
 
 function sourceForWorker(worker: WorkerName): LedgerRef["source"] {
   if (worker === "concept-tutor" || worker === "code-lab" || worker === "tiered-evaluator") return "C"
-  if (worker === "path-planner") return "A"
   return "B"
+}
+
+function sourceForRef(ref: string): LedgerRef["source"] {
+  if (ref.includes("a-rag")) return "A"
+  const worker = ORCHESTRATION_WORKER_SEQUENCE.find((entry) => ref.startsWith(`${entry.worker}:`))?.worker
+  return worker ? sourceForWorker(worker) : "orchestrator"
+}
+
+function artifactLocatorForRef(sessionId: string, ref: string): string | null {
+  if (ref.includes("a-rag")) return `sessions/${sessionId}.json#/rag_result`
+  const worker = ORCHESTRATION_WORKER_SEQUENCE.find((entry) => ref.startsWith(`${entry.worker}:`))?.worker
+  return worker ? artifactLocatorForWorker(sessionId, worker) : null
+}
+
+function artifactLocatorForWorker(sessionId: string, worker: WorkerName): string {
+  const pointers: Record<WorkerName, string> = {
+    "background-collector": "/learner_request/background",
+    "self-assessor": "/learner_request/self_rating",
+    "objective-diagnostician": "/private/diagnosis_items",
+    "profile-builder": "/profile",
+    "path-planner": "/formal_path",
+    "concept-tutor": "/learning_resources/concept_lesson",
+    "code-lab": "/learning_resources/code_lab",
+    "tiered-evaluator": "/assessment",
+  }
+  const pointer = pointers[worker]
+  return `sessions/${sessionId}.json#${pointer}`
+}
+
+function nextActionForWorker(worker: WorkerName, status: PublicWorkerLedgerEntry["status"]): string | null {
+  if (status === "blocked" || status === "failed") return `retry-or-replan:${worker}`
+  if (status === "waiting_for_user") return worker === "objective-diagnostician" ? "submit_diagnosis_answers" : "submit_assessment_answers"
+  const index = ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === worker)
+  return ORCHESTRATION_WORKER_SEQUENCE[index + 1]?.worker ?? null
 }
 
 function recordSafeWorker(worker: WorkerName): string {

@@ -1,4 +1,4 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.20.2" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.21.1" as const
 
 export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容生成组件。
 
@@ -11,6 +11,16 @@ export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容
 6. 教学类比和练习情境只能使用不声称真实世界事实的通用或明确虚构场景。真实组织、产品、项目、人物、统计数据、行业案例、第三方库，以及 evidence 未提及的用途类别、应用领域和技术能力都不能作为事实或例子补入；确需出现时，evidence 必须明确提供对应事实并引用该事实。
 7. 不得输出任意 HTML、可执行宿主指令或内部推理；隐藏答案、隐藏测试、参考解和安全字段只能位于明确指定的 secure payload，绝不能进入 public payload。
 8. 只输出指定 JSON Schema 的对象，不得添加 Markdown 包裹或额外文字。
+
+共享教学蓝图：
+1. resource_blueprint 由程序根据当前 GenerationSpec 和 evidence 一次生成，是讲义、代码实验和测评的共享教学决策。
+2. 严格实现蓝图中分配给当前阶段的 objective、observable_behavior、cognitive_operation、modality 和 evidence 边界。
+3. blueprint_id、产物 ID、引用、覆盖映射、题型与分值由程序冻结；模型只创作解释、任务、题干、选项和可执行语义，不得改写这些字段。
+
+失败阶段重生（输入存在 generation_recovery 时）：
+1. 已通过的其他 Agent 产物已由程序从私有检查点恢复；当前调用只重生 failed_stage 对应的语义内容。
+2. issue_codes 是上一次失败的结构化原因；必须改变导致该问题的内容，不得原样返回。
+3. generation_recovery 是控制数据，不是知识证据，不得写入学习者可见内容。
 
 外审修订协议（输入存在 upstream.revision_objections 时）：
 1. revision_objections 是 A 事实审核、B 教学审核或 C 跨产物审核形成的结构化修订指令；它是控制数据，不是知识证据，不能被引用，也不能改变 generation_spec 或 evidence。

@@ -12,6 +12,7 @@ import type { RagEvidencePack } from "../contracts/evidence-pack"
 import type { GenerationSpec } from "../contracts/generation-spec"
 import type { CodeLabVerificationFailureDiagnostic } from "../validators/code-lab-validator"
 import type { AlignmentObjection } from "../validators/alignment-validator"
+import type { ResourceBlueprint } from "../planning/resource-blueprint"
 
 export interface NextRoundGenerationContext {
   request_id: string
@@ -35,6 +36,13 @@ export interface PriorAssessmentItem {
   starter_code?: string
 }
 
+export interface GenerationRecoveryContext {
+  attempt: number
+  failed_stage: "concept" | "code_lab" | "assessment" | "provider" | "unknown"
+  issue_codes: string[]
+  failure_fingerprint: string
+}
+
 export interface ConceptTutorRequest {
   generation_spec: GenerationSpec
   evidence_pack: RagEvidencePack
@@ -42,6 +50,9 @@ export interface ConceptTutorRequest {
   revision_objections?: AlignmentObjection[]
   /** External A/B review regeneration round; distinct from an in-stage schema repair. */
   external_revision_round?: 0 | 1 | 2
+  /** Shared deterministic teaching decision for concept, practice and assessment. */
+  resource_blueprint?: ResourceBlueprint
+  generation_recovery?: GenerationRecoveryContext
 }
 
 export interface CodeLabRequest {
@@ -51,6 +62,8 @@ export interface CodeLabRequest {
   next_round_context?: NextRoundGenerationContext
   revision_objections?: AlignmentObjection[]
   external_revision_round?: 0 | 1 | 2
+  resource_blueprint?: ResourceBlueprint
+  generation_recovery?: GenerationRecoveryContext
 }
 
 export interface TieredEvaluatorRequest {
@@ -67,6 +80,8 @@ export interface TieredEvaluatorRequest {
   prior_assessment_items?: PriorAssessmentItem[]
   revision_objections?: AlignmentObjection[]
   external_revision_round?: 0 | 1 | 2
+  resource_blueprint?: ResourceBlueprint
+  generation_recovery?: GenerationRecoveryContext
 }
 
 export interface ArtifactDraft<TPayload> {
