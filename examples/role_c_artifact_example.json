@@ -1,0 +1,22 @@
+{
+  "artifactId": "role-c-example-pass",
+  "query": "使用 for 循环遍历列表完成成绩统计",
+  "learnerLevel": "beginner",
+  "topK": 3,
+  "blocks": [
+    {
+      "blockId": "claim-1",
+      "text": "for 循环常用于遍历序列中的元素。",
+      "citations": [
+        { "source_id": "K007", "fact_id": "F001", "relation": "supports" }
+      ]
+    },
+    {
+      "blockId": "claim-2",
+      "text": "列表可用于保存多个有序元素。",
+      "citations": [
+        { "source_id": "K009", "fact_id": "F001", "relation": "supports" }
+      ]
+    }
+  ]
+}

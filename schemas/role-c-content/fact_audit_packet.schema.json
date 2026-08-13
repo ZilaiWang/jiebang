@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/fact_audit_packet.schema.json",
+  "title": "C to A Fact Audit Packet",
+  "type": "object",
+  "required": ["schema_version", "audit_id", "run_id", "source_id", "fact_id", "claim_text", "issue", "artifact_id", "requested_action"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "audit_id": { "type": "string", "minLength": 1 }, "run_id": { "type": "string", "minLength": 1 },
+    "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+    "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+    "claim_text": { "type": "string", "minLength": 1 },
+    "issue": { "enum": ["missing_support", "conflicting_support", "ambiguous_support"] },
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "requested_action": { "enum": ["confirm", "correct", "add_fact"] }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/learning_progress_delivery.schema.json",
+  "title": "Role C Learning Progress Delivery",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "delivery_kind",
+    "delivery_id",
+    "learner_id_hash",
+    "profile_version",
+    "evidence_events"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "delivery_kind": { "const": "learning_progress" },
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "learner_id_hash": { "type": "string", "minLength": 1 },
+    "profile_version": { "type": "string", "minLength": 1 },
+    "evidence_events": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "learning_evidence_event.schema.json"
+      }
+    },
+    "profile_drift_suggestion": {
+      "$ref": "profile_drift_suggestion.schema.json"
+    }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "evidence_events": { "minItems": 1 }
+      }
+    },
+    {
+      "required": ["profile_drift_suggestion"]
+    }
+  ],
+  "additionalProperties": false
+}

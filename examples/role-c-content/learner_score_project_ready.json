@@ -1,0 +1,15 @@
+{
+  "learner_id": "demo_score_project_ready_001",
+  "level": "intermediate",
+  "known_concepts": [
+    "变量",
+    "基本数据类型",
+    "列表",
+    "函数"
+  ],
+  "weak_concepts": [
+    "循环综合应用",
+    "项目组织"
+  ],
+  "goal": "完成成绩统计程序"
+}

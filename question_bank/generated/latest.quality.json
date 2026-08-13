@@ -1,0 +1,34 @@
+{
+  "workflow": "QuestionBank_Quality_Report",
+  "bank_id": "sha256:3ee1af00927931db9a8adde11cb06987ca2d665b7efe2c4c23d512c513392d9b",
+  "kb_version": "0.6.0",
+  "generated_at": "2026-08-05T00:00:00.000Z",
+  "summary": {
+    "total_questions": 244,
+    "template_variant_count": 244,
+    "template_duplication_rate": 0,
+    "choice_option_validity": 1,
+    "exam_gradable_rate": 1,
+    "programming_test_case_coverage": 1,
+    "quality_gate_passed": true
+  },
+  "details": {
+    "question_type_counts": {
+      "choice": 61,
+      "short_answer": 61,
+      "debugging": 61,
+      "practice": 61
+    },
+    "grading_method_counts": {
+      "exact_match": 61,
+      "rubric": 128,
+      "unit_test": 55
+    },
+    "purpose_counts": {
+      "diagnostic": 61,
+      "training": 122,
+      "exam": 61
+    },
+    "failed_gates": []
+  }
+}

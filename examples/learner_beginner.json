@@ -1,0 +1,12 @@
+{
+  "learner_id": "demo_beginner_001",
+  "level": "beginner",
+  "known_concepts": [
+    "Python 是什么"
+  ],
+  "weak_concepts": [
+    "变量",
+    "数据类型"
+  ],
+  "goal": "能读懂最简单的 Python 代码"
+}

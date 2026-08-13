@@ -1,0 +1,65 @@
+{
+  "description": "B 角色画像链联调证据样例：loop_weak 人设的三份证据。诊断题为 knowledge_base 真实 quizItems（K002/K007/K009），非虚构。",
+  "learner_request": "我是大二非计算机专业学生，之前跟网课学过一点 Python：变量、数据类型、条件判断都没问题，循环我感觉也还行。但是列表完全不会，要把一批成绩存起来就不知道怎么弄。我想完成一个成绩统计小程序，能遍历一批成绩算平均分。每周大概能抽 5 小时学习。",
+  "background": {
+    "evidence_type": "background",
+    "learner_id": "demo_loop_weak_001",
+    "education_context": "大二非计算机专业",
+    "prior_languages": ["Python"],
+    "prior_topics": ["变量", "数据类型", "条件判断"],
+    "goal_raw": "完成一个成绩统计小程序，能遍历一批成绩算平均分",
+    "time_budget": "每周约 5 小时",
+    "quotes": [
+      { "field": "education_context", "text": "我是大二非计算机专业学生" },
+      { "field": "prior_topics", "text": "之前跟网课学过一点 Python：变量、数据类型、条件判断都没问题" },
+      { "field": "goal_raw", "text": "我想完成一个成绩统计小程序，能遍历一批成绩算平均分" },
+      { "field": "time_budget", "text": "每周大概能抽 5 小时学习" }
+    ]
+  },
+  "self_assessment": {
+    "evidence_type": "self_assessment",
+    "self_rating": "beginner",
+    "claimed_known": ["变量", "循环"],
+    "claimed_weak": ["列表完全不会"],
+    "quotes": [
+      { "field": "claimed_known", "text": "变量、数据类型、条件判断都没问题，循环我感觉也还行" },
+      { "field": "claimed_weak", "text": "但是列表完全不会，要把一批成绩存起来就不知道怎么弄" }
+    ]
+  },
+  "objective_diagnosis": {
+    "evidence_type": "objective_diagnosis",
+    "items": [
+      {
+        "source_id": "K002",
+        "fact_id": "F001",
+        "question": "变量赋值在 Python 中使用哪个符号？",
+        "learner_answer": "=",
+        "verdict": "correct",
+        "concept": "变量",
+        "difficulty": "beginner"
+      },
+      {
+        "source_id": "K007",
+        "fact_id": "F001",
+        "question": "for 循环最适合用于什么场景？",
+        "learner_answer": "定义变量",
+        "verdict": "incorrect",
+        "concept": "循环",
+        "difficulty": "beginner"
+      },
+      {
+        "source_id": "K009",
+        "fact_id": "F001",
+        "question": "向列表末尾添加元素常用哪个方法？",
+        "learner_answer": null,
+        "verdict": "unanswered",
+        "concept": "列表",
+        "difficulty": "basic"
+      }
+    ],
+    "quotes": [
+      { "field": "items[0].learner_answer", "text": "=" },
+      { "field": "items[1].learner_answer", "text": "定义变量" }
+    ]
+  }
+}

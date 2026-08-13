@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/rag_request.schema.json",
+  "title": "KnowBalance RAG Request",
+  "type": "object",
+  "required": ["learner_profile", "query", "top_k"],
+  "additionalProperties": false,
+  "properties": {
+    "learner_profile": {
+      "type": "object",
+      "required": ["level", "known_concepts", "weak_concepts", "goal"],
+      "additionalProperties": true,
+      "properties": {
+        "learner_id": { "type": "string" },
+        "level": { "type": "string", "enum": ["beginner", "basic", "intermediate", "integrated"] },
+        "known_concepts": { "type": "array", "items": { "type": "string" } },
+        "weak_concepts": { "type": "array", "items": { "type": "string" } },
+        "goal": { "type": "string", "minLength": 1 }
+      }
+    },
+    "query": { "type": "string", "minLength": 1 },
+    "top_k": { "type": "integer", "minimum": 1, "maximum": 10 }
+  }
+}

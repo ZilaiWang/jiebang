@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/reviewed_release_delivery.schema.json",
+  "title": "Role C Reviewed Release Delivery",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "delivery_kind",
+    "delivery_id",
+    "run_id",
+    "pipeline_input_hash",
+    "generation_spec_hash",
+    "review_policy_version",
+    "final_review_hash",
+    "artifacts",
+    "trace_events"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "delivery_kind": {
+      "const": "reviewed_release"
+    },
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pipeline_input_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "generation_spec_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "review_policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "final_review_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "concept_artifact.schema.json"
+        },
+        {
+          "$ref": "code_lab_public.schema.json"
+        },
+        {
+          "$ref": "assessment_public.schema.json"
+        }
+      ],
+      "items": false
+    },
+    "trace_events": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "agent_trace_event.schema.json"
+      }
+    },
+    "adaptation": {
+      "type": "object",
+      "required": [
+        "adaptation_action",
+        "target_objective_ids",
+        "addressed_misconception_tags",
+        "adaptation_summary",
+        "source_feedback_refs"
+      ],
+      "properties": {
+        "adaptation_action": {
+          "enum": [
+            "remediate",
+            "reinforce",
+            "advance"
+          ]
+        },
+        "target_objective_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "addressed_misconception_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "adaptation_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_feedback_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

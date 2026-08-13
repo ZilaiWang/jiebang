@@ -1,0 +1,266 @@
+{
+  "module": "Python程序设计",
+  "version": "0.3.0",
+  "updated_at": "2026-08-05",
+  "items": [
+    {
+      "source_id": "PY019",
+      "title": "切片进阶",
+      "file": "knowledge_base/python_programming/PY019_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY020",
+      "title": "列表推导式",
+      "file": "knowledge_base/python_programming/PY020_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY021",
+      "title": "字典方法进阶",
+      "file": "knowledge_base/python_programming/PY021_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY022",
+      "title": "集合运算",
+      "file": "knowledge_base/python_programming/PY022_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY023",
+      "title": "字符串格式化",
+      "file": "knowledge_base/python_programming/PY023_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY024",
+      "title": "文件逐行处理",
+      "file": "knowledge_base/python_programming/PY024_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY025",
+      "title": "函数默认参数",
+      "file": "knowledge_base/python_programming/PY025_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY026",
+      "title": "lambda 与排序键",
+      "file": "knowledge_base/python_programming/PY026_lambda.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY027",
+      "title": "模块化程序设计",
+      "file": "knowledge_base/python_programming/PY027_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY028",
+      "title": "类与实例",
+      "file": "knowledge_base/python_programming/PY028_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY029",
+      "title": "方法与对象状态",
+      "file": "knowledge_base/python_programming/PY029_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY030",
+      "title": "继承与方法重写",
+      "file": "knowledge_base/python_programming/PY030_.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY031",
+      "title": "random 常用操作",
+      "file": "knowledge_base/python_programming/PY031_random_常用操作.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY032",
+      "title": "math 常用操作",
+      "file": "knowledge_base/python_programming/PY032_math_常用操作.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY033",
+      "title": "time 与 datetime 基础",
+      "file": "knowledge_base/python_programming/PY033_time_与_datetime_基础.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY034",
+      "title": "GUI 基础概念",
+      "file": "knowledge_base/python_programming/PY034_GUI_基础概念.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY035",
+      "title": "CSV 文本数据处理",
+      "file": "knowledge_base/python_programming/PY035_CSV_文本数据处理.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY036",
+      "title": "jieba 中文分词概念",
+      "file": "knowledge_base/python_programming/PY036_jieba_中文分词概念.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY037",
+      "title": "wordcloud 词云概念",
+      "file": "knowledge_base/python_programming/PY037_wordcloud_词云概念.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY038",
+      "title": "requests 请求基础",
+      "file": "knowledge_base/python_programming/PY038_requests_请求基础.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY039",
+      "title": "BeautifulSoup HTML 解析概念",
+      "file": "knowledge_base/python_programming/PY039_BeautifulSoup_HTML_解析概念.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY040",
+      "title": "正则表达式基础",
+      "file": "knowledge_base/python_programming/PY040_正则表达式基础.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY041",
+      "title": "数据清洗小项目",
+      "file": "knowledge_base/python_programming/PY041_数据清洗小项目.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY042",
+      "title": "成绩管理综合项目",
+      "file": "knowledge_base/python_programming/PY042_成绩管理综合项目.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY043",
+      "title": "文本词频统计项目",
+      "file": "knowledge_base/python_programming/PY043_文本词频统计项目.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY044",
+      "title": "简单爬虫项目",
+      "file": "knowledge_base/python_programming/PY044_简单爬虫项目.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY045",
+      "title": "面向对象综合练习",
+      "file": "knowledge_base/python_programming/PY045_面向对象综合练习.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY046",
+      "title": "异常与文件综合练习",
+      "file": "knowledge_base/python_programming/PY046_异常与文件综合练习.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY047",
+      "title": "模块化项目结构",
+      "file": "knowledge_base/python_programming/PY047_模块化项目结构.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY048",
+      "title": "Python 二级考试常见题型",
+      "file": "knowledge_base/python_programming/PY048_Python_二级考试常见题型.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY049",
+      "title": "编程题测试用例设计",
+      "file": "knowledge_base/python_programming/PY049_编程题测试用例设计.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY050",
+      "title": "综合训练卷组织",
+      "file": "knowledge_base/python_programming/PY050_综合训练卷组织.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY051",
+      "title": "SQLite 数据库连接",
+      "file": "knowledge_base/python_programming/PY051_SQLite_数据库连接.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY052",
+      "title": "表结构与字段",
+      "file": "knowledge_base/python_programming/PY052_表结构与字段.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY053",
+      "title": "INSERT 与 SELECT 基础",
+      "file": "knowledge_base/python_programming/PY053_INSERT_与_SELECT_基础.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY054",
+      "title": "UPDATE 与 DELETE 基础",
+      "file": "knowledge_base/python_programming/PY054_UPDATE_与_DELETE_基础.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    },
+    {
+      "source_id": "PY055",
+      "title": "参数化查询与安全",
+      "file": "knowledge_base/python_programming/PY055_参数化查询与安全.md",
+      "fact_count": 3,
+      "quiz_count": 4
+    }
+  ]
+}

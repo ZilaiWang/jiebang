@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/review_recovery_status.schema.json",
+  "title": "Role C Review Recovery Status",
+  "$comment": "D-safe recovery status. This object carries no learner profile, evidence pack, answer-bearing data, secure reference, or trusted registration context.",
+  "type": "object",
+  "required": [
+    "code",
+    "failed_dimensions",
+    "missing_prerequisite_source_ids",
+    "unknown_prerequisite_refs",
+    "required_action",
+    "fix_scope",
+    "can_recover",
+    "recovery_attempts",
+    "message"
+  ],
+  "properties": {
+    "code": { "enum": ["READY", "BLOCKED", "UNSUPPORTED_TARGET"] },
+    "failed_dimensions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "missing_prerequisite_source_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+    },
+    "unknown_prerequisite_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "required_action": {
+      "enum": [
+        "adjust_content",
+        "request_new_evidence",
+        "replan_path",
+        "reprofile_learner",
+        "none"
+      ]
+    },
+    "fix_scope": {
+      "enum": ["artifact", "new_evidence", "new_spec", "none"]
+    },
+    "recommended_level": {
+      "enum": ["beginner", "basic", "intermediate", "integrated"]
+    },
+    "can_recover": { "type": "boolean" },
+    "recovery_attempts": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "message": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

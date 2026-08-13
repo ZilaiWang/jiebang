@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RAG Retrieval Result",
+  "type": "object",
+  "required": ["query", "topK", "results"],
+  "additionalProperties": false,
+  "properties": {
+    "query": { "type": "string" },
+    "learnerLevel": { "type": "string", "enum": ["beginner", "basic", "intermediate", "integrated"] },
+    "topK": { "type": "number" },
+    "retrieval_id": { "type": "string", "minLength": 1 },
+    "match_status": { "enum": ["strong", "weak", "no_match"] },
+    "retrieval_context": { "type": "object" },
+    "objective_coverage": { "type": "array" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sourceId",
+          "source_id",
+          "title",
+          "difficulty",
+          "score",
+          "reason",
+          "snippet",
+          "facts",
+          "examples",
+          "practiceTasks",
+          "quizItems",
+          "file",
+          "retrievalTrace",
+          "retrieval_trace"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sourceId": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "title": { "type": "string" },
+          "difficulty": { "type": "string", "enum": ["beginner", "basic", "intermediate", "integrated"] },
+          "score": { "type": "number" },
+          "reason": { "type": "string" },
+          "snippet": { "type": "string" },
+          "facts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["sourceId", "factId", "source_id", "fact_id", "content"],
+              "additionalProperties": false,
+              "properties": {
+                "sourceId": { "type": "string", "pattern": "^K[0-9]{3}$" },
+                "factId": { "type": "string", "pattern": "^F[0-9]{3}$" },
+                "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+                "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+                "content": { "type": "string" }
+              }
+            }
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "code", "explanation"],
+              "additionalProperties": false,
+              "properties": {
+                "title": { "type": "string" },
+                "code": { "type": "string" },
+                "explanation": { "type": "string" }
+              }
+            }
+          },
+          "practiceTasks": { "type": "array", "items": { "type": "string" } },
+          "quizItems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["level", "type", "question", "answer", "sourceId", "factId"],
+              "additionalProperties": false,
+              "properties": {
+                "level": { "type": "number" },
+                "type": { "type": "string" },
+                "question": { "type": "string" },
+                "options": { "type": "array", "items": { "type": "string" } },
+                "answer": { "type": "string" },
+                "sourceId": { "type": "string", "pattern": "^K[0-9]{3}$" },
+                "factId": { "type": "string", "pattern": "^F[0-9]{3}$" }
+              }
+            }
+          },
+          "file": { "type": "string" },
+          "retrievalTrace": { "$ref": "#/definitions/retrievalTrace" },
+          "retrieval_trace": { "$ref": "#/definitions/retrievalTraceJson" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "scoreBreakdown": {
+      "type": "object",
+      "required": ["keyword", "title", "facts", "practiceTasks", "difficulty", "bonus"],
+      "additionalProperties": false,
+      "properties": {
+        "keyword": { "type": "number" },
+        "title": { "type": "number" },
+        "facts": { "type": "number" },
+        "practiceTasks": { "type": "number" },
+        "difficulty": { "type": "number" },
+        "bonus": { "type": "number" }
+      }
+    },
+    "retrievalTrace": {
+      "type": "object",
+      "required": ["matchedKeywords", "matchedFields", "difficultyMatch", "scoreBreakdown"],
+      "additionalProperties": false,
+      "properties": {
+        "matchedKeywords": { "type": "array", "items": { "type": "string" } },
+        "matchedFields": { "type": "array", "items": { "type": "string" } },
+        "difficultyMatch": { "type": "boolean" },
+        "scoreBreakdown": { "$ref": "#/definitions/scoreBreakdown" }
+      }
+    },
+    "retrievalTraceJson": {
+      "type": "object",
+      "required": ["matched_keywords", "matched_fields", "difficulty_match", "score_breakdown"],
+      "additionalProperties": false,
+      "properties": {
+        "matched_keywords": { "type": "array", "items": { "type": "string" } },
+        "matched_fields": { "type": "array", "items": { "type": "string" } },
+        "difficulty_match": { "type": "boolean" },
+        "score_breakdown": { "$ref": "#/definitions/scoreBreakdown" }
+      }
+    }
+  }
+}

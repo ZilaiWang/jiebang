@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/assessment_secure.schema.json",
+  "title": "C Assessment Secure Artifact",
+  "type": "object",
+  "allOf": [{ "$ref": "artifact_envelope.schema.json" }],
+  "required": ["schema_version", "artifact_id", "artifact_type", "agent", "status", "payload"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "artifact_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "assessment_secure" },
+    "agent": { "const": "tiered-evaluator" },
+    "status": { "enum": ["ready", "blocked", "failed"] },
+    "payload": {
+      "anyOf": [
+        { "type": "null" },
+        { "$ref": "assessment_draft.schema.json#/$defs/secure_payload" }
+      ]
+    }
+  }
+}

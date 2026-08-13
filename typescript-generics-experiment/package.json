@@ -1,0 +1,15 @@
+{
+  "name": "typescript-generics-experiment",
+  "version": "1.0.0",
+  "description": "Learn TypeScript generics through practical experiments",
+  "main": "experiment.js",
+  "scripts": {
+    "compile": "tsc",
+    "run:experiment": "tsc && node dist/experiment.js",
+    "run:exercises": "tsc && node dist/exercises.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0"
+  }
+}

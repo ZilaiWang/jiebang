@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/review_recovery_status_delivery.schema.json",
+  "title": "Role C Review Recovery Status Delivery",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "delivery_kind",
+    "delivery_id",
+    "result"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "delivery_kind": { "const": "review_recovery_status" },
+    "delivery_id": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "result": {
+      "allOf": [
+        { "$ref": "review_recovery_result.schema.json" },
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "pipeline_status": { "const": "blocked" },
+                "pipeline_state": { "const": "BLOCKED" }
+              },
+              "required": ["pipeline_status", "pipeline_state"]
+            },
+            {
+              "properties": {
+                "pipeline_status": { "const": "failed" },
+                "pipeline_state": { "const": "FAILED" }
+              },
+              "required": ["pipeline_status", "pipeline_state"]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,281 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/grade_result.schema.json",
+  "title": "C Grade Result Artifact",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "artifact_envelope.schema.json"
+    }
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "grade_result"
+    },
+    "agent": {
+      "const": "tiered-evaluator"
+    },
+    "payload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/payload"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "required": [
+        "submission_id",
+        "form_id",
+        "score_frozen",
+        "raw_score",
+        "max_score",
+        "evidence_score",
+        "item_results",
+        "recommendation",
+        "feedback"
+      ],
+      "properties": {
+        "submission_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "form_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "score_frozen": {
+          "const": true
+        },
+        "raw_score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_score": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "evidence_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "item_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/item_result"
+          }
+        },
+        "recommendation": {
+          "$ref": "#/$defs/recommendation"
+        },
+        "feedback": {
+          "$ref": "#/$defs/feedback"
+        }
+      },
+      "additionalProperties": false
+    },
+    "item_result": {
+      "type": "object",
+      "required": [
+        "item_id",
+        "objective_id",
+        "raw_score",
+        "max_score",
+        "evidence_score",
+        "grader_confidence",
+        "hint_factor",
+        "repeat_factor",
+        "misconception_tags",
+        "feedback_code"
+      ],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "objective_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "raw_score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_score": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "evidence_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "grader_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "hint_factor": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "repeat_factor": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "misconception_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "feedback_code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rubric_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rubric_result"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rubric_result": {
+      "type": "object",
+      "required": [
+        "criterion_id",
+        "status",
+        "awarded_score",
+        "confidence"
+      ],
+      "properties": {
+        "criterion_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "met",
+            "unmet",
+            "uncertain"
+          ]
+        },
+        "awarded_score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_excerpt": {
+          "type": "string",
+          "maxLength": 160
+        }
+      },
+      "additionalProperties": false
+    },
+    "recommendation": {
+      "type": "object",
+      "required": [
+        "action",
+        "confidence",
+        "reason_codes"
+      ],
+      "properties": {
+        "action": {
+          "enum": [
+            "remediate",
+            "reinforce",
+            "advance",
+            "reprofile"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "feedback": {
+      "type": "object",
+      "required": [
+        "generated_after_score_freeze",
+        "mode",
+        "summary",
+        "item_feedback"
+      ],
+      "properties": {
+        "generated_after_score_freeze": {
+          "const": true
+        },
+        "mode": {
+          "enum": [
+            "formative",
+            "summative"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "item_feedback": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "item_id",
+              "feedback_code",
+              "message",
+              "next_step"
+            ],
+            "properties": {
+              "item_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "feedback_code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "next_step": {
+                "type": "string",
+                "minLength": 1
+              },
+              "revealed_answer": {
+                "$ref": "grade_feedback.schema.json#/$defs/revealed_answer"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "artifactId": "role-c-example-fake-citation",
+  "query": "初学者，不会循环，需要完成成绩统计程序",
+  "learnerLevel": "beginner",
+  "topK": 3,
+  "blocks": [
+    {
+      "blockId": "claim-1",
+      "text": "for 循环常用于遍历序列中的元素。",
+      "citations": [
+        { "source_id": "K999", "fact_id": "F001", "relation": "supports" }
+      ]
+    }
+  ]
+}

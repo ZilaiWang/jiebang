@@ -1,0 +1,667 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/concept_lesson_payload.schema.json",
+  "title": "C Concept Lesson Payload",
+  "type": "object",
+  "required": [
+    "title",
+    "objective_ids",
+    "prerequisite_bridge",
+    "explanation_blocks",
+    "worked_examples",
+    "misconceptions",
+    "micro_checks",
+    "hint_ladders",
+    "summary",
+    "objective_coverage",
+    "used_evidence"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "objective_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "prerequisite_bridge": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/render_block"
+      }
+    },
+    "explanation_blocks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/render_block"
+      }
+    },
+    "worked_examples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/render_block"
+      }
+    },
+    "misconceptions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "misconception_tag",
+          "explanation",
+          "objective_id",
+          "citations"
+        ],
+        "properties": {
+          "misconception_tag": {
+            "type": "string",
+            "minLength": 1
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "objective_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "citations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/citation"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "micro_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/quiz_block"
+      }
+    },
+    "hint_ladders": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "objective_id",
+          "hints"
+        ],
+        "properties": {
+          "objective_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "hints": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+              "type": "object",
+              "required": [
+                "hint_level",
+                "text",
+                "citations"
+              ],
+              "properties": {
+                "hint_level": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "citations": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "$ref": "#/$defs/citation"
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "summary": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/render_block"
+      }
+    },
+    "objective_coverage": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "objective_id",
+          "block_ids"
+        ],
+        "properties": {
+          "objective_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "block_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "used_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/citation"
+      }
+    }
+  },
+  "$defs": {
+    "author_payload": {
+      "type": "object",
+      "required": [
+        "title",
+        "objectives"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "explanation",
+              "worked_example",
+              "misconception",
+              "micro_check_prompt",
+              "micro_check_options",
+              "hints",
+              "summary",
+              "micro_check_answer",
+              "micro_check_explanation"
+            ],
+            "properties": {
+              "explanation": {
+                "type": "string",
+                "minLength": 1
+              },
+              "worked_example": {
+                "type": "string",
+                "minLength": 1
+              },
+              "misconception": {
+                "type": "string",
+                "minLength": 1
+              },
+              "micro_check_prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "micro_check_options": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 4,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "hints": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "micro_check_answer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "micro_check_explanation": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "citation": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "fact_id",
+        "relation"
+      ],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^K[0-9]{3}$"
+        },
+        "fact_id": {
+          "type": "string",
+          "pattern": "^F[0-9]{3}$"
+        },
+        "relation": {
+          "enum": [
+            "supports",
+            "derived_from",
+            "prerequisite"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "required": [
+        "claim_id",
+        "text",
+        "citations"
+      ],
+      "properties": {
+        "claim_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/claim"
+      }
+    },
+    "heading_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "level",
+        "text"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "heading"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "paragraph_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "text",
+        "claims"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "paragraph"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claims": {
+          "$ref": "#/$defs/claims"
+        }
+      },
+      "additionalProperties": false
+    },
+    "code_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "language",
+        "code",
+        "claims"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "code"
+        },
+        "language": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "caption": {
+          "type": "string"
+        },
+        "claims": {
+          "$ref": "#/$defs/claims"
+        }
+      },
+      "additionalProperties": false
+    },
+    "callout_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "tone",
+        "title",
+        "text",
+        "claims"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "callout"
+        },
+        "tone": {
+          "enum": [
+            "info",
+            "warning",
+            "tip"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claims": {
+          "$ref": "#/$defs/claims"
+        }
+      },
+      "additionalProperties": false
+    },
+    "comparison_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "title",
+        "columns",
+        "claims"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "comparison"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "heading",
+              "content"
+            ],
+            "properties": {
+              "heading": {
+                "type": "string",
+                "minLength": 1
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "claims": {
+          "$ref": "#/$defs/claims"
+        }
+      },
+      "additionalProperties": false
+    },
+    "quiz_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "item_id",
+        "prompt",
+        "citations"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "quiz"
+        },
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_option"
+          }
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/citation"
+          }
+        },
+        "answer_option_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answer_explanation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "hint_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "hint_level",
+        "text",
+        "citations"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "hint"
+        },
+        "hint_level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "citation_block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "block_type",
+        "citations"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "block_type": {
+          "const": "citation"
+        },
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/citation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "render_block": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/heading_block"
+        },
+        {
+          "$ref": "#/$defs/paragraph_block"
+        },
+        {
+          "$ref": "#/$defs/code_block"
+        },
+        {
+          "$ref": "#/$defs/callout_block"
+        },
+        {
+          "$ref": "#/$defs/comparison_block"
+        },
+        {
+          "$ref": "#/$defs/quiz_block"
+        },
+        {
+          "$ref": "#/$defs/hint_block"
+        },
+        {
+          "$ref": "#/$defs/citation_block"
+        }
+      ]
+    },
+    "public_option": {
+      "type": "object",
+      "required": [
+        "option_id",
+        "label",
+        "text"
+      ],
+      "properties": {
+        "option_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

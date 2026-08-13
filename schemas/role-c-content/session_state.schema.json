@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/session_state.schema.json",
+  "title": "D to C Session State",
+  "type": "object",
+  "required": ["schema_version", "session_id", "run_id", "learner_id_hash", "current_path_node_id", "current_form_id", "attempt_no", "required_item_ids", "revealed_hint_levels", "public_artifact_refs", "secure_artifact_refs"],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "session_id": { "type": "string", "minLength": 1 }, "run_id": { "type": "string", "minLength": 1 },
+    "learner_id_hash": { "type": "string", "minLength": 1 }, "current_path_node_id": { "type": "string", "minLength": 1 },
+    "current_form_id": { "type": "string", "minLength": 1 }, "attempt_no": { "type": "integer", "minimum": 1 },
+    "required_item_ids": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "revealed_hint_levels": {
+      "type": "object", "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 3 }
+    },
+    "public_artifact_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "secure_artifact_refs": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "additionalProperties": false
+}
