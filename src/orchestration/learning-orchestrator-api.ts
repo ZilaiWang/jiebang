@@ -41,12 +41,9 @@ async function checkDockerImage(): Promise<{ ready: boolean; digest?: string; er
   }
 }
 
-let cachedDockerStatus: { ready: boolean; digest?: string; error?: string } | null = null
-
 async function getDockerStatus(): Promise<{ ready: boolean; digest?: string; error?: string }> {
-  if (cachedDockerStatus) return cachedDockerStatus
-  cachedDockerStatus = await checkDockerImage()
-  return cachedDockerStatus
+  // 每次实时检测，不缓存——用户关闭 Docker 后 /health 必须立即反映真实状态（前端每次创建前都会查）
+  return checkDockerImage()
 }
 import { protectSensitivePath } from "../security/windows-secure-acl"
 import { runLearningOrchestrator } from "./learning-orchestrator-runner"
@@ -182,8 +179,7 @@ export function createLearningOrchestratorApiHandler(
           }
           steps.push("镜像构建完成")
         }
-        // 刷新缓存
-        cachedDockerStatus = { ready: true, digest: "docker-setup-ok" }
+        // 实时检测模式下无需缓存刷新；下一次 /health 会自动反映最新状态
         return jsonResponse({ ready: true, steps, digest: "setup-complete" })
       }
 

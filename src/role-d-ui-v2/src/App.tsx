@@ -82,12 +82,26 @@ import {
 
 const WORKSPACE_STORAGE_KEY = "knowbalance-v4-workspace"
 
-type LiveContextValue = {
+/** 实时检查 Docker 是否就绪（每次创建前调用，不依赖页面加载时的缓存值）。 */
+export async function checkDockerReady(fetchImpl: typeof fetch = fetch): Promise<{ ready: boolean; error?: string }> {
+  try {
+    const response = await fetchImpl("/health")
+    const data = await response.json() as { docker?: { ready?: boolean; error?: string } }
+    return data?.docker?.ready
+      ? { ready: true }
+      : { ready: false, error: data?.docker?.error ?? "无法检测 Docker 状态" }
+  } catch {
+    return { ready: false, error: "无法连接主 Agent，请确认已启动" }
+  }
+}
+
+export type LiveContextValue = {
   session: PublicSessionFixture | null
   isLive: boolean
   learnerId: string
   busy: string
   error: string
+  dockerReady: boolean
   diagnosisAnswers: Record<string, string>
   assessmentAnswers: Record<string, string>
   setDiagnosisAnswer: (itemId: string, answer: string) => void
@@ -103,7 +117,7 @@ type LiveContextValue = {
   reset: () => void
 }
 
-const LiveContext = createContext<LiveContextValue | null>(null)
+export const LiveContext = createContext<LiveContextValue | null>(null)
 
 function useLive() {
   const value = useContext(LiveContext)
@@ -269,6 +283,7 @@ export function App() {
     learnerId,
     busy,
     error,
+    dockerReady: dockerStatus.ready,
     diagnosisAnswers,
     assessmentAnswers,
     setDiagnosisAnswer: (itemId, answer) => setDiagnosisAnswers((current) => ({ ...current, [itemId]: answer })),
@@ -287,6 +302,14 @@ export function App() {
       }
       if (!provider.configured) {
         setOpenPlanAfterProvider(false)
+        setProviderOpen(true)
+        return
+      }
+      // 每次创建前实时检查 Docker（不用页面加载时的缓存值）
+      const docker = await checkDockerReady()
+      setDockerStatus(docker)
+      if (!docker.ready) {
+        setError("Docker 代码沙箱未就绪：请先打开右上角「API设置」→ 检查 Docker 状态 → 一键配置 Docker")
         setProviderOpen(true)
         return
       }
@@ -378,13 +401,22 @@ export function App() {
     },
   }
 
-  const requestNewPlan = () => {
+  const requestNewPlan = async () => {
     if (!currentUser) {
       setProfileOpen(true)
       return
     }
     if (!provider.configured) {
       setOpenPlanAfterProvider(true)
+      setProviderOpen(true)
+      return
+    }
+    // 点击「新建计划」立即实时检查 Docker（不等选完主题）
+    const docker = await checkDockerReady()
+    setDockerStatus(docker)
+    if (!docker.ready) {
+      setOpenPlanAfterProvider(true)
+      setError("Docker 代码沙箱未就绪：请先打开右上角「API设置」→ 检查 Docker 状态 → 一键配置 Docker")
       setProviderOpen(true)
       return
     }
@@ -589,8 +621,8 @@ function planNavSection(page: Page): Page {
   return page
 }
 
-function GoalPage({ onContinue: _onContinue }: { onContinue: () => void }) {
-  const { create, busy } = useLive()
+export function GoalPage({ onContinue: _onContinue }: { onContinue: () => void }) {
+  const { create, busy, dockerReady } = useLive()
   const chapters = PYTHON_CURRICULUM
   const initial = initialGoalSelection()
   const [mode, setMode] = useState<"catalog" | "custom">(initial.mode)
@@ -601,11 +633,11 @@ function GoalPage({ onContinue: _onContinue }: { onContinue: () => void }) {
     <div className="segmented"><button className={mode === "catalog" ? "is-active" : ""} onClick={() => setMode("catalog")} type="button">从课程目录选择</button><button className={mode === "custom" ? "is-active" : ""} onClick={() => setMode("custom")} type="button">自定义学习目标</button></div>
     {mode === "catalog" ? <div className="chapter-grid">{chapters.map((chapter) => <article className={`chapter-card ${chapter.tone}`} key={chapter.node_id}><h2>{chapter.title}</h2>{chapter.topics.map((topic) => <button className={selected === topic.node_id ? "is-selected" : ""} type="button" key={topic.node_id} onClick={() => setSelected(topic.node_id)}><span>{topic.title}</span>{selected === topic.node_id && <Check size={16} />}</button>)}</article>)}</div> : <article className="custom-goal-card"><label htmlFor="custom-goal">用自己的话描述学习目标</label><textarea id="custom-goal" value={customGoal} onChange={(event) => setCustomGoal(event.target.value)} /><p>主 Agent会把自定义描述映射到真实课程知识与学习路径；D 不在本地推断结果。</p></article>}
     <div className="history-read-card"><div className="history-icon"><History /></div><div><b>历史学习情况由主 Agent处理</b><p>D 不要求用户手动填写薄弱知识，也不预先声称历史已经读取；画像生成后再展示主 Agent公开结果。</p></div><span>服务端负责</span></div>
-    <div className="page-actions"><button className="primary-action" disabled={Boolean(busy) || (mode === "custom" ? customGoal.trim().length === 0 : !selectedTopic)} type="button" onClick={() => void create(mode === "custom" ? { goal: customGoal.trim(), custom: true, planName: planNameFromGoal({ mode: "custom", customGoal }) } : { goal: `学习${selectedTopic?.title ?? "Python基础"}`, nodeId: selectedTopic?.node_id, planName: planNameFromGoal({ mode: "catalog", chapterTitle: selectedTopic?.title ?? "Python基础" }) })}>{busy ? "正在创建会话…" : "确认目标并创建主 Agent会话"} <ArrowRight /></button></div>
+    <div className="page-actions">{!dockerReady ? <p className="docker-gate-note"><ShieldCheck size={15} /> 创建学习计划前需要 Docker 代码沙箱。请先打开右上角「API设置」→ 检查 Docker 状态 → 一键配置 Docker。</p> : null}<button className="primary-action" disabled={Boolean(busy) || !dockerReady || (mode === "custom" ? customGoal.trim().length === 0 : !selectedTopic)} type="button" onClick={() => void create(mode === "custom" ? { goal: customGoal.trim(), custom: true, planName: planNameFromGoal({ mode: "custom", customGoal }) } : { goal: `学习${selectedTopic?.title ?? "Python基础"}`, nodeId: selectedTopic?.node_id, planName: planNameFromGoal({ mode: "catalog", chapterTitle: selectedTopic?.title ?? "Python基础" }) })}>{busy ? "正在创建会话…" : "确认目标并创建主 Agent会话"} <ArrowRight /></button></div>
   </div>
 }
 
-function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => void }) {
+export function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => void }) {
   const { isLive, diagnosisAnswers: liveAnswers, setDiagnosisAnswer, submitDiagnosis, busy } = useLive()
   const activeSession = useRequiredSession()
   const items = activeSession.waiting_for?.type === "diagnosis_answers" ? activeSession.waiting_for.items as any[] : []
