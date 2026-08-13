@@ -1,0 +1,26 @@
+{
+  "learner_id": "probe-99810dd0",
+  "level": "beginner",
+  "known_concepts": [
+    "for 循环"
+  ],
+  "weak_concepts": [
+    "变量与赋值",
+    "基本数据类型"
+  ],
+  "goal": "学习 Python for 循环",
+  "ability_dimensions": [
+    {
+      "label": "概念理解",
+      "value": 0.3333333333333333
+    },
+    {
+      "label": "代码认知",
+      "value": 0.2
+    },
+    {
+      "label": "诊断表现",
+      "value": 0.3333333333333333
+    }
+  ]
+}

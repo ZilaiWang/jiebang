@@ -1,0 +1,916 @@
+[
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-background-collector-2026-08-13T12:20:38.755Z-rcaja8",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 1,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "background-collector",
+    "execution_type": "session_logic",
+    "status": "completed",
+    "summary": "已收集学习背景",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:38.755Z",
+    "finished_at": "2026-08-13T12:20:38.755Z",
+    "duration_ms": 0,
+    "input_refs": [],
+    "output_refs": [
+      {
+        "ref_id": "background-collector:session-input",
+        "kind": "artifact",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learner_request/background",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-background-collector-2026-08-13T12:20:38.755Z-rcaja8:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "self-assessor",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": false,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-self-assessor-2026-08-13T12:20:38.755Z-20s8uj",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 2,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "self-assessor",
+    "execution_type": "session_logic",
+    "status": "completed",
+    "summary": "已收集学习者自评",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:38.755Z",
+    "finished_at": "2026-08-13T12:20:38.755Z",
+    "duration_ms": 0,
+    "input_refs": [
+      {
+        "ref_id": "background-collector:session-input",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learner_request/background",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "self-assessor:session-input",
+        "kind": "artifact",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learner_request/self_rating",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-self-assessor-2026-08-13T12:20:38.755Z-20s8uj:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "objective-diagnostician",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-objective-diagnostician-2026-08-13T12:20:38.755Z-l3vg5w",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 3,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "objective-diagnostician",
+    "execution_type": "session_logic",
+    "status": "waiting_for_user",
+    "summary": "等待诊断作答",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:38.755Z",
+    "finished_at": null,
+    "duration_ms": null,
+    "input_refs": [
+      {
+        "ref_id": "background-collector:session-input",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learner_request/background",
+        "visibility": "internal",
+        "verified_exists": true
+      },
+      {
+        "ref_id": "self-assessor:session-input",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learner_request/self_rating",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "objective-diagnostician:diagnosis-form",
+        "kind": "artifact",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/private/diagnosis_items",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-objective-diagnostician-2026-08-13T12:20:38.755Z-l3vg5w:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "submit_diagnosis_answers",
+    "decision_source": "user",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": true,
+      "kind": "user_input",
+      "reason": "normal product interaction",
+      "occurred_at": "2026-08-13T12:20:38.755Z",
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-objective-diagnostician-2026-08-13T12:20:41.320Z-azceac",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 3,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "objective-diagnostician",
+    "execution_type": "session_logic",
+    "status": "completed",
+    "summary": "已接收并判定诊断答案",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.320Z",
+    "finished_at": "2026-08-13T12:20:41.320Z",
+    "duration_ms": 0,
+    "input_refs": [
+      {
+        "ref_id": "objective-diagnostician:diagnosis-form",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/private/diagnosis_items",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "objective-diagnostician:interactive-result",
+        "kind": "artifact",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/private/diagnosis_items",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-objective-diagnostician-2026-08-13T12:20:41.320Z-azceac:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "profile-builder",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-profile-builder-2026-08-13T12:20:41.320Z-gmcybs",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 4,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "profile-builder",
+    "execution_type": "deterministic_adapter",
+    "status": "running",
+    "summary": "invoke profile-builder",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.320Z",
+    "finished_at": null,
+    "duration_ms": null,
+    "input_refs": [
+      {
+        "ref_id": "objective-diagnostician:interactive-result",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/private/diagnosis_items",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-profile-builder-2026-08-13T12:20:41.320Z-gmcybs:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "path-planner",
+    "decision_source": "orchestrator",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": false,
+      "artifact_verified": false,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-profile-builder-2026-08-13T12:20:41.320Z-nglbyq",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 4,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "profile-builder",
+    "execution_type": "deterministic_adapter",
+    "status": "completed",
+    "summary": "Synthesized deterministic Role B learner profile",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.320Z",
+    "finished_at": "2026-08-13T12:20:41.321Z",
+    "duration_ms": 1,
+    "input_refs": [
+      {
+        "ref_id": "objective-diagnostician:interactive-result",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/private/diagnosis_items",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "profile-builder:deterministic-result",
+        "kind": "artifact",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/profile",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-profile-builder-2026-08-13T12:20:41.320Z-nglbyq:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "path-planner",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-path-planner-2026-08-13T12:20:41.321Z-ugwdju",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 5,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "path-planner",
+    "execution_type": "deterministic_adapter",
+    "status": "running",
+    "summary": "invoke path-planner",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.321Z",
+    "finished_at": null,
+    "duration_ms": null,
+    "input_refs": [
+      {
+        "ref_id": "profile-builder:deterministic-result",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/profile",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-path-planner-2026-08-13T12:20:41.321Z-ugwdju:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "concept-tutor",
+    "decision_source": "orchestrator",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": false,
+      "artifact_verified": false,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-path-planner-2026-08-13T12:20:41.321Z-s3xkl5",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 5,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "path-planner",
+    "execution_type": "deterministic_adapter",
+    "status": "completed",
+    "summary": "Planned deterministic Role B formal path with A RAG evidence",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.321Z",
+    "finished_at": "2026-08-13T12:20:41.323Z",
+    "duration_ms": 2,
+    "input_refs": [
+      {
+        "ref_id": "profile-builder:deterministic-result",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/profile",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "path-planner:deterministic-result",
+        "kind": "artifact",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/formal_path",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-path-planner-2026-08-13T12:20:41.321Z-s3xkl5:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "concept-tutor",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-concept-tutor-2026-08-13T12:20:41.324Z-wkj5uo",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 6,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "concept-tutor",
+    "execution_type": "reviewed_pipeline",
+    "status": "running",
+    "summary": "正在生成概念讲解",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.324Z",
+    "finished_at": null,
+    "duration_ms": null,
+    "input_refs": [],
+    "output_refs": [],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-concept-tutor-2026-08-13T12:20:41.324Z-wkj5uo:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "code-lab",
+    "decision_source": "orchestrator",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": false,
+      "output_observed": false,
+      "artifact_verified": false,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-code-lab-2026-08-13T12:20:41.324Z-5zhd63",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 7,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "code-lab",
+    "execution_type": "reviewed_pipeline",
+    "status": "skipped",
+    "summary": "等待生成代码实验",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:20:41.324Z",
+    "finished_at": "2026-08-13T12:20:41.324Z",
+    "duration_ms": 0,
+    "input_refs": [],
+    "output_refs": [],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-code-lab-2026-08-13T12:20:41.324Z-5zhd63:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "tiered-evaluator",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": false,
+      "output_observed": false,
+      "artifact_verified": false,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-tiered-evaluator-2026-08-13T12:20:41.324Z-wrwc8v",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 8,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "tiered-evaluator",
+    "execution_type": "reviewed_pipeline",
+    "status": "skipped",
+    "summary": "等待生成正式测评",
+    "stage": "assessment",
+    "started_at": "2026-08-13T12:20:41.324Z",
+    "finished_at": "2026-08-13T12:20:41.324Z",
+    "duration_ms": 0,
+    "input_refs": [],
+    "output_refs": [],
+    "evidence_refs": [],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-tiered-evaluator-2026-08-13T12:20:41.324Z-wrwc8v:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": null,
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": false,
+      "output_observed": false,
+      "artifact_verified": false,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-concept-tutor-2026-08-13T12:21:02.058Z-n3mcxn",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 6,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "concept-tutor",
+    "execution_type": "reviewed_pipeline",
+    "status": "completed",
+    "summary": "Role C reviewed concept-tutor output",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:21:02.058Z",
+    "finished_at": "2026-08-13T12:21:02.058Z",
+    "duration_ms": 0,
+    "input_refs": [
+      {
+        "ref_id": "profile-builder:deterministic-result",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/profile",
+        "visibility": "internal",
+        "verified_exists": true
+      },
+      {
+        "ref_id": "path-planner:deterministic-result",
+        "kind": "evidence",
+        "source": "B",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/formal_path",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "concept-tutor:reviewed-result",
+        "kind": "artifact",
+        "source": "C",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learning_resources/concept_lesson",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [
+      {
+        "ref_id": "path-planner:a-rag-result",
+        "kind": "evidence",
+        "source": "A",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/rag_result",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-concept-tutor-2026-08-13T12:21:02.058Z-n3mcxn:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "code-lab",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-code-lab-2026-08-13T12:21:02.058Z-muh0wf",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 7,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "code-lab",
+    "execution_type": "reviewed_pipeline",
+    "status": "completed",
+    "summary": "Role C reviewed code-lab output",
+    "stage": "objective_diagnosis",
+    "started_at": "2026-08-13T12:21:02.058Z",
+    "finished_at": "2026-08-13T12:21:02.058Z",
+    "duration_ms": 0,
+    "input_refs": [
+      {
+        "ref_id": "concept-tutor:reviewed-result",
+        "kind": "evidence",
+        "source": "C",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learning_resources/concept_lesson",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "code-lab:reviewed-result",
+        "kind": "artifact",
+        "source": "C",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learning_resources/code_lab",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [
+      {
+        "ref_id": "path-planner:a-rag-result",
+        "kind": "evidence",
+        "source": "A",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/rag_result",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-code-lab-2026-08-13T12:21:02.058Z-muh0wf:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": "tiered-evaluator",
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  },
+  {
+    "schema_version": "1.0",
+    "entry_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-tiered-evaluator-2026-08-13T12:21:02.058Z-e08hf7",
+    "run_id": "RUN-038aeaa2-c00b-4e5d-a049-98185e4d14b0",
+    "session_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e",
+    "round_no": 1,
+    "step_index": 8,
+    "attempt_no": 1,
+    "parent_entry_id": null,
+    "orchestrator": "learning-orchestrator",
+    "unit_name": "tiered-evaluator",
+    "execution_type": "reviewed_pipeline",
+    "status": "completed",
+    "summary": "Role C reviewed tiered-evaluator output",
+    "stage": "assessment",
+    "started_at": "2026-08-13T12:21:02.058Z",
+    "finished_at": "2026-08-13T12:21:02.058Z",
+    "duration_ms": 0,
+    "input_refs": [
+      {
+        "ref_id": "code-lab:reviewed-result",
+        "kind": "evidence",
+        "source": "C",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/learning_resources/code_lab",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "output_refs": [
+      {
+        "ref_id": "tiered-evaluator:reviewed-result",
+        "kind": "artifact",
+        "source": "C",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/assessment",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "evidence_refs": [
+      {
+        "ref_id": "path-planner:a-rag-result",
+        "kind": "evidence",
+        "source": "A",
+        "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/rag_result",
+        "visibility": "internal",
+        "verified_exists": true
+      }
+    ],
+    "execution_ref": {
+      "ref_id": "SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e-tiered-evaluator-2026-08-13T12:21:02.058Z-e08hf7:execution",
+      "kind": "trace",
+      "source": "orchestrator",
+      "locator": "sessions/SESSION-f98d9809-77d5-42fe-b4d9-0dfdb19c973e.json#/worker_ledger_history",
+      "visibility": "internal",
+      "verified_exists": true
+    },
+    "next_action": null,
+    "decision_source": "worker_output",
+    "errors": [],
+    "retry": null,
+    "manual_intervention": {
+      "occurred": false,
+      "kind": null,
+      "reason": null,
+      "occurred_at": null,
+      "evidence_ref": null
+    },
+    "observability": {
+      "execution_observed": true,
+      "input_observed": true,
+      "output_observed": true,
+      "artifact_verified": true,
+      "evidence_level": "E3",
+      "source_event_ids": [],
+      "limitations": []
+    }
+  }
+]

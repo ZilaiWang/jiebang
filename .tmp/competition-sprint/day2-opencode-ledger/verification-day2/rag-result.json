@@ -1,0 +1,139 @@
+{
+  "query": "按路径标识取证；节点：FN-K001-S1-1786623641323；来源：K001；动作：advance",
+  "learnerLevel": "beginner",
+  "topK": 1,
+  "results": [
+    {
+      "sourceId": "K001",
+      "source_id": "K001",
+      "title": "Python 是什么",
+      "difficulty": "beginner",
+      "score": 0,
+      "reason": "按 source_id 从知识库读取证据：K001",
+      "snippet": "Python 是一种通用编程语言。",
+      "facts": [
+        {
+          "sourceId": "K001",
+          "factId": "F001",
+          "content": "Python 是一种通用编程语言。",
+          "source_id": "K001",
+          "fact_id": "F001"
+        },
+        {
+          "sourceId": "K001",
+          "factId": "F002",
+          "content": "Python 程序通常由解释器执行。",
+          "source_id": "K001",
+          "fact_id": "F002"
+        },
+        {
+          "sourceId": "K001",
+          "factId": "F003",
+          "content": "Python 适合编写脚本、数据处理和教学示例。",
+          "source_id": "K001",
+          "fact_id": "F003"
+        }
+      ],
+      "examples": [
+        {
+          "title": "Python 是什么 基础示例",
+          "code": "print(\"Python 是什么\")\nprint(\"source: K001\")",
+          "explanation": "该示例用于帮助学习者识别“Python 是什么”的基本用途。"
+        }
+      ],
+      "practiceTasks": [
+        "解释 Python 的用途",
+        "运行第一个 Python 程序"
+      ],
+      "quizItems": [
+        {
+          "level": 1,
+          "type": "short",
+          "question": "请说明“Python 是什么”的核心作用。",
+          "answer": "参考该知识点的 F001 事实。",
+          "sourceId": "K001",
+          "factId": "F001"
+        },
+        {
+          "level": 2,
+          "type": "practice",
+          "question": "请完成一个与“Python 是什么”相关的小练习。",
+          "answer": "能正确运用该知识点并解释关键步骤。",
+          "sourceId": "K001",
+          "factId": "F002"
+        }
+      ],
+      "file": "knowledge_base/python_basic/K001_intro.md",
+      "retrievalTrace": {
+        "matchedKeywords": [],
+        "matchedFields": [
+          "source_id"
+        ],
+        "difficultyMatch": false,
+        "scoreBreakdown": {
+          "keyword": 0,
+          "title": 0,
+          "facts": 0,
+          "practiceTasks": 0,
+          "difficulty": 0,
+          "bonus": 0
+        }
+      },
+      "retrieval_trace": {
+        "matched_keywords": [],
+        "matched_fields": [
+          "source_id"
+        ],
+        "difficulty_match": false,
+        "score_breakdown": {
+          "keyword": 0,
+          "title": 0,
+          "facts": 0,
+          "practiceTasks": 0,
+          "difficulty": 0,
+          "bonus": 0
+        }
+      }
+    }
+  ],
+  "retrieval_id": "RAG-0dddefb21a79493d79f65032",
+  "match_status": "strong",
+  "objective_coverage": [
+    {
+      "objective_id": "OBJ-K001",
+      "source_id": "K001",
+      "importance": "core",
+      "status": "strong",
+      "required_fact_ids": [
+        "F001",
+        "F002",
+        "F003"
+      ],
+      "available_fact_ids": [
+        "F001",
+        "F002",
+        "F003"
+      ],
+      "missing_fact_ids": [],
+      "reasons": [
+        "目标来源与必要事实齐全"
+      ]
+    }
+  ],
+  "retrieval_context": {
+    "request_id": "LER-cd02e5808778d090972acfac",
+    "request_hash": "sha256:11f022b8282af0671419e7bdaed7e2e07f372fcfe4f885f5ae0045b239948753",
+    "retrieval_mode": "identity_hydration",
+    "parent_retrieval_id": "RAG-2e5a37808ba3bcdcc3f09cdb",
+    "action": "advance",
+    "focus_objective_ids": [
+      "OBJ-K001"
+    ],
+    "resource_needs": [
+      "fact",
+      "prerequisite",
+      "example",
+      "practice_task"
+    ]
+  }
+}

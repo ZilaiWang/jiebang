@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 
 BASE = "http://127.0.0.1:8787"
-LEARNER = "learner-day1-l1-final"
+LEARNER = f"learner-day2-{uuid.uuid4().hex[:10]}"
 GOAL = "学习 Python for 循环"
 BACKGROUND = "姓名：林晓；学习背景：零基础入门；每周预计学习：5小时；Python基础：new；偏好：balanced；其他编程语言：无"
 NODE = "PY-CH02-S02"
