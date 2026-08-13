@@ -401,13 +401,22 @@ export function App() {
     },
   }
 
-  const requestNewPlan = () => {
+  const requestNewPlan = async () => {
     if (!currentUser) {
       setProfileOpen(true)
       return
     }
     if (!provider.configured) {
       setOpenPlanAfterProvider(true)
+      setProviderOpen(true)
+      return
+    }
+    // 点击「新建计划」立即实时检查 Docker（不等选完主题）
+    const docker = await checkDockerReady()
+    setDockerStatus(docker)
+    if (!docker.ready) {
+      setOpenPlanAfterProvider(true)
+      setError("Docker 代码沙箱未就绪：请先打开右上角「API设置」→ 检查 Docker 状态 → 一键配置 Docker")
       setProviderOpen(true)
       return
     }
