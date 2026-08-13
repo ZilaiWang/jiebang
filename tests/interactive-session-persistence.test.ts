@@ -133,3 +133,69 @@ test("loads answer-free assessment history so later sessions receive new AI-auth
   )
   expect(record.private.assessment_history.some((item) => item.form_id === "DIAGFORM-SESSION-HISTORY-001")).toBe(true)
 })
+
+test("keeps append-only worker ledger history while retaining latest worker ledger view", async () => {
+  const { store, record } = await fixture()
+  expect(record.worker_ledger.filter((entry) => entry.worker === "objective-diagnostician")).toHaveLength(1)
+  const initialDiagnosisEntries = record.worker_ledger_history?.filter((entry) => entry.unit_name === "objective-diagnostician") ?? []
+  expect(initialDiagnosisEntries.map((entry) => entry.status)).toEqual(["waiting_for_user"])
+  expect(initialDiagnosisEntries[0]).toMatchObject({
+    schema_version: "1.0",
+    session_id: record.session_id,
+    run_id: record.run_id,
+    round_no: 1,
+    step_index: 3,
+    attempt_no: 1,
+    parent_entry_id: null,
+    orchestrator: "learning-orchestrator",
+    unit_name: "objective-diagnostician",
+    execution_type: "session_logic",
+    stage: "objective_diagnosis",
+    status: "waiting_for_user",
+    finished_at: null,
+    input_refs: [],
+    output_refs: [],
+    evidence_refs: [],
+    execution_ref: null,
+    errors: [],
+    retry: null,
+    manual_intervention: expect.objectContaining({ occurred: true, kind: "user_input" }),
+    observability: expect.objectContaining({ execution_observed: true, evidence_level: "E3" }),
+  })
+  expect(initialDiagnosisEntries[0].entry_id).toStartWith(`${record.session_id}-objective-diagnostician-`)
+  expect(initialDiagnosisEntries[0]).not.toHaveProperty("step_id")
+  expect(initialDiagnosisEntries[0]).not.toHaveProperty("worker")
+  expect(initialDiagnosisEntries[0]).not.toHaveProperty("ended_at")
+  expect(initialDiagnosisEntries[0]).not.toHaveProperty("error")
+  expect(initialDiagnosisEntries[0]).not.toHaveProperty("human_intervention")
+
+  const answers = Object.fromEntries(record.waiting_for!.items.map((item: any) => [item.item_id, item.options?.[0] ?? "不知道"]))
+  const continued = await store.command(record.session_id, {
+    command_id: "CMD-HISTORY-DIAGNOSIS",
+    type: "submit_diagnosis_answers",
+    payload: { answers },
+  })
+
+  expect(continued.worker_ledger.filter((entry) => entry.worker === "objective-diagnostician")).toHaveLength(1)
+  expect(continued.worker_ledger.find((entry) => entry.worker === "objective-diagnostician")?.status).toBe("completed")
+  expect(continued.worker_ledger_history?.filter((entry) => entry.unit_name === "objective-diagnostician").map((entry) => entry.status)).toEqual(["waiting_for_user", "completed"])
+  const profileEntries = continued.worker_ledger_history?.filter((entry) => entry.unit_name === "profile-builder") ?? []
+  expect(profileEntries.map((entry) => entry.status)).toEqual(["running", "completed"])
+  expect(profileEntries[0]).toMatchObject({
+    execution_type: "deterministic_adapter",
+    started_at: expect.any(String),
+    finished_at: null,
+    input_refs: expect.arrayContaining([expect.objectContaining({ kind: "evidence", source: "B" })]),
+    output_refs: [],
+    evidence_refs: [],
+    errors: [],
+    observability: expect.objectContaining({ input_observed: true, output_observed: false }),
+  })
+  expect(profileEntries[1]).toMatchObject({
+    execution_type: "deterministic_adapter",
+    started_at: profileEntries[0].started_at,
+    finished_at: expect.any(String),
+    output_refs: expect.arrayContaining([expect.objectContaining({ kind: "artifact", source: "B" })]),
+    observability: expect.objectContaining({ output_observed: true }),
+  })
+})

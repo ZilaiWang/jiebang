@@ -65,6 +65,46 @@ export interface PublicWorkerLedgerEntry {
   updated_at: string
 }
 
+export interface LedgerRef {
+  ref_id: string
+  kind: "session" | "event" | "trace" | "artifact" | "evidence" | "review" | "assessment" | "file"
+  source: "A" | "B" | "C" | "D" | "orchestrator" | "opencode"
+  locator: string | null
+  content_hash?: string
+  visibility: "public" | "internal" | "secure"
+  verified_exists: boolean
+}
+
+export interface WorkerLedgerHistoryEntry {
+  schema_version: "1.0"
+  entry_id: string
+  run_id: string
+  session_id: string
+  round_no: number
+  step_index: number
+  attempt_no: number
+  parent_entry_id: string | null
+  orchestrator: "learning-orchestrator"
+  unit_name: WorkerName | "learning-orchestrator" | "role-c-round"
+  execution_type: "opencode_primary" | "opencode_subagent" | "deterministic_adapter" | "reviewed_pipeline" | "external_port" | "session_logic" | "manual" | "unknown"
+  stage: InteractiveStage
+  status: "invoked" | "running" | "waiting_for_user" | "completed" | "blocked" | "failed" | "skipped"
+  started_at: string
+  finished_at: string | null
+  duration_ms: number | null
+  input_refs: LedgerRef[]
+  output_refs: LedgerRef[]
+  evidence_refs: LedgerRef[]
+  execution_ref: LedgerRef | null
+  summary: string
+  next_action: string | null
+  decision_source: "worker_output" | "orchestrator" | "user" | "policy" | "unknown" | null
+  errors: Array<{ code?: string; message: string; severity: "warning" | "recoverable" | "fatal"; source: string; details_ref?: LedgerRef }>
+  retry: { eligible: boolean; scheduled: boolean; reason: string | null; next_attempt_no: number | null } | null
+  manual_intervention: { occurred: boolean; kind: "user_input" | "operator_retry" | "operator_override" | "data_repair" | null; reason: string | null; occurred_at: string | null; evidence_ref: string | null }
+  observability: { execution_observed: boolean; input_observed: boolean; output_observed: boolean; artifact_verified: boolean; evidence_level: "E0" | "E1" | "E2" | "E3"; source_event_ids: string[]; limitations: string[] }
+}
+
 export interface InteractiveEvent {
   event_id: string
   event_type: "session_created" | "worker_completed" | "worker_invoked" | "waiting_for_user" | "command_received" | "session_updated" | "session_completed" | "session_blocked"
@@ -100,6 +140,8 @@ export interface InteractiveSessionRecord {
     items: unknown[]
   }
   worker_ledger: PublicWorkerLedgerEntry[]
+  /** Append-only worker execution history; worker_ledger remains the latest-state compatibility view. */
+  worker_ledger_history: WorkerLedgerHistoryEntry[]
   profile: unknown | null
   formal_path: unknown | null
   current_path_node: unknown | null
@@ -254,11 +296,12 @@ export class InteractiveSessionStore {
       event(sessionId, "worker_invoked", "objective_diagnosis", "objective-diagnostician prepared grounded questions", now, "objective-diagnostician"),
       event(sessionId, "waiting_for_user", "objective_diagnosis", "waiting for diagnosis answers", now, "objective-diagnostician"),
     ]
+    const runId = safeId(input.run_id ?? `RUN-${randomUUID()}`)
     const record: InteractiveSessionRecord = {
       schema_version: "1.0",
       revision: 0,
       session_id: sessionId,
-      run_id: safeId(input.run_id ?? `RUN-${randomUUID()}`),
+      run_id: runId,
       owner_id: input.owner_id,
       mode: input.mode,
       learner_request: structuredClone(input.learner_request),
@@ -270,6 +313,11 @@ export class InteractiveSessionStore {
         { worker: "background-collector", status: "completed", summary: "已收集学习背景", updated_at: now },
         { worker: "self-assessor", status: "completed", summary: "已收集学习者自评", updated_at: now },
         { worker: "objective-diagnostician", status: "waiting_for_user", summary: "等待诊断作答", updated_at: now },
+      ],
+      worker_ledger_history: [
+        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 1, 1, "background-collector", "completed", "已收集学习背景", "objective_diagnosis", now, now, "session_logic", false),
+        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 2, 1, "self-assessor", "completed", "已收集学习者自评", "objective_diagnosis", now, now, "session_logic", false),
+        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待诊断作答", "objective_diagnosis", now, null, "session_logic", true),
       ],
       profile: null,
       formal_path: null,
@@ -750,6 +798,7 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
     code_execution: record.code_execution ?? null,
     adaptation: record.adaptation ?? null,
     terminal_outcome: record.terminal_outcome ?? null,
+    worker_ledger_history: record.worker_ledger_history ?? [],
     private: {
       diagnosis_answer_key: record.private?.diagnosis_answer_key ?? {},
       diagnosis_answers: record.private?.diagnosis_answers ?? null,
@@ -1816,6 +1865,10 @@ async function resetToDiagnosisPhase(
     code_execution: null,
     // 新画像生命周期：清空旧画像阶段的 worker 账本，避免 D 看到上一轮画像的 worker。
     worker_ledger: [],
+    worker_ledger_history: [
+      ...(record.worker_ledger_history ?? []),
+      createWorkerLedgerHistoryEntry(record.session_id, record.run_id, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待重新诊断作答", "objective_diagnosis", now, null, "session_logic", true),
+    ],
     // 清空命令账本：新画像阶段的 command_id 从零开始，旧键复用不再重放旧响应。
     processed_commands: {},
     private: {
@@ -1929,7 +1982,9 @@ async function continueAfterDiagnosis(
 
   record.private.diagnosis_answers = structuredClone(answers as Record<string, string>)
   for (const step of ORCHESTRATION_WORKER_SEQUENCE.slice(3, 5)) {
-    record.events.push(event(record.session_id, "worker_invoked", stageForWorker(step.worker), `invoke ${step.worker}`, new Date().toISOString(), step.worker))
+    const startedAt = new Date().toISOString()
+    record.events.push(event(record.session_id, "worker_invoked", stageForWorker(step.worker), `invoke ${step.worker}`, startedAt, step.worker))
+    upsertLedger(record, step.worker, "running", `invoke ${step.worker}`, { startedAt, inputRefs, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
     const invocation = {
       ...createScaffoldWorkerInvocation({
         session_id: record.session_id,
@@ -1956,14 +2011,17 @@ async function continueAfterDiagnosis(
       record.terminal_outcome = validation.ok
         ? terminalOutcomeForWorkerFailure(result.errors[0]?.code, failureMessage)
         : null
-      record.events.push(event(record.session_id, "session_blocked", record.current_stage, record.blocked_reason, new Date().toISOString(), step.worker))
+      const endedAt = new Date().toISOString()
+      record.events.push(event(record.session_id, "session_blocked", record.current_stage, record.blocked_reason, endedAt, step.worker))
+      upsertLedger(record, step.worker, record.status, failureMessage, { startedAt, finishedAt: endedAt, inputRefs, error: { message: failureMessage }, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
       record.updated_at = new Date().toISOString()
       return record
     }
     upstreamArtifacts[step.worker] = result.artifacts
     inputRefs = result.output_refs
-    record.events.push(event(record.session_id, "worker_completed", stageForWorker(step.worker), result.summary, new Date().toISOString(), step.worker))
-    upsertLedger(record, step.worker, "completed", result.summary)
+    const endedAt = new Date().toISOString()
+    record.events.push(event(record.session_id, "worker_completed", stageForWorker(step.worker), result.summary, endedAt, step.worker))
+    upsertLedger(record, step.worker, "completed", result.summary, { startedAt, finishedAt: endedAt, inputRefs, outputRefs: result.output_refs, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
   }
 
   const profileArtifacts = upstreamArtifacts["profile-builder"] as { profile: unknown }
@@ -2117,11 +2175,131 @@ function upsertLedger(
   worker: WorkerName,
   status: PublicWorkerLedgerEntry["status"],
   summary: string,
+  options: {
+    startedAt?: string
+    finishedAt?: string | null
+    stepIndex?: number
+    attemptNo?: number
+    inputRefs?: string[]
+    outputRefs?: string[]
+    evidenceRefs?: string[]
+    executionType?: WorkerLedgerHistoryEntry["execution_type"]
+    manualIntervention?: boolean
+    error?: { code?: string; message: string } | null
+  } = {},
 ): void {
-  const next = { worker, status, summary, updated_at: new Date().toISOString() }
+  const updatedAt = options.finishedAt ?? options.startedAt ?? new Date().toISOString()
+  const next = { worker, status, summary, updated_at: updatedAt }
   const index = record.worker_ledger.findIndex((entry) => entry.worker === worker)
   if (index >= 0) record.worker_ledger[index] = next
   else record.worker_ledger.push(next)
+  record.worker_ledger_history ??= []
+  record.worker_ledger_history.push(createWorkerLedgerHistoryEntry(
+    record.session_id,
+    record.run_id,
+    record.round_no,
+    options.stepIndex ?? ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === worker) + 1,
+    options.attemptNo ?? 1,
+    worker,
+    status,
+    summary,
+    stageForWorker(worker),
+    options.startedAt ?? updatedAt,
+    options.finishedAt === undefined
+      ? (status === "running" || status === "waiting_for_user" ? null : updatedAt)
+      : options.finishedAt,
+    options.executionType ?? executionTypeForWorker(worker),
+    options.manualIntervention ?? status === "waiting_for_user",
+    options.inputRefs ?? [],
+    options.outputRefs ?? [],
+    options.evidenceRefs ?? [],
+    options.error ?? null,
+  ))
+}
+
+function createWorkerLedgerHistoryEntry(
+  sessionId: string,
+  runId: string,
+  roundNo: number,
+  stepIndex: number,
+  attemptNo: number,
+  worker: WorkerName,
+  status: PublicWorkerLedgerEntry["status"],
+  summary: string,
+  stage: InteractiveStage,
+  startedAt: string,
+  finishedAt: string | null,
+  executionType: WorkerLedgerHistoryEntry["execution_type"],
+  manualIntervention: boolean,
+  inputRefs: string[] = [],
+  outputRefs: string[] = [],
+  evidenceRefs: string[] = [],
+  error: { code?: string; message: string } | null = null,
+): WorkerLedgerHistoryEntry {
+  const durationMs = finishedAt ? Math.max(0, new Date(finishedAt).getTime() - new Date(startedAt).getTime()) : null
+  return {
+    schema_version: "1.0",
+    entry_id: `${sessionId}-${recordSafeWorker(worker)}-${startedAt}-${Math.random().toString(36).slice(2, 8)}`,
+    run_id: runId,
+    session_id: sessionId,
+    round_no: roundNo,
+    step_index: stepIndex,
+    attempt_no: attemptNo,
+    parent_entry_id: null,
+    orchestrator: "learning-orchestrator",
+    unit_name: worker,
+    execution_type: executionType,
+    status: ledgerStatus(status),
+    summary,
+    stage,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    duration_ms: durationMs,
+    input_refs: inputRefs.map((ref) => ledgerRef(ref, "evidence", sourceForWorker(worker), null)),
+    output_refs: outputRefs.map((ref) => ledgerRef(ref, "artifact", sourceForWorker(worker), null)),
+    evidence_refs: evidenceRefs.map((ref) => ledgerRef(ref, "evidence", sourceForWorker(worker), null)),
+    execution_ref: null,
+    next_action: null,
+    decision_source: null,
+    errors: error ? [{ ...error, severity: status === "failed" ? "fatal" : "recoverable", source: worker }] : [],
+    retry: null,
+    manual_intervention: manualIntervention
+      ? { occurred: true, kind: "user_input", reason: "normal product interaction", occurred_at: finishedAt ?? startedAt, evidence_ref: null }
+      : { occurred: false, kind: null, reason: null, occurred_at: null, evidence_ref: null },
+    observability: {
+      execution_observed: true,
+      input_observed: inputRefs.length > 0,
+      output_observed: outputRefs.length > 0,
+      artifact_verified: false,
+      evidence_level: "E3",
+      source_event_ids: [],
+      limitations: outputRefs.length > 0 ? ["artifact locator 尚未验证"] : [],
+    },
+  }
+}
+
+function ledgerRef(refId: string, kind: LedgerRef["kind"], source: LedgerRef["source"], locator: string | null): LedgerRef {
+  return { ref_id: refId, kind, source, locator, visibility: "internal", verified_exists: false }
+}
+
+function ledgerStatus(status: PublicWorkerLedgerEntry["status"]): WorkerLedgerHistoryEntry["status"] {
+  return status === "pending" ? "skipped" : status
+}
+
+function executionTypeForWorker(worker: WorkerName): WorkerLedgerHistoryEntry["execution_type"] {
+  if (worker === "profile-builder" || worker === "path-planner") return "deterministic_adapter"
+  if (worker === "concept-tutor" || worker === "code-lab" || worker === "tiered-evaluator") return "reviewed_pipeline"
+  return "session_logic"
+}
+
+function sourceForWorker(worker: WorkerName): LedgerRef["source"] {
+  if (worker === "concept-tutor" || worker === "code-lab" || worker === "tiered-evaluator") return "C"
+  if (worker === "path-planner") return "A"
+  return "B"
+}
+
+function recordSafeWorker(worker: WorkerName): string {
+  return worker.replace(/[^A-Za-z0-9_-]/g, "_")
 }
 
 function safeId(value: string): string {
