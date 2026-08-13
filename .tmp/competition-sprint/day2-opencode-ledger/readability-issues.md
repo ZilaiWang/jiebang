@@ -26,7 +26,7 @@
 | 6 | `unit_name: path-planner` | 同上 | "谁规划的路径？" | 路径规划（Role B 职责） |
 | 7 | `output_ref_ids` | call_sequence | "产物在哪？找不到文件" | 产物引用ID，对应 artifact-map.json 里的实际文件 |
 | 8 | `attempt_no` | call_sequence | "啥意思？" | 第几次尝试（1=首次，2=重试） |
-| 9 | `manual_intervention` | call_sequence | "人工介入？" | 该步骤是否需要人工参与（答题等） |
+| 9 | `manual_intervention` | call_sequence | "人工介入？" | 是否需要学习者人工操作（如答题）；真实值见对照表（仅"等待答题"那步为是） |
 | 10 | `envelope`（文件名） | worker-envelopes.jsonl | "envelope 是什么？" | 信封：每个执行单元的完整包装（输入/输出/状态/错误） |
 | 11 | `schema_version: 1.0` | 各文件 | "版本？" | 字段格式版本号，评委可忽略 |
 | 12 | `entry_id`（超长字符串） | call_sequence | "这一长串是啥？" | 唯一记录ID（会话+单元+时间），可忽略 |
