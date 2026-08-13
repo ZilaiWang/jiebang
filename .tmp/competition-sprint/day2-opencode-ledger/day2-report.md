@@ -25,6 +25,19 @@ E 红线 4/4 ✅    无泄露、无虚报（诚实标注"OpenCode风格"非真�
 C 体验项 延后 Day6（前端可视化）
 ```
 
+**可读性检查（文档要求：评委能否看懂 + 字段中文说明）**
+
+```text
+主Agent是谁 ✅（main_agent: learning-orchestrator）
+调用顺序 ✅（call_sequence 14 步）
+状态 ✅（completed/running/blocked）
+失败处理 ✅（error_codes + checks）
+产物 ✅（artifact-map 11 文件 0 缺失）
+英文术语 ❌ → 已处理：生成 worker-envelopes-中文对照.md
+  （execution_type 三类 + unit_name 9 个 + envelope 等全部中文翻译）
+可读性问题清单 ✅ → readability-issues.md（12 个字段逐个判定）
+```
+
 **修了 2号 指出的前端缺陷：Docker 预检门禁**
 
 创建学习计划前必须 Docker ready，否则按钮禁用+提示"请先到 API设置 配置 Docker"。加了两条测试验证。
