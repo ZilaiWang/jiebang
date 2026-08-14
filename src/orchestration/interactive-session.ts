@@ -107,6 +107,26 @@ export interface WorkerLedgerHistoryEntry {
   observability: { execution_observed: boolean; input_observed: boolean; output_observed: boolean; artifact_verified: boolean; evidence_level: "E0" | "E1" | "E2" | "E3"; source_event_ids: string[]; limitations: string[] }
 }
 
+export type ContentReviewWorkerStatus = "pending" | "reviewing" | "repairing" | "passed" | "failed" | "degraded" | "blocked"
+
+export interface ContentReviewWorkerState {
+  status: ContentReviewWorkerStatus
+  published: boolean
+  review_attempt_no: number
+  repair_attempt_no: number
+  last_error: string | null
+  updated_at: string
+}
+
+export interface ContentReviewState {
+  overall_status: ContentReviewWorkerStatus
+  publish_allowed: boolean
+  blocked_or_degraded: boolean
+  round_no: number
+  policy: "local-ab-content-review"
+  workers: Record<"concept-tutor" | "code-lab" | "tiered-evaluator", ContentReviewWorkerState>
+}
+
 export interface InteractiveEvent {
   event_id: string
   event_type: "session_created" | "worker_completed" | "worker_invoked" | "waiting_for_user" | "command_received" | "session_updated" | "session_completed" | "session_blocked"
@@ -144,6 +164,8 @@ export interface InteractiveSessionRecord {
   worker_ledger: PublicWorkerLedgerEntry[]
   /** Append-only worker execution history; worker_ledger remains the latest-state compatibility view. */
   worker_ledger_history: WorkerLedgerHistoryEntry[]
+  /** Public Role C review lifecycle; artifacts are only published after review passes. */
+  content_review: ContentReviewState | null
   profile: unknown | null
   formal_path: unknown | null
   current_path_node: unknown | null
@@ -325,6 +347,7 @@ export class InteractiveSessionStore {
         createWorkerLedgerHistoryEntry(sessionId, runId, 1, 2, 1, "self-assessor", "completed", "已收集学习者自评", "objective_diagnosis", now, now, "session_logic", false, ["background-collector:session-input"], ["self-assessor:session-input"]),
         createWorkerLedgerHistoryEntry(sessionId, runId, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待诊断作答", "objective_diagnosis", now, null, "session_logic", true, ["background-collector:session-input", "self-assessor:session-input"], ["objective-diagnostician:diagnosis-form"]),
       ],
+      content_review: null,
       profile: null,
       formal_path: null,
       current_path_node: null,
@@ -889,6 +912,7 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
     adaptation: record.adaptation ?? null,
     terminal_outcome: record.terminal_outcome ?? null,
     worker_ledger_history: record.worker_ledger_history ?? [],
+    content_review: record.content_review ?? null,
     private: {
       diagnosis_answer_key: record.private?.diagnosis_answer_key ?? {},
       diagnosis_answers: record.private?.diagnosis_answers ?? null,
@@ -937,6 +961,11 @@ async function retryInteractiveSession(
   }
   record.blocked_reason = null
   record.terminal_outcome = null
+  record.content_review = reviewState(record.round_no, "repairing", {
+    "concept-tutor": "repairing",
+    "code-lab": "pending",
+    "tiered-evaluator": "pending",
+  }, { repairAttemptNo: record.private.role_c_failed_generations + 1 })
   if (feedbackDecisionAction(record.feedback) === "advance") {
     const path = record.formal_path as FormalLearningPath | null
     const node = record.current_path_node as LearningPathNode | null
@@ -1665,6 +1694,7 @@ function applyRoleCGenerationFailure(
     && record.private.role_c_failed_generations >= 2
     ? { ...result.failure, nextAction: "change_goal", canRetry: false }
     : result.failure
+  markContentReviewFailed(record, { ...result, failure })
   if (failure.code === "TARGET_UNSUPPORTED") {
     record.terminal_outcome = {
       kind: "unsupported_goal",
@@ -1758,6 +1788,7 @@ async function applyFormalRoleCRound(
   record.private.role_c_failed_generations = 0
   record.private.role_c_generation_recovery = null
   record.rag_result = round.rag_result
+  markContentReviewPassed(record)
   record.learning_resources = { concept_lesson: round.concept_lesson, code_lab: round.code_lab }
   record.assessment = round.assessment
   record.private.assessment_history = mergeAssessmentHistory(
@@ -2260,6 +2291,7 @@ async function continueAfterDiagnosis(
   record.blocked_reason = null
   record.terminal_outcome = null
   const generationStartedAt = new Date().toISOString()
+  markContentReviewStarted(record)
   upsertLedger(record, "concept-tutor", "running", "正在生成概念讲解", { startedAt: generationStartedAt })
   upsertLedger(record, "code-lab", "pending", "等待生成代码实验")
   upsertLedger(record, "tiered-evaluator", "pending", "等待生成正式测评")
@@ -2281,6 +2313,74 @@ function markReviewedRoleCWorkers(record: InteractiveSessionRecord): void {
     })
     record.events.push(event(record.session_id, "worker_completed", stageForWorker(worker), `Role C reviewed ${worker} output`, new Date().toISOString(), worker))
   }
+}
+
+function reviewState(
+  roundNo: number,
+  overallStatus: ContentReviewWorkerStatus,
+  workerStatuses: Partial<Record<"concept-tutor" | "code-lab" | "tiered-evaluator", ContentReviewWorkerStatus>>,
+  options: { error?: string | null; published?: boolean; repairAttemptNo?: number; reviewAttemptNo?: number } = {},
+): ContentReviewState {
+  const now = new Date().toISOString()
+  const workers = Object.fromEntries(interactiveSessionProductionBoundary().reviewed_role_c_workers.map((worker) => {
+    const status = workerStatuses[worker] ?? "pending"
+    return [worker, {
+      status,
+      published: options.published === true && status === "passed",
+      review_attempt_no: options.reviewAttemptNo ?? (status === "pending" ? 0 : 1),
+      repair_attempt_no: options.repairAttemptNo ?? 0,
+      last_error: status === "failed" || status === "blocked" || status === "degraded" ? options.error ?? null : null,
+      updated_at: now,
+    }]
+  })) as ContentReviewState["workers"]
+  return {
+    overall_status: overallStatus,
+    publish_allowed: overallStatus === "passed",
+    blocked_or_degraded: overallStatus === "blocked" || overallStatus === "degraded",
+    round_no: roundNo,
+    policy: "local-ab-content-review",
+    workers,
+  }
+}
+
+function markContentReviewStarted(record: InteractiveSessionRecord): void {
+  record.content_review = reviewState(record.round_no, "reviewing", {
+    "concept-tutor": "reviewing",
+    "code-lab": "pending",
+    "tiered-evaluator": "pending",
+  })
+  upsertLedger(record, "concept-tutor", "running", "Role C 内容进入审核阶段：concept-tutor reviewing", { executionType: "reviewed_pipeline" })
+  upsertLedger(record, "code-lab", "pending", "等待前序审核通过后进入代码实验审核", { executionType: "reviewed_pipeline" })
+  upsertLedger(record, "tiered-evaluator", "pending", "等待前序审核通过后进入测评审核", { executionType: "reviewed_pipeline" })
+}
+
+function markContentReviewPassed(record: InteractiveSessionRecord): void {
+  record.content_review = reviewState(record.round_no, "passed", {
+    "concept-tutor": "passed",
+    "code-lab": "passed",
+    "tiered-evaluator": "passed",
+  }, { published: true })
+  upsertLedger(record, "concept-tutor", "completed", "审核通过，概念讲解已发布", { outputRefs: ["concept-tutor:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
+  upsertLedger(record, "code-lab", "completed", "审核通过，代码实验已发布", { outputRefs: ["code-lab:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
+  upsertLedger(record, "tiered-evaluator", "completed", "审核通过，正式测评已发布", { outputRefs: ["tiered-evaluator:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
+}
+
+function markContentReviewFailed(record: InteractiveSessionRecord, result: Extract<FormalRoleCRoundResult, { ok: false }>): void {
+  const failedWorker = workerForRoleCFailure(result.failure)
+  const exhausted = Boolean(result.failure && result.failure.repairScope === "artifact" && (record.private.role_c_failed_generations ?? 0) >= 2)
+  record.content_review = reviewState(record.round_no, exhausted ? "blocked" : "failed", {
+    "concept-tutor": failedWorker === "concept-tutor" ? (exhausted ? "blocked" : "failed") : "pending",
+    "code-lab": failedWorker === "code-lab" ? (exhausted ? "blocked" : "failed") : "pending",
+    "tiered-evaluator": failedWorker === "tiered-evaluator" ? (exhausted ? "blocked" : "failed") : "pending",
+  }, {
+    error: result.reason,
+    repairAttemptNo: record.private.role_c_failed_generations ?? 0,
+  })
+  upsertLedger(record, failedWorker, exhausted ? "blocked" : "failed", exhausted ? `审核/修复多次失败，进入 blocked：${result.reason}` : `审核失败，等待修复后重审：${result.reason}`, {
+    attemptNo: Math.max(1, record.private.role_c_failed_generations ?? 1),
+    executionType: "reviewed_pipeline",
+    error: { code: result.failure?.code, message: result.reason },
+  })
 }
 
 function workerForRoleCFailure(failure?: RoleCGenerationFailure): WorkerName {
@@ -2549,6 +2649,8 @@ function nextActionForWorker(worker: WorkerName, status: PublicWorkerLedgerEntry
 function recordSafeWorker(worker: WorkerName): string {
   return worker.replace(/[^A-Za-z0-9_-]/g, "_")
 }
+
+export const __test_applyRoleCGenerationFailure = applyRoleCGenerationFailure
 
 function safeId(value: string): string {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(value)) {

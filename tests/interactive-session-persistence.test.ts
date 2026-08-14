@@ -204,3 +204,75 @@ test("keeps append-only worker ledger history while retaining latest worker ledg
     observability: expect.objectContaining({ output_observed: true }),
   })
 })
+
+test("exposes review state and withholds unpublished Role C artifacts while review is pending", async () => {
+  const { store, record } = await fixture()
+  const answers = Object.fromEntries(record.waiting_for!.items.map((item: any) => [item.item_id, item.options?.[0] ?? "不知道"]))
+
+  const continued = await store.command(record.session_id, {
+    command_id: "CMD-DAY3-REVIEW-PENDING",
+    type: "submit_diagnosis_answers",
+    payload: { answers },
+  })
+
+  expect(continued.status).toBe("running")
+  expect(continued.current_stage).toBe("assessment")
+  expect(continued.learning_resources).toEqual({ concept_lesson: null, code_lab: null })
+  expect(continued.assessment).toBeNull()
+  expect((continued as any).content_review).toMatchObject({
+    overall_status: "reviewing",
+    publish_allowed: false,
+    blocked_or_degraded: false,
+    round_no: 1,
+    workers: {
+      "concept-tutor": expect.objectContaining({ status: "reviewing", published: false }),
+      "code-lab": expect.objectContaining({ status: "pending", published: false }),
+      "tiered-evaluator": expect.objectContaining({ status: "pending", published: false }),
+    },
+  })
+})
+
+test("keeps failed review visible and blocks publication after Role C review exhaustion", async () => {
+  const { store, record } = await fixture()
+  const answers = Object.fromEntries(record.waiting_for!.items.map((item: any) => [item.item_id, item.options?.[0] ?? "不知道"]))
+  const continued = await store.command(record.session_id, {
+    command_id: "CMD-DAY3-REVIEW-FAIL-SEED",
+    type: "submit_diagnosis_answers",
+    payload: { answers },
+  })
+  const persisted = await store.load(record.session_id)
+  persisted.private.role_c_failed_generations = 1
+  ;(await import("../src/orchestration/interactive-session") as any).__test_applyRoleCGenerationFailure(persisted, {
+    ok: false,
+    reason: "role-c.code-lab.secure 未在有限修复次数内通过校验；HIDDEN_TEST_EXPECTED_LEAK；NO_REPAIR_PROGRESS",
+    failure: {
+      code: "REVIEW_REJECTED",
+      stage: "code_lab",
+      issueCodes: ["HIDDEN_TEST_EXPECTED_LEAK", "NO_REPAIR_PROGRESS"],
+      repairScope: "artifact",
+      nextAction: "regenerate_code_lab",
+      canRetry: true,
+      message: "hidden expected leak",
+      fingerprint: "FAIL-DAY3-CODE-LAB",
+    },
+  })
+
+  expect(continued.learning_resources).toEqual({ concept_lesson: null, code_lab: null })
+  expect(persisted.learning_resources).toEqual({ concept_lesson: null, code_lab: null })
+  expect(persisted.assessment).toBeNull()
+  expect(persisted.status).toBe("blocked")
+  expect(persisted.content_review).toMatchObject({
+    overall_status: "blocked",
+    publish_allowed: false,
+    blocked_or_degraded: true,
+    workers: {
+      "code-lab": expect.objectContaining({
+        status: "blocked",
+        published: false,
+        repair_attempt_no: 2,
+        last_error: expect.stringContaining("HIDDEN_TEST_EXPECTED_LEAK"),
+      }),
+    },
+  })
+  expect(persisted.terminal_outcome?.generation_failure?.canRetry).toBe(false)
+})

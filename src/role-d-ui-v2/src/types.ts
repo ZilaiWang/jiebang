@@ -90,6 +90,21 @@ export interface PublicSessionFixture {
     status: string
     summary?: string
   }>
+  content_review?: null | {
+    overall_status: "pending" | "reviewing" | "repairing" | "passed" | "failed" | "degraded" | "blocked"
+    publish_allowed: boolean
+    blocked_or_degraded: boolean
+    round_no: number
+    policy: string
+    workers: Record<string, {
+      status: "pending" | "reviewing" | "repairing" | "passed" | "failed" | "degraded" | "blocked"
+      published: boolean
+      review_attempt_no: number
+      repair_attempt_no: number
+      last_error: string | null
+      updated_at: string
+    }>
+  }
   profile?: {
     learner_id: string
     level: string

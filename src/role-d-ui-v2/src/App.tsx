@@ -709,12 +709,19 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
     <section className="week2-lower-grid">
       <article className="current-objectives-card"><header><div><small>当前节点与观察目标</small><h2>{pathNodeTitle(activeSession.current_path_node, ragItems)}</h2></div><span>{activeSession.current_path_node?.goal && pathNodeTitle(activeSession.current_path_node, ragItems) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header><div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
       <article className="agent-collaboration-card"><header><div><small>Agent协同过程 · 主 Agent台账</small><h2>{activeSession.worker_ledger.length} 个Worker状态</h2></div><Bot size={22} /></header><div className="agent-collaboration-list">{activeSession.worker_ledger.map((worker) => <article key={worker.worker}><span className={`agent-status status-${worker.status}`} /><div><b>{workerLabel(worker.worker)}</b><p>{worker.summary ?? "主 Agent未公开摘要"}</p></div><em>{worker.status}</em></article>)}</div></article>
+      <ContentReviewCard session={activeSession} />
     </section>
 
     {hasBlockedResource && <section className="plan-resource-status is-blocked"><ShieldCheck /><div><b>学习方案已保存，C互动资源尚未通过可信门禁</b><p>{activeSession.blocked_reason ?? "主 Agent未公开具体阻塞原因"}</p></div><button className="secondary-action" disabled={Boolean(busy)} type="button" onClick={recoveryAction.canRetry ? () => void retry() : reset}>{busy ? "正在恢复…" : recoveryAction.label}</button></section>}
     <section className="plan-enter-learning"><div><b>{hasLesson ? "互动学习资源已由主 Agent公开" : "互动学习资源尚未发布"}</b><p>{hasLesson ? "你可以主动进入C生成并经可信审核的讲义、代码实验和理解检查。" : "学习方案仍可查看；D不会用静态内容冒充C资源。"}</p></div><button className="primary-action" disabled={!hasLesson} type="button" onClick={onContinue}>进入互动学习 <ArrowRight /></button></section>
     <section className="provenance-note"><ShieldCheck /><div><b>Week 2 可视化只展示真实上游结果</b><p>画像和路径来自B，难度匹配与证据来自A，学习内容与测评来自C，协同状态来自主 Agent；D只负责可视化，不生成结论。</p></div></section>
   </div>
+}
+
+function ContentReviewCard({ session }: { session: PublicSessionFixture }) {
+  const review = session.content_review
+  if (!review) return null
+  return <article className="agent-collaboration-card"><header><div><small>内容审核 · 发布门禁</small><h2>{reviewStatusLabel(review.overall_status)}</h2></div><ShieldCheck size={22} /></header><div className="agent-collaboration-list">{Object.entries(review.workers).map(([worker, state]) => <article key={worker}><span className={`agent-status status-${state.status}`} /><div><b>{workerLabel(worker)}</b><p>{state.last_error ?? `审核 ${state.review_attempt_no} 次，修复 ${state.repair_attempt_no} 次`}</p></div><em>{state.published ? "published" : state.status}</em></article>)}</div><p className="truth-note">{review.publish_allowed ? "审核已通过，公开资源允许展示。" : "审核未通过前，D 不展示 C 的讲义、代码实验或正式测评。"}</p></article>
 }
 
 function LessonPage({ onAssessment }: { onAssessment: () => void }) {
@@ -1094,6 +1101,18 @@ function workerLabel(worker: string) {
     "code-lab": "代码实验",
     "tiered-evaluator": "分阶测评",
   } as Record<string, string>)[worker] ?? worker
+}
+
+function reviewStatusLabel(status: string) {
+  return ({
+    pending: "等待审核",
+    reviewing: "正在审核",
+    repairing: "修复后重审",
+    passed: "审核通过",
+    failed: "审核失败",
+    degraded: "已降级发布",
+    blocked: "审核阻塞",
+  } as Record<string, string>)[status] ?? status
 }
 
 function eventStage(event: PublicSessionFixture["events"][number]) {
