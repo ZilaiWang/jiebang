@@ -110,7 +110,7 @@ describe("fact audit MVP", () => {
     expect(result.conflicts[0]?.issue).toContain("未被引用事实支持")
   })
 
-  test("rejects external knowledge that is outside the RAG evidence", async () => {
+  test("rejects arbitrary external knowledge without relying on a topic allowlist", async () => {
     const ragResult = await retrieveKnowledge({ query: "怎么让代码重复执行", learnerLevel: "beginner", topK: 3 })
     const result = auditGeneratedContent({
       artifactId: "artifact-external-knowledge",
@@ -127,7 +127,7 @@ describe("fact audit MVP", () => {
     })
 
     expect(result.status).toBe("reject")
-    expect(result.checkedClaims[0]).toMatchObject({ verdict: "external_knowledge", blockId: "block-1" })
+    expect(result.checkedClaims[0]).toMatchObject({ verdict: "unsupported", blockId: "block-1" })
   })
 
   test("audits against a frozen evidence pack without depending on a fresh RAG result", async () => {

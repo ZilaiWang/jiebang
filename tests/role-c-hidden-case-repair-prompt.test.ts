@@ -6,9 +6,16 @@ describe("Role C staged hidden-case repair prompt", () => {
     const prompt = stagedRepairPrompt("BASE", ["[hidden_test_input_leak] $.public: duplicate"])
     expect(prompt).toContain("hidden_test_input_leak")
     expect(prompt).toContain("hidden_test_expected_leak")
-    expect(prompt).toContain("JSON 全值比较")
+    expect(prompt).toContain("公开输入 JSON 相同")
     expect(prompt).toContain("previous_output 不同")
     expect(prompt).not.toContain("删除或改写 public payload。`")
+  })
+
+  test("treats forbidden imports as a targeted secure rewrite", () => {
+    const prompt = stagedRepairPrompt("base", ["STATIC_FORBIDDEN_IMPORT"])
+    expect(prompt).toContain("STATIC_FORBIDDEN_IMPORT")
+    expect(prompt).toContain("allowed_imports=[]")
+    expect(prompt).toContain("reference_solution 必须与 previous_output 不同")
   })
 
   test("requires a full AI-authored replacement for repeated public questions", () => {

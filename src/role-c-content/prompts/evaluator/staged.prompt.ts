@@ -60,11 +60,13 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - upstream.prior_assessment_items 存在时，逐题对照历史题面；可以考查相同知识和相近难度，但题干必须重新命制，不能只更换干扰项，选项组合、数据/场景或代码任务也必须是新的
 - upstream.novelty_brief 存在时，按其中的 required_design_moves 设计新题；variant_id 是本轮多样性身份，不是知识来源。新题必须改变认知操作或任务结构，不能只做表面改写
 - 学习者读一遍就能理解要做什么，避免嵌套否定或过度复杂的句式
+- 每道题的正确判断必须只依赖 evidence.facts；不得从知识库示例、既往讲义或模型常识引入 facts 未说明的函数、运算符、返回格式、执行顺序或边界行为
 - mcq 题干聚焦一个明确的知识点，true_false 题干陈述一个可明确判断真假的命题
 - trace 题给出一段简短代码，要求追踪变量值或输出结果
 - short_answer 题要求用自然语言解释概念或分析问题
 - code 题给出明确的任务边界、输入输出约束和示例；只把当前 objective/facts 对应的行为留给学习者完成
 - code 题统一使用函数模式：public 必须提供明确函数签名和输入输出合同；starter_code 只保留函数签名、参数以及显式 TODO / pass / raise NotImplementedError 待完成区域，不得包含能直接满足题意的完整实现，也不得把任务改成 stdin_stdout
+- observable_behavior 为 recognize 或 explain 时，优先使用选择、判断或短答直接测量事实；若冻结 item_plan 要求 code，旁支语法必须由 starter 提供，只把当前事实对应的最小部分留给学习者
 - 若场景需要 input()、文件解析、格式转换、排序、循环等当前 objective 未要求的旁支技能，必须在 starter_code 中预先提供这些胶水代码；题干明确“只补全当前目标部分”，隐藏测试不得因旁支实现方式不同扣分
 
 【选项设计（选择题）】

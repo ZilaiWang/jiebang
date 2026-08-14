@@ -111,22 +111,10 @@ export function extractAssessmentBlocks(artifact: AssessmentPublicArtifact): Rev
     makeBlock(
       "assessment",
       { field: "assessment_item", ref_id: item.item_id, objective_id: item.objective_id },
-      item.prompt,
+      promptWithOptions(item.prompt, item.options),
       item.citations,
       "citation_only",
     ),
-    ...(item.options ?? []).map((option) => makeBlock(
-      "assessment",
-      {
-        field: "option",
-        ref_id: option.option_id,
-        parent_block_id: item.item_id,
-        objective_id: item.objective_id,
-      },
-      `${option.label}：${option.text}`,
-      item.citations,
-      "citation_only",
-    )),
     ...(item.starter_code ? [makeBlock(
       "assessment",
       {

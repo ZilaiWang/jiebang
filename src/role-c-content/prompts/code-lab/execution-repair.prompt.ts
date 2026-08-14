@@ -33,5 +33,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 5. reference 不得动态访问双下划线属性、使用动态执行或内省；普通类的 __init__ 定义可用；import 只能来自冻结 execution_contract.allowed_imports。
 6. trusted_execution_report.diagnostic_code 是权威修复类别：REFERENCE_SOLUTION_FAILED 时只修 reference_solution 或与失败码直接对应的 hidden_test_repairs；STARTER_ALREADY_SOLVES_LAB 时不得改 secure；RUNNER_IDENTITY_MISMATCH 时不得编造补丁。
 7. 若 trusted_execution_report 只提供 failed hidden_test ids 而没有 expected/actual 细节，仍必须修改这些失败 id 对应的 reference_solution 或 hidden_test_repairs；不得返回与上一轮完全相同的补丁。
-8. frozen_fields：public_payload、staged_contract、未点名失败的隐藏测试和所有稳定 ID 均不可改动；补丁中不得回传这些字段。
-8. ${JSON_ONLY}`
+8. reference_failure_codes 中 runtime_TypeError、runtime_ValueError、runtime_KeyError、runtime_IndexError 等类型表示 reference_solution 与对应 hidden input 的参数形状不兼容。必须同时检查 prior_secure_payload.reference_solution 的入口签名、操作所需数据类型和失败 input；返回完整新 reference_solution，或为每个 reference_failure_ids 返回同 ID 的 hidden_test_repairs，并同步重算 expected。
+9. reference_solution=null 且 hidden_test_repairs=[] 只能用于 reference_failed=false；reference_failed=true 时 Schema 强制至少修改其中一项。hidden_test_repairs[].test_id 只能使用输出 Schema 列出的真实失败 ID，不得编造 ID。
+10. frozen_fields：public_payload、staged_contract、未点名失败的隐藏测试和所有稳定 ID 均不可改动；补丁中不得回传这些字段。
+11. ${JSON_ONLY}`

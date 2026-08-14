@@ -17,6 +17,7 @@ import { extractReviewBlocks } from "./extract-review-blocks"
 import { agentForReviewArtifact } from "./revision-mapper"
 import type {
   ArtifactReviewResult,
+  ContentSemanticAuditPort,
   ContentReviewDecision,
   ContentReviewFinding,
   ContentReviewPort,
@@ -29,13 +30,14 @@ import type {
   ReviewablePublicArtifact,
 } from "./types"
 
-export const LOCAL_AB_REVIEW_POLICY_VERSION = "role-c-local-ab-review-v2"
+export const LOCAL_AB_REVIEW_POLICY_VERSION = "role-c-local-ab-review-v3"
 
 export interface LocalABContentReviewPortOptions {
   knowledge_base: KnowledgeBase
   /** Defaults to knowledge_base.version and must match the frozen C evidence version. */
   kb_version?: string
   policy_version?: string
+  semantic_audit_port?: ContentSemanticAuditPort
 }
 
 export function createLocalABContentReviewPort(
@@ -47,7 +49,7 @@ export function createLocalABContentReviewPort(
     throw new Error("ROLE_C_REVIEW_KB_VERSION_OVERRIDE_MISMATCH")
   }
   const policyVersion = options.policy_version
-    ?? `${LOCAL_AB_REVIEW_POLICY_VERSION}:${kbVersion}`
+    ?? `${LOCAL_AB_REVIEW_POLICY_VERSION}:${kbVersion}:${options.semantic_audit_port?.policy_version ?? "deterministic"}`
 
   return {
     policy_version: policyVersion,
@@ -55,14 +57,16 @@ export function createLocalABContentReviewPort(
       assertReviewContext(request, kbVersion)
       const ragResult = ragEvidencePackToRagResult(request.evidence_pack)
       const teachingAudit = auditPathTeaching(request, knowledgeBase)
-      const reviewed = request.artifacts.map((target, index) =>
+      const reviewed = await Promise.all(request.artifacts.map((target, index) =>
         reviewArtifact(
           target,
           request,
           ragResult,
           teachingAudit,
           index === 0,
+          options.semantic_audit_port,
         ))
+      )
       const artifactResults = reviewed.map((entry) => entry.result)
       const decision = aggregateDecision(artifactResults.map((result) => result.decision))
       const revisionInstructions = artifactResults.flatMap(
@@ -142,15 +146,16 @@ export function ragEvidencePackToRagResult(pack: ReviewEvidencePack): RagResult 
   }
 }
 
-function reviewArtifact(
+async function reviewArtifact(
   target: ContentReviewRequest["artifacts"][number],
   request: ContentReviewRequest,
   ragResult: RagResult,
   teachingAudit: TeachingAuditResult,
   includePathFindings: boolean,
-): {
+  semanticAuditPort?: ContentSemanticAuditPort,
+): Promise<{
   result: ArtifactReviewResult
-} {
+}> {
   const blocks = extractReviewBlocks(target)
   const blocksById = new Map(blocks.map((block) => [block.review_block_id, block]))
   const claimBlocks = blocks.filter((block) => block.fact_audit_mode === "claim")
@@ -185,6 +190,14 @@ function reviewArtifact(
     request.evidence_pack,
     target,
   )
+  const semanticAudit = semanticAuditPort
+    ? await auditSemanticBlocks(
+        blocks,
+        request,
+        target,
+        semanticAuditPort,
+      )
+    : { status: "pass" as const, findings: [] }
   const localFactAuditStatus = artifactLocalFactAuditStatus(factAudit)
   const factStatus: FactAuditStatus = blocks.length === 0
     ? "reject"
@@ -192,6 +205,7 @@ function reviewArtifact(
         localFactAuditStatus,
         citationAudit.status,
         evidenceAnchorAudit.status,
+        semanticAudit.status,
       ])
   const arbitration = arbitrate({
     artifactId: target.artifact.artifact_id,
@@ -208,6 +222,7 @@ function reviewArtifact(
     ...factFindings(target, factAudit, blocksById),
     ...citationAudit.findings,
     ...evidenceAnchorAudit.findings,
+    ...semanticAudit.findings,
     ...(includePathFindings ? teachingFindings(target, teachingAudit) : []),
   ].map((finding): ContentReviewFinding => ({
     ...finding,
@@ -237,6 +252,72 @@ function reviewArtifact(
       findings,
       revision_instructions: instructions,
     },
+  }
+}
+
+async function auditSemanticBlocks(
+  blocks: ReviewContentBlock[],
+  request: ContentReviewRequest,
+  target: ReviewablePublicArtifact,
+  port: ContentSemanticAuditPort,
+): Promise<{ status: FactAuditStatus; findings: ContentReviewFinding[] }> {
+  const facts = new Map(request.evidence_pack.results.flatMap((item) =>
+    item.facts.map((fact) => [
+      `${fact.source_id}:${fact.fact_id}`,
+      fact,
+    ] as const)))
+  // Missing or unknown references are already reported deterministically. Do
+  // not ask the model to infer support from an incomplete evidence surface.
+  const eligible = blocks.flatMap((block) => {
+    if (block.citations.length === 0) return []
+    const citedFacts = block.citations.flatMap((citation) => {
+      const fact = facts.get(`${citation.source_id}:${citation.fact_id}`)
+      return fact ? [{
+        source_id: fact.source_id,
+        fact_id: fact.fact_id,
+        content: fact.content,
+      }] : []
+    })
+    return citedFacts.length === block.citations.length
+      ? [{ ...block, cited_facts: citedFacts }]
+      : []
+  })
+  const results = await port.auditArtifact({
+    run_id: request.run_id,
+    artifact_kind: target.kind,
+    artifact_id: target.artifact.artifact_id,
+    evidence_hash: request.evidence_hash,
+    blocks: eligible,
+  })
+  const blocksById = new Map(eligible.map((block) => [block.review_block_id, block]))
+  const findings = results.flatMap((result): ContentReviewFinding[] => {
+    if (result.verdict === "supported" || result.verdict === "non_factual") return []
+    const block = blocksById.get(result.review_block_id)
+    if (!block) throw new Error("ROLE_C_SEMANTIC_AUDIT_UNKNOWN_BLOCK")
+    const uncertain = result.verdict === "uncertain"
+    return [{
+      source: "fact_audit",
+      code: uncertain ? "semantic_uncertain" : "semantic_unsupported",
+      artifact_kind: target.kind,
+      artifact_id: target.artifact.artifact_id,
+      message: uncertain
+        ? `引用事实不足以确定该内容的语义支持：${result.reason}`
+        : `内容中存在引用事实不支持的陈述：${result.reason}`,
+      proposed_action: uncertain
+        ? "删除含混陈述，或仅使用当前引用事实改写为可核验内容"
+        : "删除无支持片段，或仅根据当前引用事实重写定位内容",
+      fix_scope: "artifact",
+      locator: block.locator,
+      evidence_refs: unique([
+        result.review_block_id,
+        ...block.citations.map((citation) => `${citation.source_id}:${citation.fact_id}`),
+        ...result.unsupported_text.map((text) => `text:${text}`),
+      ]),
+    }]
+  })
+  return {
+    status: findings.length > 0 ? "revise" : "pass",
+    findings,
   }
 }
 

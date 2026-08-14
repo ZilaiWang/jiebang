@@ -553,14 +553,16 @@ export function validateCodeLabPublicAuthorAgainstPlan(
       )
     }
   })
-  issues.push(...functionOutputContractIssues(
+  issues.push(...codeLabExecutionContractIssues(
     payload.execution_contract,
     "execution_contract",
     payload.objectives.flatMap((entry) => [
       entry.instruction_text,
+      entry.public_test.description,
       entry.public_test.expected_behavior,
       ...entry.hints,
     ]),
+    payload.starter_code,
   ))
   return issues
 }
@@ -650,6 +652,16 @@ export function validateCodeLabPublicAgainstPlan(
       issues.push(`hint_ladders[${index}] 必须恰好包含三级提示`)
     }
   })
+  issues.push(...codeLabExecutionContractIssues(
+    payload.execution_contract,
+    "execution_contract",
+    [
+      ...payload.instructions.map((block) => "text" in block ? block.text : ""),
+      ...payload.public_tests.flatMap((test) => [test.description, test.expected_behavior]),
+      ...payload.hint_ladders.flatMap((ladder) => ladder.hints.map((hint) => hint.text)),
+    ],
+    payload.starter_code,
+  ))
   if (payload.execution_contract.execution_mode === "function") {
     payload.public_tests.forEach((test, index) => {
       if (!isFunctionInvocationEnvelope(test.input)) {
@@ -793,7 +805,7 @@ export function normalizeCodeLabSecureAuthorPayloadLenient(
   payload: CodeLabSecureAuthorPayload,
   plan: CodeLabSecurePlan,
   executionMode: CodeLabPublicPayload["execution_contract"]["execution_mode"],
-  publicInputs: unknown[] = [],
+  _publicInputs: unknown[] = [],
   outputContract?: CodeLabPublicPayload["execution_contract"]["output_contract"],
 ): CodeLabSecureAuthorPayload {
   const normalized = structuredClone(payload)
@@ -812,7 +824,10 @@ export function normalizeCodeLabSecureAuthorPayloadLenient(
       if (Number.isFinite(coerced)) test.expected = coerced
     }
     if (executionMode === "function") {
-      test.input = chooseDistinctFunctionInput(coerceFunctionInvocation(test.input), publicInputs)
+      // Shape normalization must not rewrite executable semantics: changing a
+      // hidden input without recomputing expected creates a different test.
+      // Public/private disjointness is repaired by the model with both fields.
+      test.input = coerceFunctionInvocation(test.input)
     } else {
       // stdin_stdout 模式：模型常按函数习惯写 args 封装，必须转换为 stdin 文本，
       // 否则 harness 无输入、reference 无输出，可信执行必然失败。
@@ -964,10 +979,9 @@ function normalizeCodeLabSecureHiddenInputs(
 ): CodeLabSecurePayload {
   const normalized = structuredClone(payload)
   if (normalized.execution_contract.execution_mode === "function") {
-    const publicInputs = publicPayload.public_tests.map((test) => test.input)
     normalized.hidden_tests = normalized.hidden_tests.map((test) => ({
       ...test,
-      input: chooseDistinctFunctionInput(coerceFunctionInvocation(test.input), publicInputs),
+      input: coerceFunctionInvocation(test.input),
     }))
   }
   return normalized
@@ -992,10 +1006,9 @@ export function normalizeCodeLabSecure(
     }
   })
   if (normalized.execution_contract.execution_mode === "function") {
-    const publicInputs = publicPayload.public_tests.map((test) => test.input)
     normalized.hidden_tests = normalized.hidden_tests.map((test) => ({
       ...test,
-      input: chooseDistinctFunctionInput(test.input, publicInputs),
+      input: coerceFunctionInvocation(test.input),
     }))
   }
   normalized.mutation_variants = plan.mutation_variants.length > 0
@@ -1561,10 +1574,36 @@ function functionOutputContractIssues(
   if (/^(?:none|null|void)(?:\s|$)/u.test(outputContract)
     || /(?:标准输出|打印|stdout|\bprint\b)/u.test(`${outputContract} ${visible}`)) {
     return [
-      `${path} 的 function 模式只校验入口函数返回值；请改为可 JSON 序列化的返回值，或将纯打印任务改为 stdin_stdout 模式`,
+      `FUNCTION_OUTPUT_CONTRACT_MISMATCH: ${path} 的 function 模式只校验入口函数返回值；请改为可 JSON 序列化的返回值，或将纯打印任务改为 stdin_stdout 模式`,
     ]
   }
   return []
+}
+
+function codeLabExecutionContractIssues(
+  contract: ExecutionContract,
+  path: string,
+  learnerVisibleText: string[],
+  starterCode: string,
+): string[] {
+  const issues = functionOutputContractIssues(contract, path, learnerVisibleText)
+  const visible = learnerVisibleText.join(" ").normalize("NFKC").toLocaleLowerCase()
+  if (contract.execution_mode === "function") {
+    const entryPoint = contract.entry_point?.trim()
+    if (!entryPoint || !new RegExp(`^\\s*def\\s+${escapeRegExp(entryPoint)}\\s*\\(`, "mu").test(starterCode)) {
+      issues.push(`${path} 的 function 模式必须在 starter_code 中提供与 entry_point 一致的函数签名`)
+    }
+    return issues
+  }
+  if (/(?:编写|定义|实现|提交).{0,12}(?:函数|function)|(?:函数|function).{0,12}(?:返回|return)|返回(?:值|字符串|列表|字典|结果)/iu.test(visible)
+    || /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)) {
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: ${path} 的 stdin_stdout 模式必须描述完整程序的标准输入与标准输出，不得要求入口函数或函数返回值`)
+  }
+  return issues
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 export function validateAssessmentSecureAuthorAgainstPublic(

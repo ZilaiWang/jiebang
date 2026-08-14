@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 |------|------|
-| `common-policy.ts` | 版本号（`c-prompts-1.21.1`）、教学蓝图字段权威、失败阶段恢复、外审修订协议、个性化边界和 next_round 语义 |
-| `staged-repair.prompt.ts` | 分阶段生成通用修复模板，包含隐藏测试修复与重复题完整重命题要求 |
+| `common-policy.ts` | 版本号（`c-prompts-1.23.4`）、教学蓝图字段权威、失败阶段恢复、两轮外审修订协议、个性化边界和 next_round 语义 |
+| `staged-repair.prompt.ts` | 分阶段生成通用修复模板，包含 import 白名单、隐藏测试语义同步与重复题完整重命题要求 |
 
 ## Concept Tutor
 
@@ -25,7 +25,7 @@
 | `code-lab/repair.prompt.ts` | 校验失败时的定向修复提示词，含隐藏测试泄漏处理指引 |
 | `code-lab/public-stage.prompt.ts` | 公开创作阶段。生成任务说明、starter、公开测试、提示、反思题。含 instruction / starter / public_test / hints / reflection 的设计指导 |
 | `code-lab/secure-stage.prompt.ts` | 私有可执行语义阶段。生成参考实现、隐藏测试、mutation。含测试覆盖策略（常规/边界/防硬编码） |
-| `code-lab/execution-repair.prompt.ts` | Docker 执行失败后的最小修订补丁。含修复策略（先定位是源码还是测试有误） |
+| `code-lab/execution-repair.prompt.ts` | Docker 执行失败后的最小修订补丁。根据失败测试身份修复参考实现或测试输入、期望和比较方式，禁止空补丁 |
 | `code-lab/starter-repair.prompt.ts` | Starter 通过全部测试时退化为学习骨架。保留签名、替换核心逻辑为 TODO |
 | `code-lab/public-safety-repair.prompt.ts` | 公开材料可还原完整答案时的安全重写。只改学习者可见内容 |
 
@@ -51,3 +51,4 @@
 2. 输出遵循对应 JSON Schema。
 3. ID、item plan、routing、coverage、权重、评分和发布状态由程序确定。
 4. 修改提示词后运行 `bun run check` 验证。
+5. 外部语义审核意见通过 `revision_objections` 进入对应 Agent；第一轮局部改写，第二轮重写语义单元并降低呈现负荷。
