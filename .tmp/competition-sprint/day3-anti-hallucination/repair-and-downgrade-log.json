@@ -1,0 +1,56 @@
+{
+  "log_kind": "role_c_repair_and_downgrade",
+  "generated_at": "2026-08-14T13:30:55.820Z",
+  "case_id": "golden-cross-major-20",
+  "run_id": "RUN-C-DAY3-MSSZHB7L-golden-cross-major-20",
+  "external_revision_rounds": [
+    {
+      "spec_id": "SPEC-fdb087c1",
+      "generation_spec_hash": "sha256:be12f8fd2d225b42ff01dfa80e015813354d5d4c6fb00e77eb94def0e32a61d1",
+      "revision_round": 0,
+      "decision": "reject",
+      "strategy": "initial_generation",
+      "issue_codes": [
+        "semantic_unsupported",
+        "prerequisite_coverage"
+      ]
+    },
+    {
+      "spec_id": "SPEC-72e6f80b",
+      "generation_spec_hash": "sha256:2613e12aa23d1d6d537677c9d7a90405ffc310d7750cef368a18e0176ac39db9",
+      "revision_round": 0,
+      "decision": "revise",
+      "strategy": "replanned_spec_generation",
+      "issue_codes": [
+        "semantic_unsupported"
+      ]
+    },
+    {
+      "spec_id": "SPEC-72e6f80b",
+      "generation_spec_hash": "sha256:2613e12aa23d1d6d537677c9d7a90405ffc310d7750cef368a18e0176ac39db9",
+      "revision_round": 1,
+      "decision": "pass",
+      "strategy": "targeted_rewrite",
+      "issue_codes": []
+    }
+  ],
+  "cross_spec_recovery": {
+    "code": "READY",
+    "failedDimensions": [
+      "prerequisite_coverage",
+      "semantic_unsupported"
+    ],
+    "missingPrerequisiteSourceIds": [
+      "K002",
+      "K003"
+    ],
+    "unknownPrerequisiteRefs": [],
+    "requiredAction": "replan_path",
+    "fixScope": "new_spec",
+    "canRecover": true,
+    "attempts": 1,
+    "message": "审核拒绝后的恢复流程已通过完整审核"
+  },
+  "final_status": "ready",
+  "terminal_action": "replan_path"
+}
