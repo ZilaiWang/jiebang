@@ -6,6 +6,10 @@ import {
 /**
  * Code Lab 私有可执行语义阶段提示词。
  * 只生成 secure author payload（参考实现、隐藏测试、mutation）。
+ *
+ * 门禁定位：报错 hidden_test_input_leak / hidden_test_expected_leak / static_unlisted_import 时，
+ * 先查下方 hidden_tests 的 input/expected 约束和 allowed_imports 约束
+ * （详见 validators/public-secure-leak-validator.ts 与 security/python-static-analyzer.ts）。
  */
 export const CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT = `${ROLE_C_COMMON_SYSTEM_POLICY}
 
@@ -35,7 +39,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 字段约束（必须逐条满足）：
 1. reference_solution：一个完整的、可直接执行的 Python 程序。**execution_mode 是 "function" 时**：写 def 开头的入口函数，return 实际计算结果，只保留入口函数和必要辅助函数；**execution_mode 是 "stdin_stdout" 时**：写完整的脚本——从 stdin 读取输入（input() 或 sys.stdin 按行读），处理后在顶层用 print 输出结果，不要定义只 return 不 print 的函数。不访问网络/文件/进程。
 2. hidden_tests：数组，恰好与 objective_plan 中的目标数量相等（每个目标一个测试），按 objective_plan 顺序排列。
-3. hidden_tests[].input：**function 模式**必须是 {"args": [参数值列表], "kwargs": {}} 格式；**stdin_stdout 模式**必须是程序从 stdin 读到的原始文本（如 "10\\n20\\n30\\n"，与 public_payload 的 stdin 输入格式一致）。不能用参数名直接组成对象，不能用 {scores: [10,20]} 这种写法。参数顺序与入口函数签名一致。使用与 public_payload.public_tests 中完全不同的新值。
+3. hidden_tests[].input：**function 模式**必须是 {"args": [参数值列表], "kwargs": {}} 格式；**stdin_stdout 模式**必须是程序从 stdin 读到的原始文本（如 "10\\n20\\n30\\n"，与 public_payload 的 stdin 输入格式一致）。不能用参数名直接组成对象，不能用 {scores: [10,20]} 这种写法。参数顺序与入口函数签名一致。使用与 public_payload.public_tests 中完全不同的新值。若任务是纯输出（不读取输入），public 和 hidden 的 input 都留空（""）是合法的，此时区分度放在 expected 输出内容上。
 4. hidden_tests[].expected：必须与 reference_solution 的真实输出一致。function 模式：数值返回具体数值，对象、数组、字符串或布尔值返回对应 JSON 值；stdin_stdout 模式：expected 是程序 print 到 stdout 的完整文本（含换行）。不能写描述性文字。
 5. hidden_tests[].comparison：根据 frozen execution_contract.output_contract 选择。数值返回值使用 numeric，精确结构为 {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9}；对象、数组、字符串或布尔返回值使用 exact，精确结构为 {"kind": "exact"}。stdout text 必须返回字符串 expected；不得为 stdout text 返回对象。
 6. hidden_tests[].misconception_tag：具体说明测试针对的常见错误（如"skips_last_element"、"ignores_boundary"、"integer_division"），不用模糊标签。

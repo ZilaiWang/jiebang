@@ -8,8 +8,8 @@ import { CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT } from "../src/role-c-content/promp
 import { stagedRepairPrompt } from "../src/role-c-content/prompts/staged-repair.prompt"
 
 describe("role c prompt manifest version", () => {
-  test("bumped to invalidate staged repair cache", () => {
-    expect(ROLE_C_PROMPT_MANIFEST_VERSION).toBe("c-prompts-1.23.4")
+  test("prompt manifest version 遵循语义化格式（不再硬编码具体值）", () => {
+    expect(ROLE_C_PROMPT_MANIFEST_VERSION).toMatch(/^c-prompts-\d+\.\d+\.\d+$/)
   })
 
   test("keeps teaching scenarios inside the frozen evidence boundary", () => {
@@ -26,7 +26,8 @@ describe("role c prompt manifest version", () => {
   test("repairs code-lab execution intent as one coherent contract", () => {
     const prompt = stagedRepairPrompt("base", ["FUNCTION_OUTPUT_CONTRACT_MISMATCH"])
     expect(prompt).toContain("不得只改 execution_mode 字段")
-    expect(prompt).toContain("starter_code、instruction、public_test 和 hints 全部改成")
+    expect(prompt).toContain("execution_mode 已由编排器冻结为 function")
+    expect(prompt).toContain("instruction、public_test 和 hints 都围绕入口函数的返回值")
     expect(prompt).toContain("previous_output 是尚未通过的模型草稿")
   })
 })

@@ -96,6 +96,8 @@ import {
   validateCodeLabSecureAuthorAgainstPlan,
   validateCodeLabSecureAgainstPlan,
   validateConceptSegmentAuthorAgainstRequest,
+  deriveCodeLabExecutionMode,
+  freezeCodeLabExecutionContract,
   type CodeLabExecutionRepairPatch,
   type CodeLabPublicAuthorPayload,
   type CodeLabSecureAuthorPayload,
@@ -310,6 +312,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const objectivePlan = request.resource_blueprint?.code_lab.objective_plan
       ?? buildCodeLabObjectivePlan(request.generation_spec)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
+    const executionMode = deriveCodeLabExecutionMode(request)
     const publicAuthor = await this.generateStage<CodeLabPublicAuthorPayload>({
       task: "role-c.code-lab.public",
       system_prompt: CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
@@ -319,6 +322,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           lab_id: identity.lab_id,
           objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
           objective_plan: objectivePlan,
+          execution_mode: executionMode,
         },
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
@@ -344,6 +348,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         )
         if (!schema.ok) return validationIssues(schema)
         const normalizedAuthor = normalizeCodeLabPublicAuthorPayload(payload)
+        normalizedAuthor.execution_contract = freezeCodeLabExecutionContract(
+          normalizedAuthor.execution_contract,
+          executionMode,
+        )
         const planIssues = validateCodeLabPublicAuthorAgainstPlan(
           normalizedAuthor,
           objectivePlan,
@@ -361,6 +369,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const normalizedPublicAuthor = normalizeCodeLabPublicAuthorPayload(
       publicAuthor,
     )
+    normalizedPublicAuthor.execution_contract = freezeCodeLabExecutionContract(
+      normalizedPublicAuthor.execution_contract,
+      executionMode,
+    )
     let normalizedPublic = materializeCodeLabPublicAuthorPayload(
       request,
       normalizedPublicAuthor,
@@ -370,7 +382,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const securePlan = request.resource_blueprint?.code_lab.secure_plan
       ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
     const publicTestInputs = normalizedPublic.public_tests.map((test) => test.input)
-    const secureInputRules = `\n\nPRIVATE INPUT RULES (must follow):\n- Compare every hidden_tests[].input against these public inputs using exact JSON equality: ${JSON.stringify(publicTestInputs)}\n- No hidden input may be exactly equal to any public input.\n- Do not copy any concrete value from public tests, starter, examples, hints, or prompt.\n- For function entries with parameters, use a structurally different non-empty envelope and recompute expected.`
+    const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- 若本任务需要读取输入：hidden_tests[].input 请用能覆盖边界、反例、极端情况的「新数据」，避开这些 public 已用的输入：${JSON.stringify(publicTestInputs)}，并根据 reference_solution 重算 expected。\n- 若本任务是纯输出（不读取输入）：public 和 hidden 的 input 都留空（""）是合法的，区分度放在 expected 输出内容上，不要求 input 不同。\n- function 模式的参数用结构不同的非空封装，并重算 expected。`
     const secureAuthorPayload = await this.generateStage<CodeLabSecureAuthorPayload>({
       task: "role-c.code-lab.secure",
       system_prompt: CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT,
