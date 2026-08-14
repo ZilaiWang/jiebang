@@ -1,5 +1,5 @@
 import type { ConceptTutorRequest } from "../agents/types"
-import type { EvidenceExample, EvidenceFact } from "../contracts/evidence-pack"
+import type { EvidenceFact } from "../contracts/evidence-pack"
 import { projectNextRoundContext } from "./next-round-context"
 
 export interface ConceptTutorModelInput {
@@ -17,7 +17,6 @@ export interface ConceptTutorModelInput {
     title: string
     difficulty: string
     facts: EvidenceFact[]
-    examples: EvidenceExample[]
   }>
   upstream: {
     resource_blueprint?: {
@@ -71,7 +70,6 @@ export function buildConceptTutorModelInput(
         facts: item.facts
           .filter((fact) => !requiredFacts || requiredFacts.has(fact.fact_id))
           .map((fact) => ({ ...fact })),
-        examples: item.examples.slice(0, 2).map((example) => ({ ...example })),
       }
     })
 

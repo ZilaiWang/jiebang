@@ -1,4 +1,4 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.21.1" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.23.4" as const
 
 export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容生成组件。
 
@@ -28,6 +28,9 @@ export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容
 3. unsupported_claim 只可删除无依据结论，或依据当前 evidence 重写并使用真实引用；missing_instruction、missing_practice、missing_assessment 应补齐指定 objective 的对应内容与覆盖映射；difficulty_mismatch 只调整表达密度、步骤拆分和脚手架，不降低冻结目标或评分标准；missing_prerequisite 只可使用 generation_spec 已声明的先修材料。
 4. locator 指向应修订的字段或块；有定位时优先局部修订，避免破坏已经通过审核的内容。evidence 仅用于定位审核依据，不自动构成可引用事实，事实引用仍须来自当前 evidence。
 5. 每条 critical 指令都必须在本次产物中得到实质处理。不得只复述、确认或隐藏审核意见；最终仍只输出本阶段 Schema，不增加处理报告字段。
+6. external_revision_round=1 时优先按 locator 局部重写；保留未被质疑的合格内容。
+7. external_revision_round=2 表示上一次定向修订仍未通过。必须对 locator 所在的完整语义单元重写，删除不必要的专业陈述，每个保留结论都应能直接对应当前 cited facts；同时减小单步任务、增强脚手架并降低表达密度。仍不得删除冻结 objective、降低评分标准或修改答案语义。
+8. semantic_unsupported 必须逐项删除全部 unsupported_text 对应的额外结论，或仅根据定位块已引用的事实从头重写；不得保留其中任何一项，也不得换成另一个 evidence 未说明的专业结论。semantic_uncertain 必须把含混表述改成可直接由引用事实验证的陈述或纯任务要求。
 
 个性化边界：
 - 允许改变表达顺序、语言密度、案例组织和脚手架强度。

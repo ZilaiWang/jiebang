@@ -53,6 +53,7 @@ import {
   InMemoryMasteryStateStore,
   InMemorySecureArtifactStore,
   LearningCycleService,
+  ModelContentSemanticAuditPort,
   ModelBackedRoleCContentProvider,
   modelBackedProviderOptionsFromEnv,
   projectPublicRagEvidencePack,
@@ -364,7 +365,12 @@ export async function generateRoleCForRoleDWithRuntime(
     secureStore,
     {
       review_port: runtime.reviewPort
-        ?? createLocalABContentReviewPort({ knowledge_base: knowledgeBase }),
+        ?? createLocalABContentReviewPort({
+          knowledge_base: knowledgeBase,
+          ...(modelGateway
+            ? { semantic_audit_port: new ModelContentSemanticAuditPort(modelGateway) }
+            : {}),
+        }),
       profile_snapshot: profileSnapshot,
       path_planning_port: createEvidenceAwareBPathPlanningPort(
         knowledgeBase,
@@ -1137,7 +1143,12 @@ export async function continueRoleCAfterSubmission(
         secure_store: persistence.secureStore,
         review_options: {
           review_port: runtime.reviewPort
-            ?? createLocalABContentReviewPort({ knowledge_base: knowledgeBase }),
+            ?? createLocalABContentReviewPort({
+              knowledge_base: knowledgeBase,
+              ...(modelGateway
+                ? { semantic_audit_port: new ModelContentSemanticAuditPort(modelGateway) }
+                : {}),
+            }),
           ...(runtime.critic ? { critic: runtime.critic } : {}),
           max_external_revisions: 2,
         },

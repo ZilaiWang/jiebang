@@ -1,6 +1,6 @@
 import type { TieredEvaluatorRequest } from "../agents/types"
 import type { CitationRef } from "../contracts/common"
-import type { EvidenceExample, EvidenceFact } from "../contracts/evidence-pack"
+import type { EvidenceFact } from "../contracts/evidence-pack"
 import { projectNextRoundContext } from "./next-round-context"
 
 export interface AssessmentAuthorModelInput {
@@ -18,8 +18,6 @@ export interface AssessmentAuthorModelInput {
     source_id: string
     title: string
     facts: EvidenceFact[]
-    examples: EvidenceExample[]
-    practice_tasks: string[]
   }>
   upstream: {
     concept_artifact_id: string
@@ -107,8 +105,6 @@ export function buildAssessmentAuthorModelInput(
         source_id: item.source_id,
         title: item.title,
         facts: item.facts.map((fact) => ({ ...fact })),
-        examples: item.examples.slice(0, 2).map((example) => ({ ...example })),
-        practice_tasks: item.practice_tasks.slice(0, 3),
       })),
     upstream: {
       concept_artifact_id: request.concept_artifact.artifact_id,

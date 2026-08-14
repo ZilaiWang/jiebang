@@ -2,21 +2,6 @@ import { contentHash } from "../role-c-content/contracts/common"
 import { buildEvidenceIndex, buildEvidenceIndexFromPack } from "./evidence-index"
 import type { CheckedClaim, EvidenceIndex, FactAuditConflict, FactAuditInput, FactAuditResult, FactAuditStatus } from "./types"
 
-const EXTERNAL_KNOWLEDGE_TERMS = [
-  "Transformer", "自注意力", "梯度下降", "CNN",
-  "Pandas", "NumPy", "matplotlib", "数据框", "DataFrame",
-  "λ", "yield",
-  "闭包", "作用域", "global", "nonlocal",
-  "正则表达式", "re模块", "正则",
-  "多线程", "多进程", "并发", "async", "await",
-  "数据库", "SQL", "MySQL", "SQLite",
-  "GUI", "图形界面", "tkinter",
-  "API", "HTTP", "网络请求", "requests",
-  "单元测试", "unittest", "pytest",
-  "pip", "虚拟环境", "venv", "conda",
-  "git", "版本控制", "GitHub",
-  "大模型",
-]
 const TOKEN_PATTERN = /[A-Za-z]+|[\u4e00-\u9fff]{2,}/g
 
 export { buildEvidenceIndex }
@@ -74,20 +59,6 @@ export function auditGeneratedContent(input: FactAuditInput): FactAuditResult {
         reason: "知识性内容缺少 source_id/fact_id 引用。",
       })
       conflicts.push({ blockId: block.blockId, claim: block.text, issue: "缺少知识库引用" })
-      continue
-    }
-
-    const externalTerm = EXTERNAL_KNOWLEDGE_TERMS.find((term) =>
-      block.text.includes(term) && !isTermCoveredByCitedEvidence(term, block.text, block.citations, evidenceIndex))
-    if (externalTerm) {
-      checkedClaims.push({
-        blockId: block.blockId,
-        claim: block.text,
-        citations: block.citations,
-        verdict: "external_knowledge",
-        reason: `内容包含当前 RAG 证据之外的外部知识：${externalTerm}`,
-      })
-      conflicts.push({ blockId: block.blockId, claim: block.text, issue: `外部知识未被当前 RAG 证据支持：${externalTerm}` })
       continue
     }
 
@@ -246,18 +217,6 @@ function resolveAuditEvidence(input: FactAuditInput): {
       issue: "缺少审核证据：必须提供 ragResult 或冻结 evidencePack",
     },
   }
-}
-
-function isTermCoveredByCitedEvidence(
-  term: string,
-  claim: string,
-  citations: { source_id: string; fact_id: string }[],
-  evidenceIndex: EvidenceIndex,
-): boolean {
-  return citations.some((citation) => {
-    const fact = evidenceIndex.get(`${citation.source_id}:${citation.fact_id}`)
-    return Boolean(fact?.content.includes(term) || fact?.source_id && claim.includes(fact.source_id))
-  })
 }
 
 function deriveStatus(checkedClaims: CheckedClaim[]): FactAuditStatus {

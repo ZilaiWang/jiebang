@@ -53,6 +53,40 @@ export interface ReviewContentBlock {
   locator: ReviewBlockLocator
 }
 
+export type SemanticReviewVerdict =
+  | "supported"
+  | "non_factual"
+  | "unsupported"
+  | "uncertain"
+
+export interface SemanticReviewBlockResult {
+  review_block_id: string
+  verdict: SemanticReviewVerdict
+  reason: string
+  unsupported_text: string[]
+}
+
+/**
+ * Reviews the meaning of one complete public artifact against only the facts
+ * referenced by each block. Implementations must return one result per block.
+ */
+export interface ContentSemanticAuditPort {
+  readonly policy_version: string
+  auditArtifact(input: {
+    run_id: string
+    artifact_kind: ReviewArtifactKind
+    artifact_id: string
+    evidence_hash: string
+    blocks: Array<ReviewContentBlock & {
+      cited_facts: Array<{
+        source_id: string
+        fact_id: string
+        content: string
+      }>
+    }>
+  }): Promise<SemanticReviewBlockResult[]>
+}
+
 export type ReviewablePublicArtifact =
   | { kind: "concept"; artifact: ConceptLessonArtifact }
   | { kind: "code_lab"; artifact: CodeLabPublicArtifact }

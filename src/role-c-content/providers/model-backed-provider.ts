@@ -588,9 +588,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         external_revision_round: modelInput.external_revision_round,
       },
       output_schema_id: "role_c_code_lab_execution_repair_patch_v1",
-      output_schema: fragment(
-        "code_lab_draft.schema.json",
-        "/$defs/execution_repair_patch",
+      output_schema: codeLabExecutionRepairSchema(
+        draft.secure_draft.payload,
+        feedback,
       ),
       temperature: this.codeLabTemperature,
       max_tokens: this.codeLabSecureMaxTokens,
@@ -1189,6 +1189,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               attempt,
               stage.idempotency_identity,
             ),
+            repair_context: stageRepairContext(
+              stage.task,
+              stage.input,
+              issues,
+            ),
           }
       try {
         const repairDirective = stageRepairDirective(
@@ -1444,6 +1449,51 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
   }
 }
 
+function stageRepairContext(
+  task: string,
+  input: unknown,
+  issues: string[],
+): Record<string, unknown> {
+  if (task !== "role-c.code-lab.secure"
+    || !issues.some((issue) => issue.includes("hidden_test_input_leak"))) {
+    return {}
+  }
+  const record = asRecord(input)
+  const publicPayload = asRecord(record.public_payload)
+  const publicTests = Array.isArray(publicPayload.public_tests)
+    ? publicPayload.public_tests
+    : []
+  const publicInputs = publicTests.map((test) => asRecord(test).input)
+  return {
+    forbidden_public_inputs: structuredClone(publicInputs),
+    forbidden_public_scalar_values: uniqueJsonScalars(publicInputs),
+    required_change: "为每个失败 hidden test 重新选择不含任何公开输入标量的 input，并根据 reference_solution 同步重算 expected",
+  }
+}
+
+function uniqueJsonScalars(values: unknown[]): unknown[] {
+  const scalars: unknown[] = []
+  const seen = new Set<string>()
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (value && typeof value === "object") {
+      Object.values(value as Record<string, unknown>).forEach(visit)
+      return
+    }
+    if (value === undefined) return
+    const key = JSON.stringify(value)
+    if (!seen.has(key)) {
+      seen.add(key)
+      scalars.push(value)
+    }
+  }
+  values.forEach(visit)
+  return scalars
+}
+
 function stageRepairDirective(
   task: string,
   issues: string[],
@@ -1636,11 +1686,10 @@ export function conservativeCodeLabPublicSafetyPatch(
   }
 }
 
-function normalizeCodeLabPublicAuthorPayload(
+export function normalizeCodeLabPublicAuthorPayload(
   payload: CodeLabPublicAuthorPayload,
 ): CodeLabPublicAuthorPayload {
   const normalized = structuredClone(payload)
-  normalizeCodeLabExecutionIntent(normalized)
   if (analyzePythonSource(
     normalized.starter_code,
     normalized.execution_contract,
@@ -1651,59 +1700,6 @@ function normalizeCodeLabPublicAuthorPayload(
     )
   }
   return normalized
-}
-
-function normalizeCodeLabExecutionIntent(
-  payload: CodeLabPublicAuthorPayload,
-): void {
-  const contract = payload.execution_contract
-  if (contract.execution_mode !== "function") return
-  const visibleText = payload.objectives.flatMap((objective) => [
-    objective.instruction_text,
-    objective.public_test.description,
-    objective.public_test.expected_behavior,
-    ...objective.hints,
-    objective.reflection_question,
-  ])
-  const contractText = [
-    contract.output_contract.type,
-    ...(contract.output_contract.constraints ?? []),
-  ]
-  const describesStdout = /(?:标准输出|打印|输出到屏幕|stdout|\bprint\b)/iu.test(
-    [...contractText, ...visibleText].join(" ").normalize("NFKC"),
-  )
-  if (describesStdout) {
-    const priorStarter = payload.starter_code
-    const priorEntryPoint = contract.entry_point?.trim()
-    contract.execution_mode = "stdin_stdout"
-    delete contract.entry_point
-    contract.input_contract = {
-      type: "stdin text",
-      constraints: [...contract.input_contract.constraints],
-    }
-    contract.output_contract = {
-      type: "stdout text",
-      constraints: contract.output_contract.constraints?.length
-        ? [...contract.output_contract.constraints]
-        : ["按题目要求输出结果"],
-    }
-    payload.starter_code = stdoutSafeStarter(priorStarter, priorEntryPoint)
-    payload.objectives.forEach((objective) => {
-      objective.public_test.input = asStandardInput(
-        objective.public_test.input,
-      )
-    })
-    return
-  }
-  if (/^(?:none|null|void)(?:\s|$)/iu.test(
-    contract.output_contract.type.normalize("NFKC"),
-  )) {
-    contract.output_contract = {
-      type: "JSON-serializable return value",
-      constraints: (contract.output_contract.constraints ?? []).filter((entry) =>
-        !/(?:标准输出|打印|stdout|\bprint\b)/iu.test(entry)),
-    }
-  }
 }
 
 function minimalSafeStarter(
@@ -1962,6 +1958,48 @@ function escapeRegExp(value: string): string {
 
 function fragment(file: RoleCSchemaFile, pointer: string): Record<string, unknown> {
   return getRoleCModelOutputSchemaFragment(file, pointer)
+}
+
+function codeLabExecutionRepairSchema(
+  prior: CodeLabSecurePayload,
+  feedback: CodeLabVerificationFeedback,
+): Record<string, unknown> {
+  const schema = structuredClone(fragment(
+    "code_lab_draft.schema.json",
+    "/$defs/execution_repair_patch",
+  ))
+  const properties = asRecord(schema.properties)
+  const hiddenRepairs = asRecord(properties.hidden_test_repairs)
+  const item = asRecord(hiddenRepairs.items)
+  const itemProperties = asRecord(item.properties)
+  const failedIds = trustedReferenceFailureTestIds(feedback)
+  const allowedIds = failedIds.size > 0
+    ? [...failedIds]
+    : prior.hidden_tests.map((test) => test.test_id)
+  itemProperties.test_id = { type: "string", enum: allowedIds }
+  item.properties = itemProperties
+  item.additionalProperties = false
+  hiddenRepairs.items = item
+  properties.hidden_test_repairs = hiddenRepairs
+  schema.properties = properties
+  schema.additionalProperties = false
+  if (trustedReferenceFailed(feedback)) {
+    schema.anyOf = [
+      {
+        properties: {
+          reference_solution: { type: "string", minLength: 1, maxLength: 20_000 },
+        },
+        required: ["reference_solution"],
+      },
+      {
+        properties: {
+          hidden_test_repairs: { type: "array", minItems: 1 },
+        },
+        required: ["hidden_test_repairs"],
+      },
+    ]
+  }
+  return schema
 }
 
 function validateCodeLabExecutionRepairProgress(

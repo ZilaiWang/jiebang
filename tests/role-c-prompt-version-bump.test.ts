@@ -9,7 +9,7 @@ import { stagedRepairPrompt } from "../src/role-c-content/prompts/staged-repair.
 
 describe("role c prompt manifest version", () => {
   test("bumped to invalidate staged repair cache", () => {
-    expect(ROLE_C_PROMPT_MANIFEST_VERSION).toBe("c-prompts-1.21.1")
+    expect(ROLE_C_PROMPT_MANIFEST_VERSION).toBe("c-prompts-1.23.4")
   })
 
   test("keeps teaching scenarios inside the frozen evidence boundary", () => {
@@ -20,6 +20,13 @@ describe("role c prompt manifest version", () => {
 
   test("makes an empty import contract explicit during authoring and repair", () => {
     expect(CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT).toContain("allowed_imports=[] 时不得出现任何 import")
-    expect(stagedRepairPrompt("base", ["STATIC_UNLISTED_IMPORT"])).toContain("输出必须完全不含 import")
+    expect(stagedRepairPrompt("base", ["STATIC_UNLISTED_IMPORT"])).toContain("新 reference_solution 必须完全不含 import")
+  })
+
+  test("repairs code-lab execution intent as one coherent contract", () => {
+    const prompt = stagedRepairPrompt("base", ["FUNCTION_OUTPUT_CONTRACT_MISMATCH"])
+    expect(prompt).toContain("不得只改 execution_mode 字段")
+    expect(prompt).toContain("starter_code、instruction、public_test 和 hints 全部改成")
+    expect(prompt).toContain("previous_output 是尚未通过的模型草稿")
   })
 })
