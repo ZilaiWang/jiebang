@@ -1587,7 +1587,6 @@ function codeLabExecutionContractIssues(
   starterCode: string,
 ): string[] {
   const issues = functionOutputContractIssues(contract, path, learnerVisibleText)
-  const visible = learnerVisibleText.join(" ").normalize("NFKC").toLocaleLowerCase()
   if (contract.execution_mode === "function") {
     const entryPoint = contract.entry_point?.trim()
     if (!entryPoint || !new RegExp(`^\\s*def\\s+${escapeRegExp(entryPoint)}\\s*\\(`, "mu").test(starterCode)) {
@@ -1595,9 +1594,28 @@ function codeLabExecutionContractIssues(
     }
     return issues
   }
-  if (/(?:编写|定义|实现|提交).{0,12}(?:函数|function)|(?:函数|function).{0,12}(?:返回|return)|返回(?:值|字符串|列表|字典|结果)/iu.test(visible)
-    || /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)) {
-    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: ${path} 的 stdin_stdout 模式必须描述完整程序的标准输入与标准输出，不得要求入口函数或函数返回值`)
+  const contractText = [
+    contract.input_contract.type,
+    ...contract.input_contract.constraints,
+    contract.output_contract.type,
+    ...(contract.output_contract.constraints ?? []),
+  ].join(" ").normalize("NFKC").toLocaleLowerCase()
+  const explicitFunctionTask = learnerVisibleText.find((text) =>
+    /(?:编写|定义|实现|提交)\s*(?:(?:一个|一个名为|名为|名叫|指定的)\s*)?(?:[A-Za-z_]\w*\s*)?(?:函数|function)/iu.test(text)
+    || /(?:你(?:编写|定义|实现|提交)的|该|此|上述|入口|目标)\s*(?:[A-Za-z_]\w*\s*)?(?:函数|function).{0,16}(?:返回|return)/iu.test(text))
+  const hasFunctionContract = /(?:function\s*(?:arguments?|call|return(?:\s+value)?)|函数(?:参数|调用|返回值)|入口函数|函数调用封装)/iu.test(contractText)
+  const hasFunctionStarter = /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)
+  if (contract.entry_point?.trim()) {
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: ${path}.entry_point 仅属于 function 模式，stdin_stdout 模式不得设置`)
+  }
+  if (hasFunctionContract) {
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: ${path} 的 stdin_stdout 输入输出合同不得使用函数参数、调用或返回值作为执行接口`)
+  }
+  if (hasFunctionStarter) {
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: starter_code 必须是从标准输入读取并向标准输出写入的完整程序骨架，不得改为入口函数`)
+  }
+  if (explicitFunctionTask) {
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: 公开任务要求学习者提交函数，与 stdin_stdout 的完整程序接口冲突：${explicitFunctionTask.slice(0, 120)}`)
   }
   return issues
 }

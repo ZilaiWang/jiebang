@@ -39,7 +39,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 【starter_code 起始代码】
 - function 模式：提供与 entry_point 完全一致的函数签名和必要导入，用 TODO 注释标出需要完成的部分
-- stdin_stdout 模式：提供完整程序骨架和 TODO；不得出现 def、entry_point、return 或“返回值”语义
+- stdin_stdout 模式：提供完整程序骨架和 TODO；starter 不得出现 def、entry_point 或 return，任务不得要求学习者提交入口函数或把函数返回值作为评分结果。证据中关于 input() 等内置函数会返回什么的知识仍可正常讲解
 - 核心逻辑必须留空（function 模式函数体写 pass 或 raise NotImplementedError("TODO")；stdin_stdout 模式只保留安全的读取/输出骨架或 TODO），不得包含实际答案逻辑
 - 绝对不可：写 return 语句返回计算结果、写完整的循环体或条件判断、写任何可能通过测试的代码
 - 宁可太简单被安全门禁退回，也不可写出接近答案的代码
@@ -67,7 +67,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 2. function 模式下每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}；即使只有一个参数也放入 args，不能用参数名直接组成普通对象。
 3. function 模式只会校验入口函数的返回值，必须返回可 JSON 序列化的结果；以 print/标准输出为结果的任务必须选用 stdin_stdout 模式。
    - function：instruction、starter、公开测试都围绕 entry_point；不得把 print/标准输出当评分结果。
-   - stdin_stdout：instruction、starter、公开测试都围绕完整程序的标准输入和标准输出；不得要求学习者提交函数或返回值。
+   - stdin_stdout：instruction、starter、公开测试都围绕完整程序的标准输入和标准输出；不得要求学习者提交入口函数或把入口函数的返回值作为评分结果。
    - 选择模式后不得混用另一模式的措辞、输入封装或 starter 结构。
 4. 不得出现参考解、隐藏测试输入或期望值、评分组、mutation、答案或 test_suite_id。
 5. 每个 objective 写一条 instruction、一个公开测试、恰好三级提示和一个反思问题；不得返回 lab_id、objective_id、block_id、test_id、citation、Claim、coverage 或 used_evidence。
