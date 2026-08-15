@@ -253,4 +253,82 @@ describe("main agent session architecture", () => {
     expect(Number.isSafeInteger(MAX_REMEDIATE_ROUNDS_PER_NODE) && MAX_REMEDIATE_ROUNDS_PER_NODE > 0).toBe(true)
     expect(Number.isSafeInteger(MAX_REINFORCE_ROUNDS_PER_NODE) && MAX_REINFORCE_ROUNDS_PER_NODE > 0).toBe(true)
   })
+
+  test("advances, reinforces, remediates, and reprofiles with the default multi-round policy", async () => {
+    const { decideRoundAction } = await import("../src/role-c-content/contracts/dynamic-feedback")
+    const { advanceToNextNode } = await import("../src/role-b-profile/teaching-audit/formal-path")
+    const { buildNextRoundContext } = await import("../src/orchestration/interactive-session")
+
+    expect(decideRoundAction({ raw_score: 1, max_score: 10, objective_results: [{ objective_id: "OBJ-1", raw_score: 1, max_score: 10, accuracy: 0.1, evidence_score: 0.1, misconception_tags: [] }] }).action).toBe("remediate")
+    expect(decideRoundAction({ raw_score: 5, max_score: 10, objective_results: [{ objective_id: "OBJ-1", raw_score: 5, max_score: 10, accuracy: 0.5, evidence_score: 0.5, misconception_tags: [] }] }).action).toBe("reinforce")
+    expect(decideRoundAction({ raw_score: 9, max_score: 10, objective_results: [{ objective_id: "OBJ-1", raw_score: 9, max_score: 10, accuracy: 0.9, evidence_score: 0.9, misconception_tags: [] }], independent_attempt: true }).action).toBe("advance")
+    expect(decideRoundAction({ raw_score: 9, max_score: 10, objective_results: [{ objective_id: "OBJ-1", raw_score: 9, max_score: 10, accuracy: 0.9, evidence_score: 0.9, misconception_tags: [] }], profile_drift_suggestion: { learner_id_hash: "L1", profile_version: "P1", conflicting_objective_ids: ["OBJ-1"], reason_codes: ["drift"], confidence: 0.9 } as any }).action).toBe("reprofile")
+
+    const baseProfile = {
+      schema_version: "1.0" as const,
+      profile_id: "PROFILE-L1",
+      learner_id: "L1",
+      profile_version: "P1",
+      level: "beginner" as const,
+      known_concepts: [],
+      weak_concepts: [],
+      goal: "学习循环",
+      preferred_contexts: [],
+      accommodations: [],
+    }
+    const path = {
+      path_id: "PATH-1",
+      learner_id: "L1",
+      original_goal: "学习循环",
+      current_node_index: 0,
+      profile_snapshot: baseProfile,
+      created_at: "2026-08-14T00:00:00.000Z",
+      updated_at: "2026-08-14T00:00:00.000Z",
+      planning_outcome: { status: "ready", code: "PATH_READY", message: "ok", requested_source_ids: ["K001"], resolved_source_ids: ["K001"], unresolved_source_ids: [] },
+      nodes: [
+        { schema_version: "1.0", node_id: "NODE-1", target_source_ids: ["K001"], prerequisite_source_ids: [], goal: "循环", objectives: [{ objective_id: "OBJ-1", source_id: "K001", required_fact_ids: ["F1"], observable_behavior: "recognize", importance: "core" }], assessment_blueprint: { tier_1_count: 1, tier_2_count: 1, tier_3_count: 1, required_modalities: ["mcq"] }, status: "in_progress", stage_order: 1 },
+        { schema_version: "1.0", node_id: "NODE-2", target_source_ids: ["K002"], prerequisite_source_ids: ["K001"], goal: "列表", objectives: [{ objective_id: "OBJ-2", source_id: "K002", required_fact_ids: ["F2"], observable_behavior: "apply", importance: "core" }], assessment_blueprint: { tier_1_count: 1, tier_2_count: 1, tier_3_count: 1, required_modalities: ["mcq"] }, status: "pending", stage_order: 2 },
+      ],
+    } as any
+
+    const remediate = advanceToNextNode({ path, updatedProfileSnapshot: baseProfile, decisionAction: "remediate" })
+    expect(remediate.nextPathNode?.node_id).toBe("NODE-1")
+    expect(remediate.path.current_node_index).toBe(0)
+    expect(remediate.path.nodes[0].status).toBe("in_progress")
+
+    const reinforce = advanceToNextNode({ path, updatedProfileSnapshot: baseProfile, decisionAction: "reinforce" })
+    expect(reinforce.nextPathNode?.node_id).toBe("NODE-1")
+    expect(reinforce.path.current_node_index).toBe(0)
+
+    const advance = advanceToNextNode({ path, updatedProfileSnapshot: baseProfile, decisionAction: "advance" })
+    expect(advance.path.current_node_index).toBe(1)
+    expect(advance.nextPathNode?.node_id).toBe("NODE-2")
+    expect(advance.path.nodes[0].status).toBe("completed")
+
+    const reprofile = advanceToNextNode({ path, updatedProfileSnapshot: { ...baseProfile, profile_version: "P2" }, decisionAction: "reprofile" })
+    expect(reprofile.nextPathNode?.node_id).toBe("NODE-1")
+    expect(reprofile.path.nodes[0].status).toBe("blocked")
+    expect(reprofile.path.current_node_index).toBe(0)
+
+    expect(buildNextRoundContext({ final_decision: { action: "reprofile", reason_codes: [], target_objective_ids: [], confidence: 1, basis: "profile_drift", policy_ref: "role-c-round-accuracy-v1" }, objective_results: [], feedback_id: "FB", grade_result: { artifact_id: "G" }, round_score: { raw_score: 1, max_score: 10, accuracy: 0.1, evidence_score: 0.1 }, mastery_snapshot: [] } as any, "SPEC-1", "REQ-1")).toBeUndefined()
+    expect(buildNextRoundContext({ final_decision: { action: "advance", reason_codes: ["ok"], target_objective_ids: ["OBJ-2"], confidence: 0.9, basis: "round_accuracy", policy_ref: "role-c-round-accuracy-v1" }, objective_results: [{ objective_id: "OBJ-2", raw_score: 9, max_score: 10, accuracy: 0.9, evidence_score: 0.9, misconception_tags: [] }], feedback_id: "FB", grade_result: { artifact_id: "G" }, round_score: { raw_score: 9, max_score: 10, accuracy: 0.9, evidence_score: 0.9 }, mastery_snapshot: [] } as any, "SPEC-1", "REQ-1", ["OBJ-2"] )?.focus_objective_ids).toEqual(["OBJ-2"])
+  })
+
+  test("public sessions expose the selected Day4 next-round action instead of forcing the UI to infer it", async () => {
+    const { createDay4NextRoundActionState } = await import("../src/orchestration/interactive-session")
+    expect(createDay4NextRoundActionState("remediate", 2, "NODE-1", "FB-1")).toEqual({
+      action: "remediate",
+      round_no: 2,
+      target_node_id: "NODE-1",
+      feedback_id: "FB-1",
+      status: "generating_next_round",
+    })
+    expect(createDay4NextRoundActionState("reprofile", 2, "NODE-1", "FB-2")).toEqual({
+      action: "reprofile",
+      round_no: 2,
+      target_node_id: "NODE-1",
+      feedback_id: "FB-2",
+      status: "waiting_for_reprofile",
+    })
+  })
 })

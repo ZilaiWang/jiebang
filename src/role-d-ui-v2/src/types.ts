@@ -136,6 +136,13 @@ export interface PublicSessionFixture {
     adaptation_summary: string
     source_feedback_refs: string[]
   } | null
+  next_round_action?: null | {
+    action: "remediate" | "reinforce" | "advance" | "reprofile"
+    round_no: number
+    target_node_id: string | null
+    feedback_id: string
+    status: "generating_next_round" | "waiting_for_reprofile"
+  }
   assessment?: { artifact_id?: string; payload: AssessmentPayload; citations: Citation[]; status: string }
   code_execution?: {
     status: "passed" | "failed" | "timeout" | "blocked"

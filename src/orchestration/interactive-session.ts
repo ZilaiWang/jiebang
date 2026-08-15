@@ -127,6 +127,16 @@ export interface ContentReviewState {
   workers: Record<"concept-tutor" | "code-lab" | "tiered-evaluator", ContentReviewWorkerState>
 }
 
+export type Day4NextRoundAction = "remediate" | "reinforce" | "advance" | "reprofile"
+
+export interface Day4NextRoundActionState {
+  action: Day4NextRoundAction
+  round_no: number
+  target_node_id: string | null
+  feedback_id: string
+  status: "generating_next_round" | "waiting_for_reprofile"
+}
+
 export interface InteractiveEvent {
   event_id: string
   event_type: "session_created" | "worker_completed" | "worker_invoked" | "waiting_for_user" | "command_received" | "session_updated" | "session_completed" | "session_blocked"
@@ -174,6 +184,8 @@ export interface InteractiveSessionRecord {
   assessment: unknown | null
   /** 本轮生成相对上一轮的适配信息（remediate/reinforce 时存在）。 */
   adaptation: unknown | null
+  /** Day4 多轮决策公开状态：测评后明确告诉 D/前端下一步动作，而不是让 UI 从 feedback 猜。 */
+  next_round_action: Day4NextRoundActionState | null
   /** 最近一次代码实验或正式测评代码运行的公开摘要；不含隐藏测试、参考答案或私有套件。 */
   code_execution: unknown | null
   feedback: unknown | null
@@ -355,6 +367,7 @@ export class InteractiveSessionStore {
       learning_resources: { concept_lesson: null, code_lab: null },
       assessment: null,
       adaptation: null,
+      next_round_action: null,
       feedback: null,
       blocked_reason: null,
       terminal_outcome: null,
@@ -1154,6 +1167,12 @@ async function continueAfterAssessment(
   record.events.push(event(record.session_id, "command_received", "assessment", "Role C accepted and graded assessment answers", new Date().toISOString(), "tiered-evaluator"))
   // 画像漂移：不推进路径、不生成下一轮，回到诊断阶段重建学习者画像。
   if (outcome.feedback.final_decision.action === "reprofile") {
+    record.next_round_action = createDay4NextRoundActionState(
+      "reprofile",
+      record.round_no,
+      currentNode.node_id,
+      outcome.feedback.feedback_id,
+    )
     try {
       return await resetToDiagnosisPhase(record, dataRoot, diagnosticQuestionAuthor)
     } catch (error) {
@@ -1233,6 +1252,12 @@ async function continueAfterAssessment(
     record.status = "running"
     record.current_stage = "assessment"
     record.waiting_for = null
+    record.next_round_action = createDay4NextRoundActionState(
+      decisionAction,
+      record.round_no,
+      recovery.nextPathNode.node_id,
+      outcome.feedback.feedback_id,
+    )
     record.events.push(event(
       record.session_id,
       "session_updated",
@@ -1304,6 +1329,12 @@ async function continueAfterAssessment(
   record.current_stage = "assessment"
   record.waiting_for = null
   record.private.next_round_context = nextRoundContext ?? null
+  record.next_round_action = createDay4NextRoundActionState(
+    decisionAction,
+    record.round_no,
+    advance.nextPathNode.node_id,
+    outcome.feedback.feedback_id,
+  )
   const backgroundStartedAt = new Date().toISOString()
   record.updated_at = backgroundStartedAt
   record.events.push(event(
@@ -1463,6 +1494,21 @@ export function buildNextRoundContext(
       ...(replannedObjectiveIds.length > 0 ? ["b_path_replanned_after_learning_stall"] : []),
     ],
     ...(misconceptionTags.length > 0 ? { misconception_tags: misconceptionTags } : {}),
+  }
+}
+
+export function createDay4NextRoundActionState(
+  action: Day4NextRoundAction,
+  roundNo: number,
+  targetNodeId: string | null,
+  feedbackId: string,
+): Day4NextRoundActionState {
+  return {
+    action,
+    round_no: roundNo,
+    target_node_id: targetNodeId,
+    feedback_id: feedbackId,
+    status: action === "reprofile" ? "waiting_for_reprofile" : "generating_next_round",
   }
 }
 
@@ -1785,6 +1831,7 @@ async function applyFormalRoleCRound(
 ): Promise<void> {
   record.blocked_reason = null
   record.terminal_outcome = null
+  record.next_round_action = null
   record.private.role_c_failed_generations = 0
   record.private.role_c_generation_recovery = null
   record.rag_result = round.rag_result
