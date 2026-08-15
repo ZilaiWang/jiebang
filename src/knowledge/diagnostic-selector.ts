@@ -23,10 +23,13 @@ export interface DiagnosticEvidenceTarget {
 /** Selects what to diagnose without selecting or copying a pre-authored question. */
 export function selectDiagnosticEvidenceTargets(input: DiagnosticSelectorInput): DiagnosticEvidenceTarget[] {
   const weakSourceIds = input.learner_memory?.weak_source_ids ?? []
+  // 优先级：目标 → 历史薄弱 → 先修。历史薄弱排先修之前，因为画像里的薄弱点
+  // 是最需要针对性诊断确认的信号；若目标+先修先把名额占满，薄弱点差异就会被淹没，
+  // 个性化筛题就退化为固定模板。
   const buckets: Array<{ label: string; sourceIds: string[] }> = [
     { label: "target", sourceIds: input.target_source_ids },
-    { label: "prerequisite", sourceIds: input.prerequisite_source_ids },
     { label: "weak_history", sourceIds: weakSourceIds },
+    { label: "prerequisite", sourceIds: input.prerequisite_source_ids },
   ]
   const selected: DiagnosticEvidenceTarget[] = []
   const seen = new Set<string>()

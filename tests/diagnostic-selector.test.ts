@@ -67,4 +67,19 @@ describe("diagnostic item selector", () => {
 
     expect(selection).toHaveLength(0)
   })
+
+  test("prioritizes weak historical concepts over prerequisites for personalized diagnosis", async () => {
+    const knowledgeBase = await loadKnowledgeBase()
+    const selection = selectDiagnosticEvidenceTargets({
+      knowledgeBase,
+      target_source_ids: ["K018"],
+      prerequisite_source_ids: ["K007", "K009"],
+      learner_memory: { weak_source_ids: ["K006"] },
+      max_items: 3,
+    })
+
+    // target(K018) → weak_history(K006) → prerequisite(K007)，薄弱点优先于先修
+    expect(selection.map((item) => item.source_id)).toEqual(["K018", "K006", "K007"])
+    expect(selection[1]).toMatchObject({ selection_reason: "weak_history" })
+  })
 })
