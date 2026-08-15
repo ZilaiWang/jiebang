@@ -34,10 +34,14 @@ bun run day4:decision:export -- \
 
 - 三份证据的 session ID 不一致；
 - feedback 与 `next_round_action` 的 ID 或动作不一致；
+- decision 与 `next_round_action` 的轮次不一致；
 - 决策之后没有观察到下一轮真实事件；
 - 决策前后没有新增的 `worker_ledger_history` 调用记录；
-- 仅有测试夹具或手工声明、没有公开 session/events 的输入。
+
+导出器只核对公开文件之间的身份、动作和调用链一致性，不能单凭 JSON 内容判断它来自真实运行还是测试夹具。因此 ledger 不自行宣称 E3，而是写入 `requires_acceptance_review`；验收时必须结合真实运行命令、模型与运行环境、原始 session/events 和失败记录独立判定证据等级。
 
 下一轮被审核阻塞时，ledger 会保留 `blocked` 和限制说明，不能写成成功发布。运行证据位于被 Git 忽略的 `.tmp/`，不得把私有 session 或 secure artifact 加入 PR。
 
 `next_round_execution.units`直接来自决策前后`worker_ledger_history`的增量，记录执行单元名称、真实执行类型、状态和产物引用。`reviewed_pipeline`、adapter与外部端口必须保持原类型，不得改写成OpenCode subagent。
+
+`decision.source`明确记录冻结决策由 Role C 的`feedback.final_decision`产生，再由主 Agent 应用到会话状态和下一轮调度；角色2只读取该结果，不重新计算业务阈值。

@@ -49,10 +49,18 @@ test("exports a real decision and observed next-round execution", async () => {
   const { entry } = await exportDay4DecisionLedger({ run_directory: run, output_file: output })
   expect(entry).toMatchObject({
     session_id: "SESSION-DAY4-1",
-    decision: { action: "reprofile", target_node_id: "NODE-1" },
+    decision: {
+      source: { decision_owner: "role-c", output_field: "feedback.final_decision", applied_by: "main-agent" },
+      action: "reprofile",
+      target_node_id: "NODE-1",
+    },
     state_transition: { from_stage: "assessment", to_stage: "objective_diagnosis" },
     next_round_execution: { observed: true, final_status: "blocked", units: [{ unit_name: "objective-diagnostician", execution_type: "model_backed_adapter", output_refs: ["diagnosis:next"] }] },
-    observability: { evidence_level: "E3", limitations: [expect.any(String)] },
+    observability: {
+      evidence_classification: "requires_acceptance_review",
+      verified_conditions: ["session_identity_matched", "feedback_action_matched", "next_round_execution_observed"],
+      limitations: [expect.any(String)],
+    },
   })
   expect(entry.evidence_refs.every((ref) => !ref.startsWith("/") && !/^[A-Za-z]:[\\/]/u.test(ref))).toBe(true)
   expect((await readFile(output, "utf8")).trim().split("\n")).toHaveLength(1)
@@ -63,6 +71,28 @@ test("rejects a hand-edited action mismatch", async () => {
   const run = await makeEvidence(root, true)
   await expect(exportDay4DecisionLedger({ run_directory: run, output_file: join(root, "out.jsonl") }))
     .rejects.toThrow("actions do not match")
+})
+
+test("rejects mismatched run identity", async () => {
+  const root = await mkdtemp(join(tmpdir(), "day4-ledger-run-mismatch-"))
+  const run = await makeEvidence(root)
+  const finalPath = join(run, "final-session.json")
+  const final = JSON.parse(await readFile(finalPath, "utf8"))
+  final.run_id = "RUN-DAY4-OTHER"
+  await writeFile(finalPath, JSON.stringify(final))
+  await expect(exportDay4DecisionLedger({ run_directory: run, output_file: join(root, "out.jsonl") }))
+    .rejects.toThrow("run ids do not match")
+})
+
+test("rejects mismatched decision round", async () => {
+  const root = await mkdtemp(join(tmpdir(), "day4-ledger-round-mismatch-"))
+  const run = await makeEvidence(root)
+  const decisionPath = join(run, "decision-session.json")
+  const decision = JSON.parse(await readFile(decisionPath, "utf8"))
+  decision.next_round_action.round_no = 2
+  await writeFile(decisionPath, JSON.stringify(decision))
+  await expect(exportDay4DecisionLedger({ run_directory: run, output_file: join(root, "out.jsonl") }))
+    .rejects.toThrow("round numbers do not match")
 })
 
 test("accepts a reviewed next round waiting for assessment in the same public round number", async () => {
@@ -78,4 +108,12 @@ test("accepts a reviewed next round waiting for assessment in the same public ro
   const { entry } = await exportDay4DecisionLedger({ run_directory: run, output_file: join(root, "out.jsonl") })
   expect(entry.next_round_execution).toMatchObject({ observed: true, final_status: "waiting_for_user", final_stage: "assessment" })
   expect(entry.observability.limitations).toEqual([])
+})
+
+test("does not self-certify fixture input as E3 evidence", async () => {
+  const root = await mkdtemp(join(tmpdir(), "day4-ledger-unclassified-"))
+  const run = await makeEvidence(root)
+  const { entry } = await exportDay4DecisionLedger({ run_directory: run, output_file: join(root, "out.jsonl") })
+  expect(entry.observability.evidence_classification).toBe("requires_acceptance_review")
+  expect(entry.observability).not.toHaveProperty("evidence_level")
 })

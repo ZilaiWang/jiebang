@@ -80,6 +80,11 @@ export interface Day4DecisionLedgerEntry {
     evidence_score: number | null
   }
   decision: {
+    source: {
+      decision_owner: "role-c"
+      output_field: "feedback.final_decision"
+      applied_by: "main-agent"
+    }
     action: Day4Action
     reason_codes: string[]
     target_objective_ids: string[]
@@ -113,7 +118,12 @@ export interface Day4DecisionLedgerEntry {
   }
   evidence_refs: string[]
   observability: {
-    evidence_level: "E3"
+    evidence_classification: "requires_acceptance_review"
+    verified_conditions: Array<
+      | "session_identity_matched"
+      | "feedback_action_matched"
+      | "next_round_execution_observed"
+    >
     limitations: string[]
   }
 }
@@ -173,6 +183,11 @@ export async function exportDay4DecisionLedger(input: {
       evidence_score: finiteOrNull(score.evidence_score),
     },
     decision: {
+      source: {
+        decision_owner: "role-c",
+        output_field: "feedback.final_decision",
+        applied_by: "main-agent",
+      },
       action,
       reason_codes: decision.feedback.final_decision.reason_codes ?? [],
       target_objective_ids: decision.feedback.final_decision.target_objective_ids ?? [],
@@ -206,7 +221,12 @@ export async function exportDay4DecisionLedger(input: {
     },
     evidence_refs: refs,
     observability: {
-      evidence_level: "E3",
+      evidence_classification: "requires_acceptance_review",
+      verified_conditions: [
+        "session_identity_matched",
+        "feedback_action_matched",
+        "next_round_execution_observed",
+      ],
       limitations: final.status === "blocked"
         ? ["下一轮真实调用已经发生，但本次运行最终被发布门禁阻塞。"]
         : [],
@@ -225,6 +245,9 @@ function validateEvidence(decision: PublicSessionSnapshot, final: PublicSessionS
   if (!decision.session_id || decision.session_id !== final.session_id || decision.session_id !== events.session_id) {
     throw new Error("session ids do not match across Day4 evidence files")
   }
+  if (decision.run_id && final.run_id && decision.run_id !== final.run_id) {
+    throw new Error("run ids do not match across Day4 evidence files")
+  }
   if (!decision.feedback?.final_decision || !decision.next_round_action) {
     throw new Error("decision snapshot lacks feedback or next_round_action")
   }
@@ -233,6 +256,9 @@ function validateEvidence(decision: PublicSessionSnapshot, final: PublicSessionS
   }
   if (decision.feedback.final_decision.action !== decision.next_round_action.action) {
     throw new Error("feedback and next_round_action actions do not match")
+  }
+  if (decision.round_no !== decision.next_round_action.round_no) {
+    throw new Error("decision and next_round_action round numbers do not match")
   }
 }
 
