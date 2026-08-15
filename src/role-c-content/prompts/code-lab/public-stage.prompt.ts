@@ -9,6 +9,10 @@ const JSON_ONLY = "只输出满足本次 output schema 的 JSON 对象，不输�
  * Code Lab 公开创作阶段提示词。
  * 只生成 public author payload（任务说明、starter、公开测试、提示、反思题）。
  *
+ * 门禁定位：报错 STDIN_FUNCTION_CONTRACT_MISMATCH / FUNCTION_OUTPUT_CONTRACT_MISMATCH 时，
+ * 先查下方「execution_contract 执行方式」段。execution_mode 由编排器确定性冻结，
+ * 模型只抄写不更改（详见 providers/staged-generation.ts 的 codeLabExecutionContractIssues）。
+ *
  * 教学设计指导（队友可编辑）：
  * - instruction：解释"这个步骤为什么需要"和"它和整体任务的关系"，不只是重复 evidence
  * - starter：保留函数签名和必要导入，核心逻辑用 TODO 留空，让学习者有明确起点
@@ -33,9 +37,10 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - observable_behavior 为 recognize 或 explain 时，把非目标语法作为已给骨架，只让学习者补全能体现当前事实的最小部分；不得要求 type/print/循环/条件/容器等 evidence 未提供的旁支知识
 
 【execution_contract 执行方式】
-- 先依据当前 facts 决定唯一执行方式，再生成其余字段；所有文字、starter 和测试必须服从该方式
-- facts 的可观察行为是读取输入、打印或屏幕输出时，使用 stdin_stdout：不设置 entry_point，任务描述为完整程序从标准输入读取并向标准输出写出结果
-- facts 支持把参数转换为可 JSON 序列化结果时，才使用 function：设置 entry_point，任务描述为实现并返回结果，不把 print 或标准输出作为答案
+- execution_mode 已由编排器根据当前学习目标确定性冻结，取值就是 staged_contract.execution_mode；你**不得自行判断或更改模式**，只在这个已冻结的模式下创作其余字段（文字、starter、测试、input/output 合同描述）
+- 冻结为 stdin_stdout：不设置 entry_point；任务描述为完整程序从标准输入读取并向标准输出写出结果；input_contract/output_contract 描述标准输入文本与标准输出文本
+- 冻结为 function：设置与 starter 函数签名一致的 entry_point；任务描述为实现并返回结果，不把 print 或标准输出作为答案；input_contract/output_contract 描述参数类型与返回值类型
+- execution_contract 里的 execution_mode 直接抄写 staged_contract.execution_mode，不要写成另一个值
 
 【starter_code 起始代码】
 - function 模式：提供与 entry_point 完全一致的函数签名和必要导入，用 TODO 注释标出需要完成的部分
@@ -65,10 +70,9 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 1. 输出只含 title、execution_contract、starter_code、objectives。objectives 数量、顺序必须与 staged_contract.objective_plan 一致；每项只含 instruction_text、public_test、hints、reflection_question。
 2. function 模式下每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}；即使只有一个参数也放入 args，不能用参数名直接组成普通对象。
-3. function 模式只会校验入口函数的返回值，必须返回可 JSON 序列化的结果；以 print/标准输出为结果的任务必须选用 stdin_stdout 模式。
-   - function：instruction、starter、公开测试都围绕 entry_point；不得把 print/标准输出当评分结果。
+3. execution_mode 已经冻结（见 staged_contract.execution_mode），你只需严格遵守，不得混用另一模式的措辞、输入封装或 starter 结构：
+   - function：instruction、starter、公开测试都围绕 entry_point；不得把 print/标准输出当评分结果；每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}。
    - stdin_stdout：instruction、starter、公开测试都围绕完整程序的标准输入和标准输出；不得要求学习者提交入口函数或把入口函数的返回值作为评分结果。
-   - 选择模式后不得混用另一模式的措辞、输入封装或 starter 结构。
 4. 不得出现参考解、隐藏测试输入或期望值、评分组、mutation、答案或 test_suite_id。
 5. 每个 objective 写一条 instruction、一个公开测试、恰好三级提示和一个反思问题；不得返回 lab_id、objective_id、block_id、test_id、citation、Claim、coverage 或 used_evidence。
 6. 教学文字只使用 evidence.facts；输入中不存在事实身份的示例和练习不会作为可发表知识提供。编排器会把冻结事实作为 Claim 附加到 instruction。

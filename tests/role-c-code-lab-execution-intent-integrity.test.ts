@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { normalizeCodeLabPublicAuthorPayload } from "../src/role-c-content/providers/model-backed-provider"
-import { CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT } from "../src/role-c-content/prompts/code-lab/public-stage.prompt"
 import {
   validateCodeLabPublicAuthorAgainstPlan,
   type CodeLabObjectivePlan,
@@ -8,14 +7,6 @@ import {
 } from "../src/role-c-content/providers/staged-generation"
 
 describe("Role C code-lab execution intent integrity", () => {
-  test("authors one execution mode consistently from the evidence", () => {
-    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("先依据当前 facts 决定唯一执行方式")
-    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("stdin_stdout 模式：提供完整程序骨架")
-    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("证据中关于 input() 等内置函数会返回什么的知识仍可正常讲解")
-    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("使用不带提示参数的 input()")
-    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("不能只描述其中一部分")
-  })
-
   test("does not silently change a function task into stdin/stdout", () => {
     const payload: CodeLabPublicAuthorPayload = {
       title: "问候函数",

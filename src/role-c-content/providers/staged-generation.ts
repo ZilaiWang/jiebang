@@ -499,6 +499,74 @@ export function normalizeConceptSegment(
   return normalized
 }
 
+export type CodeLabExecutionMode = "function" | "stdin_stdout"
+
+/**
+ * 从 A 角色提供的知识点标题 + 事实文本，确定性推导 code lab 的执行方式。
+ *
+ * 为什么不用模型二选一：execution_mode 是"代码实验如何执行与判分"的结构决策，
+ * 一旦让模型自由输出，它可能"选了 stdin_stdout 却按 function 习惯写 def/entry_point"，
+ * 进而触发 STDIN_FUNCTION_CONTRACT_MISMATCH 门禁。把这一决策收敛为可复现的规则，
+ * 让模型只负责"在既定模式下写内容"，才是稳定性的根本保证。
+ *
+ * 规则（确定性、可测试）：
+ * 1. 教学主题围绕"函数/参数/返回值"（def、参数、返回值、lambda、封装）→ function；
+ * 2. 否则主题围绕"输入输出/交互"（input、print、stdin、stdout、屏幕输出、读取用户输入）→ stdin_stdout；
+ * 3. 都不命中（循环、列表、运算等中性知识点）→ 按学习者水平兜底：beginner/basic 用 stdin_stdout（更直观），
+ *    intermediate/integrated 用 function（更贴近抽象）。
+ */
+export function deriveCodeLabExecutionMode(
+  request: CodeLabRequest,
+): CodeLabExecutionMode {
+  const targetSources = new Set(request.generation_spec.path_node.target_source_ids)
+  const evidence = request.evidence_pack.results.filter((item) => targetSources.has(item.source_id))
+  const surface = [
+    ...evidence.map((item) => item.title),
+    ...evidence.flatMap((item) => item.facts.map((fact) => fact.content)),
+  ].join(" ").normalize("NFKC").toLocaleLowerCase()
+
+  const functionSignal = /(?:函数|参数|返回值|\bdef\b|\breturn\b|lambda|封装|回调)/u.test(surface)
+  const ioSignal = /(?:输入输出|标准输入|标准输出|stdin|stdout|读取用户输入|屏幕输出|交互式|\binput\b|\bprint\b)/u.test(surface)
+
+  if (functionSignal) return "function"
+  if (ioSignal) return "stdin_stdout"
+
+  const level = request.generation_spec.learner_adaptation.level
+  return level === "beginner" || level === "basic" ? "stdin_stdout" : "function"
+}
+
+/**
+ * 用程序推导出的 execution_mode 冻结执行合同的"确定性骨架"，只保留模型的语义描述。
+ *
+ * - language：恒 python（模型无需输出）
+ * - execution_mode：以程序推导为准（模型写错也强制修正）
+ * - entry_point：stdin_stdout 强制移除；function 保留模型命名（其存在性由 analyzePythonSource 校验）
+ * - resource_limits：钳制到 schema 合法范围（模型可填，但不会因越界而失败）
+ * - input_contract/output_contract 的 type/constraints：保留模型（教学语义，贴合实时内容）
+ */
+export function freezeCodeLabExecutionContract(
+  contract: ExecutionContract,
+  mode: CodeLabExecutionMode,
+): ExecutionContract {
+  const frozen: ExecutionContract = structuredClone(contract)
+  frozen.language = "python"
+  frozen.execution_mode = mode
+  if (mode === "stdin_stdout") {
+    delete frozen.entry_point
+  }
+  frozen.resource_limits = {
+    timeout_ms: clampInt(frozen.resource_limits.timeout_ms, 100, 5000, 1000),
+    memory_mb: clampInt(frozen.resource_limits.memory_mb, 32, 512, 64),
+    max_output_bytes: clampInt(frozen.resource_limits.max_output_bytes, 256, 100_000, 1024),
+  }
+  return frozen
+}
+
+function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
 export function buildLabIdentity(spec: GenerationSpec) {
   const labId = stableId("LAB", {
     spec_id: spec.spec_id,
@@ -1602,7 +1670,7 @@ function codeLabExecutionContractIssues(
   ].join(" ").normalize("NFKC").toLocaleLowerCase()
   const explicitFunctionTask = learnerVisibleText.find((text) =>
     /(?:编写|定义|实现|提交)\s*(?:(?:一个|一个名为|名为|名叫|指定的)\s*)?(?:[A-Za-z_]\w*\s*)?(?:函数|function)/iu.test(text)
-    || /(?:你(?:编写|定义|实现|提交)的|该|此|上述|入口|目标)\s*(?:[A-Za-z_]\w*\s*)?(?:函数|function).{0,16}(?:返回|return)/iu.test(text))
+    || /(?:你(?:编写|定义|实现|提交)的|入口|目标)\s*(?:[A-Za-z_]\w*\s*)?(?:函数|function).{0,16}(?:返回|return)/iu.test(text))
   const hasFunctionContract = /(?:function\s*(?:arguments?|call|return(?:\s+value)?)|函数(?:参数|调用|返回值)|入口函数|函数调用封装)/iu.test(contractText)
   const hasFunctionStarter = /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)
   if (contract.entry_point?.trim()) {

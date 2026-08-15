@@ -325,6 +325,10 @@ function isEmptyFunctionInvocationEnvelope(input: unknown): boolean {
 
 function carriesPrivateTestCase(input: unknown): boolean {
   if (isEmptyFunctionInvocationEnvelope(input)) return false
+  // 空 stdin 输入（""）是「无输入」协议：纯输出任务（只 print 不读输入）的
+  // public/hidden input 都应为空，其区分点在于 expected 输出内容本身，
+  // 此时 input 相同（都是空）不构成隐藏测试泄漏。
+  if (input === "") return false
   if (input && typeof input === "object" && !Array.isArray(input)) {
     const record = input as Record<string, unknown>
     if (Object.keys(record).every((key) => key === "args" || key === "kwargs")) return true
