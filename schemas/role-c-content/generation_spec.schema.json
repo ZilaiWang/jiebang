@@ -96,7 +96,7 @@
       "type": "object", "required": ["external_knowledge_allowed", "citation_required", "max_semantic_revision", "max_tool_retry", "seed"],
       "properties": {
         "external_knowledge_allowed": { "const": false }, "citation_required": { "const": true },
-        "max_semantic_revision": { "const": 1 }, "max_tool_retry": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "max_semantic_revision": { "enum": [1, 2] }, "max_tool_retry": { "type": "integer", "minimum": 0, "maximum": 2 },
         "seed": { "type": "integer" }
       },
       "additionalProperties": false

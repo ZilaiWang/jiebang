@@ -1,9 +1,9 @@
 {
   "workflow": "Day5_Learner_Runs",
-  "generated_at": "2026-08-16T10:45:38",
+  "generated_at": "2026-08-16T19:14:18",
   "results": [
     {
-      "learner_id": "day5-e40a0659d9",
+      "learner_id": "day5-29b388b1f0",
       "archetype": "new",
       "goal": "学习 Python for 循环",
       "status": "waiting_for_user",
@@ -22,7 +22,7 @@
       },
       "path_nodes": [
         {
-          "node_id": "FN-K007-S1-1786853040088",
+          "node_id": "FN-K007-S1-1786878290147",
           "status": "in_progress",
           "title": null
         }
@@ -32,10 +32,10 @@
       "adaptation": "remediate",
       "blocked_reason": null,
       "name": "林晓",
-      "attempts": 4
+      "attempts": 2
     },
     {
-      "learner_id": "day5-8e82ae51e5",
+      "learner_id": "day5-3fa7bd443b",
       "archetype": "beginner",
       "goal": "能独立完成一个带循环的成绩统计程序",
       "status": "waiting_for_user",
@@ -53,7 +53,7 @@
       },
       "path_nodes": [
         {
-          "node_id": "FN-K009-S1-1786885002593",
+          "node_id": "FN-K009-S1-1786878344370",
           "status": "in_progress",
           "title": null
         }
@@ -63,10 +63,10 @@
       "adaptation": "reinforce",
       "blocked_reason": null,
       "name": "陈昊",
-      "attempts": 2
+      "attempts": 1
     },
     {
-      "learner_id": "day5-b98b65591d",
+      "learner_id": "day5-2cef9038d4",
       "archetype": "intermediate",
       "goal": "用 Python 做一个可以读取成绩文件并统计平均分的工具",
       "status": "waiting_for_user",
@@ -87,12 +87,12 @@
       },
       "path_nodes": [
         {
-          "node_id": "FN-K007-S1-1786853134822",
+          "node_id": "FN-K007-S1-1786878483431",
           "status": "in_progress",
           "title": null
         },
         {
-          "node_id": "FN-K009-S2-1786853134822",
+          "node_id": "FN-K009-S2-1786878483431",
           "status": "pending",
           "title": null
         }
@@ -105,7 +105,7 @@
       "attempts": 1
     },
     {
-      "learner_id": "day5-51686bc068",
+      "learner_id": "day5-833705bfc5",
       "archetype": "intermediate",
       "goal": "学习 Python 文件读写",
       "status": "waiting_for_user",
@@ -125,22 +125,22 @@
       },
       "path_nodes": [
         {
-          "node_id": "FN-K001-S1-1786853210621",
+          "node_id": "FN-K001-S1-1786878611765",
           "status": "completed",
           "title": null
         },
         {
-          "node_id": "FN-K002-S2-1786853210621",
+          "node_id": "FN-K002-S2-1786878611765",
           "status": "in_progress",
           "title": null
         },
         {
-          "node_id": "FN-K003-S3-1786853210621",
+          "node_id": "FN-K003-S3-1786878611765",
           "status": "pending",
           "title": null
         },
         {
-          "node_id": "FN-K015-S4-1786853210621",
+          "node_id": "FN-K015-S4-1786878611765",
           "status": "pending",
           "title": null
         }
@@ -150,10 +150,10 @@
       "adaptation": "advance",
       "blocked_reason": null,
       "name": "王芳",
-      "attempts": 2
+      "attempts": 6
     },
     {
-      "learner_id": "day5-9cd69ff174",
+      "learner_id": "day5-cbe9a7e226",
       "archetype": "advanced",
       "goal": "用 Python 完成一个成绩统计器综合项目",
       "status": "completed",
@@ -172,7 +172,7 @@
       },
       "path_nodes": [
         {
-          "node_id": "FN-K018-S1-1786885193038",
+          "node_id": "FN-K018-S1-1786878833636",
           "status": "completed",
           "title": null
         }
@@ -182,7 +182,7 @@
       "adaptation": null,
       "blocked_reason": null,
       "name": "李强",
-      "attempts": 1
+      "attempts": 6
     }
   ]
 }

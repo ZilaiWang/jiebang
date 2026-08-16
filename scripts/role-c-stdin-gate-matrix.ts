@@ -25,7 +25,7 @@ import { deriveCodeLabExecutionMode } from "../src/role-c-content/providers/stag
 type Scenario = {
   sourceId: string
   level: LearnerProfile["level"]
-  behavior: "apply" | "trace"
+  behavior: "apply" | "trace" | "create"
   label: string
   expect: "stdin_stdout" | "function" | "neutral"
 }
@@ -37,6 +37,7 @@ const SCENARIOS: Scenario[] = [
   { sourceId: "K007", level: "beginner", behavior: "apply", label: "for循环/beginner", expect: "neutral" },
   { sourceId: "K007", level: "intermediate", behavior: "apply", label: "for循环/intermediate", expect: "neutral" },
   { sourceId: "K009", level: "beginner", behavior: "apply", label: "列表/beginner", expect: "neutral" },
+  { sourceId: "K018", level: "integrated", behavior: "apply", label: "成绩统计器综合项目", expect: "stdin_stdout" },
 ]
 
 function argFlag(args: string[], name: string): string | undefined {

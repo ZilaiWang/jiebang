@@ -520,16 +520,27 @@ export function deriveCodeLabExecutionMode(
 ): CodeLabExecutionMode {
   const targetSources = new Set(request.generation_spec.path_node.target_source_ids)
   const evidence = request.evidence_pack.results.filter((item) => targetSources.has(item.source_id))
+  const goal = (request.generation_spec.path_node.goal ?? "").normalize("NFKC").toLocaleLowerCase()
   const surface = [
     ...evidence.map((item) => item.title),
     ...evidence.flatMap((item) => item.facts.map((fact) => fact.content)),
   ].join(" ").normalize("NFKC").toLocaleLowerCase()
 
-  const functionSignal = /(?:函数|参数|返回值|\bdef\b|\breturn\b|lambda|封装|回调)/u.test(surface)
+  // 强函数信号：代码关键字 def/return/lambda/回调，是"必须写函数"的硬信号。
+  // 中文"函数/封装"只作为次强信号，因为它常是"可练习函数/封装可提升复用性"这类教学建议，
+  // 而非任务接口要求——若把建议当接口，会把"成绩统计器"这类输出型综合任务误判成 function。
+  const codeFunctionSignal = /\bdef\b|\breturn\b|lambda|回调/u.test(surface)
   const ioSignal = /(?:输入输出|标准输入|标准输出|stdin|stdout|读取用户输入|屏幕输出|交互式|\binput\b|\bprint\b)/u.test(surface)
+  // 输出型任务信号：目标明确要求"读取/统计/输出/打印/程序/工具"等，是"产出可运行程序"的信号。
+  const outputGoalSignal = /(?:读取|统计|输出|打印|显示|计算|制作|工具|程序|成绩|平均|总和|文件|写入)/u.test(goal)
 
-  if (functionSignal) return "function"
+  // 优先级：代码函数信号（函数专题）→ 输出型 goal（产出程序的综合任务）→ IO 信号 → 中文函数主题 → level 兜底
+  if (codeFunctionSignal) return "function"
+  if (outputGoalSignal) return "stdin_stdout"
   if (ioSignal) return "stdin_stdout"
+
+  const chineseFunctionSignal = /(?:函数|参数|返回值|封装)/u.test(surface)
+  if (chineseFunctionSignal) return "function"
 
   const level = request.generation_spec.learner_adaptation.level
   return level === "beginner" || level === "basic" ? "stdin_stdout" : "function"
@@ -553,6 +564,9 @@ export function freezeCodeLabExecutionContract(
   frozen.execution_mode = mode
   if (mode === "stdin_stdout") {
     delete frozen.entry_point
+    // stdin_stdout 的输出就是标准输出文本，程序确定 kind=string，
+    // 避免模型把"输出平均分"等写成数值语义，导致 hidden_tests[].expected 类型与输出合同错配。
+    frozen.output_contract.kind = "string"
   }
   frozen.resource_limits = {
     timeout_ms: clampInt(frozen.resource_limits.timeout_ms, 100, 5000, 1000),
@@ -890,6 +904,13 @@ export function normalizeCodeLabSecureAuthorPayloadLenient(
     if (test.comparison.kind === "numeric" && typeof test.expected === "string") {
       const coerced = Number(test.expected.trim())
       if (Number.isFinite(coerced)) test.expected = coerced
+    }
+    // stdin_stdout 模式：标准输出必是文本，expected 统一字符串化，
+    // 避免"输出平均分"这类任务里模型把 expected 写成数字导致类型错配。
+    if (executionMode === "stdin_stdout" && typeof test.expected !== "string") {
+      test.expected = Array.isArray(test.expected) || (test.expected && typeof test.expected === "object")
+        ? JSON.stringify(test.expected)
+        : String(test.expected)
     }
     if (executionMode === "function") {
       // Shape normalization must not rewrite executable semantics: changing a
