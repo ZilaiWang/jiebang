@@ -236,8 +236,8 @@ def main():
             print(f"  -> status={r.get('status')} level={prof.get('level')} "
                   f"known={len(prof.get('known_concepts') or [])} weak={len(prof.get('weak_concepts') or [])} "
                   f"decision={r.get('decision_action')}", flush=True)
-            # 完整跑通 = status=waiting_for_user（第二轮资源生成成功）
-            if r.get("status") == "waiting_for_user":
+            # 完整跑通 = waiting_for_user（等待下一轮）或 completed（学完）
+            if r.get("status") in ("waiting_for_user", "completed"):
                 break
         r["name"] = name
         r["attempts"] = attempt
