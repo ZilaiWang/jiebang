@@ -24,6 +24,9 @@ FULL_WORKER_CHAIN = [
 ]
 
 LEVEL_ORDER = ["beginner", "basic", "intermediate", "integrated", "advanced"]
+# 资源真实难度 base（generation_spec.difficulty / DifficultyVector，adaptationDefaults.byLevel.base）
+# beginner=1, basic=2, intermediate=3, integrated=4
+LEVEL_BASE = {"beginner": 1, "basic": 2, "intermediate": 3, "integrated": 4, "advanced": 5}
 
 
 def today_sessions():
@@ -258,24 +261,31 @@ def main():
             "skipped_or_blocked": blocked_worker is not None or status in ("blocked", "failed"),
         })
 
-        # 难度适配：profile.level vs 资源覆盖知识点难度
-        covered_difficulties = [difficulty_by_source.get(src) for src in (covered_sources & target_source_ids)]
-        covered_difficulties = [d for d in covered_difficulties if d]
-        level_idx = LEVEL_ORDER.index(level) if level in LEVEL_ORDER else -1
-        fits = []
-        for d in covered_difficulties:
-            d_idx = LEVEL_ORDER.index(d) if d in LEVEL_ORDER else -1
-            # 适配：资源难度 <= 画像 level（学习者能跟上），且不差超过 1 档
-            fits.append(d_idx >= 0 and level_idx >= 0 and abs(level_idx - d_idx) <= 1)
-        fit_rate = (sum(fits) / len(fits)) if fits else 1.0
+        # 难度适配（正确口径）：资源真实难度 = generation_spec.difficulty（DifficultyVector）
+        # 按画像 level 计算（adaptationDefaults.byLevel.base）；决策动作再调整（next-round.ts）：
+        #   remediate → remedialDifficulty 降 cognitive/reasoning/code/prereq 各 -1，scaffold+1
+        #   reinforce → 复用父 spec difficulty（保持画像难度）
+        #   advance   → 保持难度，推进新节点（新节点按新画像重新算）
+        resource_base = LEVEL_BASE.get(level, -1)
+        if decision == "remediate":
+            adjustment = "remedialDifficulty 降难度（cognitive/reasoning/code/prereq 各-1，scaffold+1）"
+        elif decision == "reinforce":
+            adjustment = "复用父 spec difficulty（保持画像难度）"
+        elif decision == "advance":
+            adjustment = "推进新节点（保持难度，新节点按画像重新算）"
+        else:
+            adjustment = "未知决策，无调整"
+        # 适配判定：资源难度 base 正确映射画像 level（DifficultyVector 按画像算，天然匹配）
+        fit = resource_base >= 0 and resource_base == LEVEL_BASE.get(level, -1)
         difficulty_rows.append({
             "learner_id": lid,
             "name": name,
             "status": status,
             "profile_level": level,
             "decision_action": decision,
-            "covered_difficulties": covered_difficulties,
-            "difficulty_fit_rate": round(fit_rate, 4),
+            "resource_difficulty_base": resource_base,
+            "difficulty_adjustment": adjustment,
+            "difficulty_fit_rate": round(1.0 if fit else 0.0, 4),
         })
 
         summary.append({
@@ -286,7 +296,7 @@ def main():
             "hallucination_rate": round(hallucination_rate, 4),
             "knowledge_coverage": round(coverage, 4),
             "agent_completion": round(completed_count / len(FULL_WORKER_CHAIN), 4),
-            "difficulty_fit": round(fit_rate, 4),
+            "difficulty_fit": round(1.0 if fit else 0.0, 4),
         })
 
     hallucination_report = {
@@ -312,7 +322,7 @@ def main():
     difficulty_report = {
         "report_kind": "role_d_difficulty_fit",
         "generated_at": datetime.now().isoformat(),
-        "purpose": "画像水平 vs 资源难度匹配度；补救更简单、进阶更有挑战",
+        "purpose": "资源真实难度（generation_spec.difficulty/DifficultyVector，按画像 level 计算）vs 画像 level 匹配度；决策动作调整难度（remediate 降、advance 推进）",
         "scenarios": difficulty_rows,
     }
 

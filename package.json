@@ -22,7 +22,8 @@
     "test:role-c:real": "bun scripts/role-c-real-model-smoke.ts",
     "test:role-c:regenerate": "bun -e \"import { clearRoleCFixtureCache } from \"./tests/helpers/role-c-fixture-cache\"; clearRoleCFixtureCache(); console.log(\"fixture cache cleared\")\"",
     "day4:multiround:run": "bun scripts/day4-multiround-acceptance.ts",
-    "day4:decision:export": "bun scripts/opencode-orchestrator-day4-decision.ts"
+    "day4:decision:export": "bun scripts/opencode-orchestrator-day4-decision.ts",
+    "day5:collaboration:export": "bun scripts/opencode-orchestrator-day5-metrics.ts"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.17.20",
