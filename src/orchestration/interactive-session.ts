@@ -1900,6 +1900,9 @@ function publicAssessmentHistory(assessment: unknown): PriorAssessmentItem[] {
       prompt: value.prompt,
       options,
       ...(typeof value.starter_code === "string" ? { starter_code: value.starter_code } : {}),
+      ...(isRecord(value.structure_meta)
+        ? { structure_meta: value.structure_meta as unknown as PriorAssessmentItem["structure_meta"] }
+        : {}),
     }]
   })
 }

@@ -143,6 +143,9 @@ export async function buildInitialRoleCContext(input: {
     ),
     observable_behavior: behaviors[index]!,
     importance: "core" as const,
+    // 路径第一个目标是本轮主修目标：primaryBehavior 对应的 source 即
+    // code-lab 执行契约的决定者，显式标记避免依赖数组位置。
+    is_primary: index === 0 ? (true as const) : undefined,
   }))
   const assessmentBlueprint = blueprintForBehaviors(behaviors)
   const pathNode = defineLearningPathNode({

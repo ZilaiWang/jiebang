@@ -116,8 +116,43 @@ describe("Role C code-lab execution intent integrity", () => {
       citations: [{ source_id: "K004", fact_id: "F001", relation: "derived_from" }],
     }]
 
-    expect(validateCodeLabPublicAuthorAgainstPlan(payload, plan)).toContain(
-      "STDIN_FUNCTION_CONTRACT_MISMATCH: 公开任务要求学习者提交函数，与 stdin_stdout 的完整程序接口冲突：实现一个 solve 函数并返回处理结果。",
-    )
+    expect(validateCodeLabPublicAuthorAgainstPlan(payload, plan).some((issue) =>
+      issue.includes("STDIN_FUNCTION_CONTRACT_MISMATCH")
+      && issue.includes("函数作为外部提交接口"),
+    )).toBe(true)
+  })
+
+  test("stdin/stdout 完整程序允许使用辅助函数组织逻辑", () => {
+    const payload: CodeLabPublicAuthorPayload = {
+      title: "成绩统计程序",
+      execution_contract: {
+        language: "python",
+        execution_mode: "stdin_stdout",
+        input_contract: { type: "stdin text", constraints: ["第一行为数量"] },
+        output_contract: { type: "stdout text", constraints: ["输出平均分"] },
+        allowed_imports: [],
+        resource_limits: { timeout_ms: 1000, memory_mb: 64, max_output_bytes: 4096 },
+      },
+      starter_code: "def average(scores):\n    # TODO\n    return 0\n\nn = int(input())\nscores = list(map(int, input().split()))\nprint(average(scores))\n",
+      objectives: [{
+        instruction_text: "编写完整程序，从标准输入读取成绩；可定义 average 辅助函数计算平均分，最后打印结果。",
+        public_test: {
+          description: "输入三个成绩",
+          input: "3\n80 90 100\n",
+          expected_behavior: "标准输出为 90",
+        },
+        hints: ["读取输入", "在辅助函数中计算", "使用 print 输出"],
+        reflection_question: "判题器比较的是返回值还是标准输出？",
+      }],
+    }
+    const plan: CodeLabObjectivePlan[] = [{
+      objective_id: "OBJ-1",
+      source_id: "K018",
+      instruction_block_id: "BLOCK-1",
+      public_test_id: "TEST-1",
+      citations: [{ source_id: "K018", fact_id: "F001", relation: "derived_from" }],
+    }]
+
+    expect(validateCodeLabPublicAuthorAgainstPlan(payload, plan)).toEqual([])
   })
 })

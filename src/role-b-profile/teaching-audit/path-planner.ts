@@ -210,6 +210,9 @@ function buildPathResult(
     required_fact_ids: [],
     observable_behavior: index === 0 ? "recognize" as const : index === 1 ? "apply" as const : "create" as const,
     importance: "core" as const,
+    // 恢复路径的第一项是"当前最缺的先修"，即本轮真正的主修目标；
+    // 显式标记 primary，避免 code-lab 契约依赖数组位置推断。
+    is_primary: index === 0 ? (true as const) : undefined,
   }))
 
   const blueprint: AssessmentBlueprint = items.length >= 3

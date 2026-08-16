@@ -42,9 +42,16 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - 冻结为 function：设置与 starter 函数签名一致的 entry_point；任务描述为实现并返回结果，不把 print 或标准输出作为答案；input_contract/output_contract 描述参数类型与返回值类型
 - execution_contract 里的 execution_mode 直接抄写 staged_contract.execution_mode，不要写成另一个值
 
+【task_contract 完整任务契约（存在时强制遵循）】
+- staged_contract.task_contract 给出本实验的完整判题契约：program_entry（程序入口）、input_form（输入形式）、output_form（输出形式）、grading_invocation（判题调用方式）、output_constraint（输出约束）。
+- 你创作的 instruction、starter_code、public_test、execution_contract 必须与这些字段一致：
+  - input_form=stdin_lines 时，题目的外部输入是标准输入文本，不得把函数参数当作判题入口；output_form=stdout_lines 时，评分产物是标准输出文本，不得把函数返回值当作判题结果。完整程序内可以定义辅助函数来组织逻辑。
+  - input_form=function_arguments 时，判题器以参数调用入口函数；output_form=return_value 时，评分产物是函数返回值，不得把 print 输出作为评分结果。
+- 若 staged_contract 没有 task_contract（旧路径），按上方 execution_mode 规则执行。
+
 【starter_code 起始代码】
 - function 模式：提供与 entry_point 完全一致的函数签名和必要导入，用 TODO 注释标出需要完成的部分
-- stdin_stdout 模式：提供完整程序骨架和 TODO；starter 不得出现 def、entry_point 或 return，任务不得要求学习者提交入口函数或把函数返回值作为评分结果。证据中关于 input() 等内置函数会返回什么的知识仍可正常讲解
+- stdin_stdout 模式：提供拥有标准输入和标准输出的完整程序骨架和 TODO；不得设置 entry_point，也不得要求学习者只提交函数或把函数返回值作为评分结果。完整程序内允许使用 def/return 定义辅助函数，但主程序仍必须读取 stdin 并写入 stdout。
 - 核心逻辑必须留空（function 模式函数体写 pass 或 raise NotImplementedError("TODO")；stdin_stdout 模式只保留安全的读取/输出骨架或 TODO），不得包含实际答案逻辑
 - 绝对不可：写 return 语句返回计算结果、写完整的循环体或条件判断、写任何可能通过测试的代码
 - 宁可太简单被安全门禁退回，也不可写出接近答案的代码

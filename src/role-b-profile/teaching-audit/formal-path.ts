@@ -471,6 +471,7 @@ function createFormalNode(
     required_fact_ids: [],
     observable_behavior: behavior,
     importance: "core" as const,
+    is_primary: true as const,
   }]
 
   const blueprint: AssessmentBlueprint = {

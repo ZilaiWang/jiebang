@@ -202,6 +202,7 @@ export async function prepareRoleCWeek3Input(
         targetItems.length,
       ),
       importance: "core" as const,
+      is_primary: index === 0 ? (true as const) : undefined,
     })),
     assessment_blueprint: assessmentBlueprint(
       targetItems.length,

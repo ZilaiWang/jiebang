@@ -1,5 +1,24 @@
 import type { ArtifactEnvelope, CitationRef } from "./common"
 
+/**
+ * 题目结构元数据（GPT 评审建议的 6 元组中的任务侧 5 维；objective_id 在
+ * AssessmentItemPublic 顶层）。由模型在命制题面时显式填写，novelty 校验
+ * 按结构元数据判断"任务结构是否重复"，而不是靠文本正则猜。
+ *
+ * - operation：目标操作（如 遍历求和 / 条件分支 / 函数封装 / 列表推导）
+ * - reasoning_pattern：推理模式（如 单步映射 / 多步链式 / 边界辨析 / 迁移泛化）
+ * - representation：表示形式（如 列表 / 字典 / 嵌套结构 / 代码块）
+ * - context_family：情境类别（如 成绩统计 / 购物清单 / 文本处理），换情境不算重复
+ * - answer_form：作答形式（如 单选 / 输出数字 / 代码片段）
+ */
+export interface AssessmentStructureMeta {
+  operation: string
+  reasoning_pattern: string
+  representation: string
+  context_family: string
+  answer_form: string
+}
+
 export interface HeadingBlock {
   block_id: string
   block_type: "heading"
@@ -228,6 +247,8 @@ export interface AssessmentItemPublic {
   starter_code?: string
   max_score: number
   citations: CitationRef[]
+  /** 命题时填写的任务结构元数据；novelty 校验用它做结构级去重（可空，旧题回退文本签名）。 */
+  structure_meta?: AssessmentStructureMeta
 }
 
 export interface AssessmentObjectiveCoverage {

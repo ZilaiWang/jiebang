@@ -11,6 +11,7 @@ import { adaptRagResult } from "../role-c-content/contracts/evidence-pack"
 import { buildGenerationSpec } from "../role-c-content/contracts/generation-spec"
 import { generateConceptLesson } from "../role-c-content/agents/concept-tutor"
 import { generateCodeLab } from "../role-c-content/agents/code-lab"
+import { buildResourceBlueprint } from "../role-c-content/planning/resource-blueprint"
 import { generateAssessment } from "../role-c-content/agents/tiered-evaluator"
 // 确定性模板 Provider 已于 2026-08 删除。
 // 请改用 ModelBackedRoleCContentProvider 并确保模型已配置。
@@ -390,10 +391,16 @@ async function runDeterministicWorkerAdapter(
     if (!conceptArtifact.ok) return conceptArtifact.result
 
     const runner = await createDockerPythonCodeRunnerFromEnv(process.env)
+    // 与 content-pipeline 一致：先构建 ResourceBlueprint（CodeLabTaskContract 由
+    // planning 层决定执行接口），不再让生成阶段静默回退 deriveCodeLabExecutionMode。
+    const spec = conceptArtifact.value.generation_spec
+    const evidencePack = conceptArtifact.value.evidence_pack
+    const resourceBlueprint = buildResourceBlueprint(spec, evidencePack)
     const pair = await generateCodeLab({
-      generation_spec: conceptArtifact.value.generation_spec,
-      evidence_pack: conceptArtifact.value.evidence_pack,
+      generation_spec: spec,
+      evidence_pack: evidencePack,
       concept_artifact: conceptArtifact.value.concept_lesson,
+      resource_blueprint: resourceBlueprint,
     }, resolveRoleCProviderOrFail(), new TrustedCodeLabVerifier(runner))
 
     if (pair.public_artifact.status !== "ready" || pair.secure_artifact.status !== "ready") {

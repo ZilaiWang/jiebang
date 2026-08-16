@@ -4,6 +4,7 @@ import type {
   AssessmentItemSecure,
   AssessmentPublicPayload,
   AssessmentSecurePayload,
+  AssessmentStructureMeta,
   CodeLabPublicPayload,
   CodeLabSecurePayload,
   ConceptLessonPayload,
@@ -149,6 +150,7 @@ export interface AssessmentPublicAuthorPayload {
     prompt: string
     options: string[] | null
     starter_code: string | null
+    structure_meta: AssessmentStructureMeta
   }>
 }
 
@@ -1405,7 +1407,7 @@ export function validateAssessmentPublicAuthorAgainstPlan(
 
 /**
  * The model may echo read-only item_plan fields in json_object mode. Only the
- * three semantic author fields cross this boundary; plan-owned fields are
+ * four semantic author fields cross this boundary; plan-owned fields are
  * materialized from ResourceBlueprint afterwards.
  */
 export function projectAssessmentPublicAuthorPayload(
@@ -1418,6 +1420,7 @@ export function projectAssessmentPublicAuthorPayload(
           prompt: item?.prompt,
           options: item?.options,
           starter_code: item?.starter_code,
+          structure_meta: item?.structure_meta,
         }))
       : payload.items,
   } as AssessmentPublicAuthorPayload
@@ -1441,8 +1444,27 @@ export function validateAssessmentNovelty(
     assessmentItemSignature(item),
     `${item.form_id}:${item.item_id}`,
   ]))
+  // 任务结构签名：只换数字/列表值不算真正变式，remediate/reinforce 必须改变任务结构。
+  const priorByStructure = new Map(history.flatMap((item) => item.structure_meta
+    ? []
+    : [[assessmentStructureSignature(item), `${item.form_id}:${item.item_id}`] as const]))
+  // 结构元数据签名（GPT 评审）：模型命制时显式填写的
+  // (objective_id + operation + reasoning_pattern + representation +
+  // context_family + answer_form)。有元数据时它是判重的权威依据；
+  // 文本结构签名只作为旧题（无元数据）的辅助。
+  const priorByMeta = new Map(
+    history.flatMap((item) => {
+      const signature = item.structure_meta
+        ? assessmentNoveltyTaskSignature(item.objective_id, item.structure_meta)
+        : null
+      return signature
+        ? [[signature, `${item.form_id}:${item.item_id}`] as const]
+        : []
+    }),
+  )
   const currentPrompts = new Map<string, number>()
   const current = new Map<string, number>()
+  const currentStructures = new Map<string, number>()
   payload.items.forEach((item, index) => {
     const promptSignature = assessmentPromptSignature(item)
     const signature = assessmentItemSignature({
@@ -1452,9 +1474,24 @@ export function validateAssessmentNovelty(
       options: item.options?.map((option) => option.text) ?? [],
       starter_code: item.starter_code,
     })
+    const structureSignature = assessmentStructureSignature({
+      modality: item.modality,
+      prompt: item.prompt,
+      starter_code: item.starter_code,
+    })
+    const metaSignature = item.structure_meta
+      ? assessmentNoveltyTaskSignature(item.objective_id, item.structure_meta)
+      : null
     const priorIdentity = priorByPrompt.get(promptSignature) ?? priorBySignature.get(signature)
     if (priorIdentity) {
       issues.push(`items[${index}] 与已发布题目 ${priorIdentity} 重复，必须由模型重新命制题面和任务材料`)
+    }
+    const priorStructure = metaSignature ? undefined : priorByStructure.get(structureSignature)
+    const priorMeta = metaSignature ? priorByMeta.get(metaSignature) : undefined
+    if (priorMeta && priorMeta !== priorIdentity) {
+      issues.push(`items[${index}] 与已发布题目 ${priorMeta} 任务结构重复（目标/操作/推理/表示/情境/作答全部一致），必须生成新的任务变式`)
+    } else if (!priorMeta && !priorIdentity && priorStructure) {
+      issues.push(`items[${index}] 与已发布题目 ${priorStructure} 任务结构重复（仅数字/取值不同，非真正变式），必须改变操作、情境或推理模式`)
     }
     const samePromptIndex = currentPrompts.get(promptSignature)
     const sameFormIndex = current.get(signature)
@@ -1464,8 +1501,32 @@ export function validateAssessmentNovelty(
       currentPrompts.set(promptSignature, index)
       current.set(signature, index)
     }
+    const sameStructureIndex = metaSignature ? undefined : currentStructures.get(structureSignature)
+    if (!metaSignature && sameStructureIndex !== undefined && sameStructureIndex !== samePromptIndex) {
+      issues.push(`items[${index}] 与本卷 items[${sameStructureIndex}] 任务结构重复（仅数字/取值不同）`)
+    }
+    if (!metaSignature) currentStructures.set(structureSignature, index)
   })
   return issues
+}
+
+/**
+ * Cross-round novelty rejects the same task family in the same context. A new
+ * context, representation or answer form is a legitimate near variant; merely
+ * changing literal values remains covered by the legacy surface signature.
+ */
+function assessmentNoveltyTaskSignature(
+  objectiveId: string,
+  meta: AssessmentStructureMeta,
+): string {
+  return [
+    objectiveId,
+    normalizeAssessmentSurface(meta.operation),
+    normalizeAssessmentSurface(meta.reasoning_pattern),
+    normalizeAssessmentSurface(meta.representation),
+    normalizeAssessmentSurface(meta.context_family),
+    normalizeAssessmentSurface(meta.answer_form),
+  ].join("\u0000")
 }
 
 function assessmentPromptSignature(item: {
@@ -1489,6 +1550,30 @@ function assessmentItemSignature(item: {
     options.join("|"),
     normalizeAssessmentSurface(item.starter_code ?? ""),
   ].join("\u0000")
+}
+
+/**
+ * 任务结构签名：把 prompt 中的列表字面量、字符串字面量和数字抽象为占位符，
+ * 比较"任务结构"而非"文字"。例：`range(2,5)` 与 `range(3,6)` 结构相同，
+ * 只换数字不是真正的变式；reinforce 的"新变式"必须改变操作、情境或推理模式。
+ */
+function assessmentStructureSignature(item: {
+  modality: string
+  prompt: string
+  starter_code?: string
+}): string {
+  return [
+    item.modality,
+    normalizeAssessmentSurface(abstractAssessmentValues(item.prompt)),
+    normalizeAssessmentSurface(abstractAssessmentValues(item.starter_code ?? "")),
+  ].join("\u0000")
+}
+
+function abstractAssessmentValues(value: string): string {
+  return value
+    .replace(/\[[^\]]*\]/g, "〔list〕")
+    .replace(/['"][^'"]*['"]/g, "〔str〕")
+    .replace(/[-+]?\d+(?:\.\d+)?/g, "〔num〕")
 }
 
 function normalizeAssessmentSurface(value: string): string {
@@ -1525,6 +1610,7 @@ export function materializeAssessmentPublicAuthorPayload(
       prompt: authored.prompt,
       ...(options ? { options } : {}),
       ...(authored.starter_code ? { starter_code: authored.starter_code } : {}),
+      ...(authored.structure_meta ? { structure_meta: structuredClone(authored.structure_meta) } : {}),
     }
   })
   return {
@@ -1689,11 +1775,16 @@ function codeLabExecutionContractIssues(
     contract.output_contract.type,
     ...(contract.output_contract.constraints ?? []),
   ].join(" ").normalize("NFKC").toLocaleLowerCase()
-  const explicitFunctionTask = learnerVisibleText.find((text) =>
-    /(?:编写|定义|实现|提交)\s*(?:(?:一个|一个名为|名为|名叫|指定的)\s*)?(?:[A-Za-z_]\w*\s*)?(?:函数|function)/iu.test(text)
-    || /(?:你(?:编写|定义|实现|提交)的|入口|目标)\s*(?:[A-Za-z_]\w*\s*)?(?:函数|function).{0,16}(?:返回|return)/iu.test(text))
+  const visibleText = learnerVisibleText.join(" ").normalize("NFKC").toLocaleLowerCase()
+  const requestsFunctionWork = /(?:编写|定义|实现|提交)\s*(?:(?:一个|一个名为|名为|名叫|指定的)\s*)?(?:[A-Za-z_]\w*\s*)?(?:函数|function)/iu.test(visibleText)
+  const declaresFunctionAsExternalInterface = /(?:只需|仅需|只|仅|单独)?\s*提交.{0,20}(?:函数|function)|(?:判题器|测试).{0,20}(?:调用|入口函数)|(?:函数|function).{0,20}(?:返回值|return\s+value).{0,20}(?:评分|判题|结果)/iu.test(visibleText)
+  const describesWholeProgramInterface = /(?:完整(?:的)?程序|标准输入|标准输出|stdin|stdout|读取.{0,12}输入|打印|print\s*\()/iu.test(visibleText)
+  const explicitFunctionTask = declaresFunctionAsExternalInterface
+    || (requestsFunctionWork && !describesWholeProgramInterface)
   const hasFunctionContract = /(?:function\s*(?:arguments?|call|return(?:\s+value)?)|函数(?:参数|调用|返回值)|入口函数|函数调用封装)/iu.test(contractText)
-  const hasFunctionStarter = /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)
+  const starterDefinesFunction = /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)
+  const starterOwnsProgramIo = /(?:^|\n)\s*(?:\w+\s*=\s*)?(?:input\s*\(|sys\.stdin\b)|(?:^|\n)\s*(?:print\s*\(|sys\.stdout\b)/mu.test(starterCode)
+  const hasFunctionStarter = starterDefinesFunction && !starterOwnsProgramIo
   if (contract.entry_point?.trim()) {
     issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: ${path}.entry_point 仅属于 function 模式，stdin_stdout 模式不得设置`)
   }
@@ -1701,10 +1792,10 @@ function codeLabExecutionContractIssues(
     issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: ${path} 的 stdin_stdout 输入输出合同不得使用函数参数、调用或返回值作为执行接口`)
   }
   if (hasFunctionStarter) {
-    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: starter_code 必须是从标准输入读取并向标准输出写入的完整程序骨架，不得改为入口函数`)
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: starter_code 只定义了函数，没有提供从标准输入读取并向标准输出写入的完整程序骨架`)
   }
   if (explicitFunctionTask) {
-    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: 公开任务要求学习者提交函数，与 stdin_stdout 的完整程序接口冲突：${explicitFunctionTask.slice(0, 120)}`)
+    issues.push(`STDIN_FUNCTION_CONTRACT_MISMATCH: 公开任务要求学习者以函数作为外部提交接口，与 stdin_stdout 的完整程序接口冲突：${visibleText.slice(0, 120)}`)
   }
   return issues
 }
