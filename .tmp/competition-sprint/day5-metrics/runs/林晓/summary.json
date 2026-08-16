@@ -1,0 +1,21 @@
+{
+  "name": "林晓",
+  "learner_id": "day5-e40a0659d9",
+  "session_id": "SESSION-cb041d73-7133-47e8-9084-cd94f7efe8f7",
+  "status": "waiting_for_user",
+  "round_no": 2,
+  "self_rating": "new",
+  "goal": "学习 Python for 循环",
+  "profile_level": "beginner",
+  "known_concepts": [
+    "变量与赋值",
+    "基本数据类型"
+  ],
+  "weak_concepts": [
+    "for 循环"
+  ],
+  "path_node_count": 1,
+  "decision_action": "remediate",
+  "events_count": 19,
+  "blocked_reason": null
+}

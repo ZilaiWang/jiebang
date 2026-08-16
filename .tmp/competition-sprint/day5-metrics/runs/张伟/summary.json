@@ -1,0 +1,23 @@
+{
+  "name": "张伟",
+  "learner_id": "day5-b98b65591d",
+  "session_id": "SESSION-91f714b2-9c4f-4787-a62c-a6d240043e13",
+  "status": "waiting_for_user",
+  "round_no": 2,
+  "self_rating": "intermediate",
+  "goal": "用 Python 做一个可以读取成绩文件并统计平均分的工具",
+  "profile_level": "intermediate",
+  "known_concepts": [
+    "for 循环",
+    "列表",
+    "变量与赋值",
+    "基本数据类型"
+  ],
+  "weak_concepts": [
+    "成绩统计器综合项目"
+  ],
+  "path_node_count": 2,
+  "decision_action": "reinforce",
+  "events_count": 19,
+  "blocked_reason": null
+}

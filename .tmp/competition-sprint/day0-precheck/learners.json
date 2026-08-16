@@ -1,0 +1,632 @@
+{
+  "schema_version": "1.0",
+  "generated_by": "role-d-ui-v2 / main-agent learner_request contract",
+  "note": "字段严格对齐前端 learner_request（orchestrator-client.ts）与 B 三类证据（src/role-b-profile/types.ts）；概念名对齐 knowledge_base/python_basic/index.json 的 K001~K018。",
+  "learners": [
+    {
+      "profile_id": "L1_beginner_lingxiao",
+      "name": "林晓",
+      "archetype": "零基础学习者",
+      "learner_request": {
+        "learner_id": "learner-demo-beginner-001",
+        "goal": "学习 Python for 循环",
+        "background": "姓名：林晓；学习背景：零基础入门；每周预计学习：5小时；Python基础：new；偏好：balanced；其他编程语言：无",
+        "self_rating": "new",
+        "learning_goal_spec": {
+          "mode": "curriculum_node",
+          "selected_node_ids": [
+            "PY-CH02-S02"
+          ]
+        }
+      },
+      "expected_evidence": {
+        "background": {
+          "evidence_type": "background",
+          "learner_id": "learner-demo-beginner-001",
+          "education_context": "零基础入门，完全没接触过 Python",
+          "prior_languages": [],
+          "prior_topics": [],
+          "goal_raw": "学习 Python for 循环",
+          "time_budget": "5 小时/周",
+          "quotes": [
+            {
+              "field": "education_context",
+              "text": "零基础入门，完全没接触过 Python"
+            },
+            {
+              "field": "goal_raw",
+              "text": "学习 Python for 循环"
+            }
+          ]
+        },
+        "self_assessment": {
+          "evidence_type": "self_assessment",
+          "self_rating": "beginner",
+          "claimed_known": [],
+          "claimed_weak": [
+            "Python 是什么",
+            "变量与赋值",
+            "for 循环"
+          ],
+          "quotes": [
+            {
+              "field": "claimed_weak",
+              "text": "完全没接触过，变量和循环都不懂"
+            }
+          ]
+        },
+        "objective_diagnosis": {
+          "evidence_type": "objective_diagnosis",
+          "items": [
+            {
+              "source_id": "K001",
+              "fact_id": null,
+              "question": "Python 通常被用来做什么？",
+              "learner_answer": "写程序",
+              "verdict": "correct",
+              "concept": "Python 是什么",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K002",
+              "fact_id": null,
+              "question": "以下哪个语句能创建一个变量？",
+              "learner_answer": "x = 5",
+              "verdict": "correct",
+              "concept": "变量与赋值",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K003",
+              "fact_id": null,
+              "question": "3.14 属于哪种数据类型？",
+              "learner_answer": "整数",
+              "verdict": "incorrect",
+              "concept": "基本数据类型",
+              "difficulty": "beginner"
+            }
+          ],
+          "quotes": []
+        }
+      },
+      "expected_profile": {
+        "learner_id": "learner-demo-beginner-001",
+        "level": "beginner",
+        "known_concepts": [],
+        "weak_concepts": [
+          "Python 是什么",
+          "变量与赋值",
+          "for 循环"
+        ],
+        "goal": "学习 Python for 循环",
+        "ability_dimensions": [
+          {
+            "label": "概念理解",
+            "value": 0.0
+          },
+          {
+            "label": "代码认知",
+            "value": 0.25
+          },
+          {
+            "label": "诊断表现",
+            "value": 0.0
+          }
+        ]
+      },
+      "note": "按 1号 Day1 实际学习者描述更新：完全没接触过 Python；每周 5 小时；目标 for 循环；零基础入门。"
+    },
+    {
+      "profile_id": "L2_weak_chenhao",
+      "name": "陈昊",
+      "archetype": "基础薄弱学习者",
+      "learner_request": {
+        "learner_id": "learner-demo-weak-002",
+        "goal": "能独立完成一个带循环的成绩统计程序",
+        "background": "姓名：陈昊；学习背景：计算机专业大一；每周预计学习：5小时；Python基础：beginner；偏好：practice；其他编程语言：C",
+        "self_rating": "beginner",
+        "learning_goal_spec": {
+          "mode": "curriculum_node",
+          "selected_node_ids": [
+            "PY-CH03-S01"
+          ]
+        }
+      },
+      "expected_evidence": {
+        "background": {
+          "evidence_type": "background",
+          "learner_id": "learner-demo-weak-002",
+          "education_context": "计算机专业大一，学过一点 C",
+          "prior_languages": [
+            "C"
+          ],
+          "prior_topics": [
+            "变量与赋值",
+            "基本数据类型",
+            "运算符"
+          ],
+          "goal_raw": "能独立完成一个带循环的成绩统计程序",
+          "time_budget": "5 小时/周",
+          "quotes": [
+            {
+              "field": "education_context",
+              "text": "计算机专业大一"
+            },
+            {
+              "field": "goal_raw",
+              "text": "能独立完成一个带循环的成绩统计程序"
+            }
+          ]
+        },
+        "self_assessment": {
+          "evidence_type": "self_assessment",
+          "self_rating": "beginner",
+          "claimed_known": [
+            "变量与赋值",
+            "基本数据类型",
+            "运算符"
+          ],
+          "claimed_weak": [
+            "for 循环",
+            "列表",
+            "函数定义与调用"
+          ],
+          "quotes": [
+            {
+              "field": "claimed_known",
+              "text": "变量、运算符会一点"
+            },
+            {
+              "field": "claimed_weak",
+              "text": "循环和列表一写就错"
+            }
+          ]
+        },
+        "objective_diagnosis": {
+          "evidence_type": "objective_diagnosis",
+          "items": [
+            {
+              "source_id": "K002",
+              "fact_id": null,
+              "question": "x = 5 之后 x 的值是？",
+              "learner_answer": "5",
+              "verdict": "correct",
+              "concept": "变量与赋值",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": null,
+              "question": "for i in range(3) 会循环几次？",
+              "learner_answer": "3 次",
+              "verdict": "incorrect",
+              "concept": "for 循环",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K009",
+              "fact_id": null,
+              "question": "scores = [85, 92] 中 scores[0] 是？",
+              "learner_answer": "92",
+              "verdict": "incorrect",
+              "concept": "列表",
+              "difficulty": "basic"
+            }
+          ],
+          "quotes": []
+        }
+      },
+      "expected_profile": {
+        "learner_id": "learner-demo-weak-002",
+        "level": "beginner",
+        "known_concepts": [
+          "变量与赋值",
+          "基本数据类型",
+          "运算符"
+        ],
+        "weak_concepts": [
+          "for 循环",
+          "列表"
+        ],
+        "goal": "能独立完成一个带循环的成绩统计程序",
+        "ability_dimensions": [
+          {
+            "label": "概念理解",
+            "value": 0.6
+          },
+          {
+            "label": "代码认知",
+            "value": 0.5
+          },
+          {
+            "label": "诊断表现",
+            "value": 0.33
+          }
+        ]
+      }
+    },
+    {
+      "profile_id": "L3_project_zhangwei",
+      "name": "张伟",
+      "archetype": "项目目标学习者",
+      "learner_request": {
+        "learner_id": "learner-demo-project-003",
+        "goal": "用 Python 做一个可以读取成绩文件并统计平均分的工具",
+        "background": "姓名：张伟；学习背景：转行学习者，目标做数据分析；每周预计学习：10小时；Python基础：intermediate；偏好：project；其他编程语言：SQL",
+        "self_rating": "intermediate",
+        "learning_goal_spec": {
+          "mode": "custom_goal",
+          "custom_goal": "用 Python 做一个可以读取成绩文件并统计平均分的工具"
+        }
+      },
+      "expected_evidence": {
+        "background": {
+          "evidence_type": "background",
+          "learner_id": "learner-demo-project-003",
+          "education_context": "转行学习者，目标做数据分析",
+          "prior_languages": [
+            "SQL"
+          ],
+          "prior_topics": [
+            "变量与赋值",
+            "列表",
+            "函数定义与调用"
+          ],
+          "goal_raw": "用 Python 做一个可以读取成绩文件并统计平均分的工具",
+          "time_budget": "10 小时/周",
+          "quotes": [
+            {
+              "field": "education_context",
+              "text": "转行学习者"
+            },
+            {
+              "field": "goal_raw",
+              "text": "读取成绩文件并统计平均分"
+            }
+          ]
+        },
+        "self_assessment": {
+          "evidence_type": "self_assessment",
+          "self_rating": "intermediate",
+          "claimed_known": [
+            "变量与赋值",
+            "列表",
+            "函数定义与调用",
+            "参数与返回值"
+          ],
+          "claimed_weak": [
+            "文件读写",
+            "异常处理"
+          ],
+          "quotes": [
+            {
+              "field": "claimed_known",
+              "text": "基础语法和函数会用"
+            },
+            {
+              "field": "claimed_weak",
+              "text": "文件读写和报错处理不熟"
+            }
+          ]
+        },
+        "objective_diagnosis": {
+          "evidence_type": "objective_diagnosis",
+          "items": [
+            {
+              "source_id": "K009",
+              "fact_id": null,
+              "question": "scores = [85, 92, 78] 的平均分计算，下列哪个正确？",
+              "learner_answer": "sum(scores)/len(scores)",
+              "verdict": "correct",
+              "concept": "列表",
+              "difficulty": "basic"
+            },
+            {
+              "source_id": "K013",
+              "fact_id": null,
+              "question": "def average(a, b): 之后调用 average(1, 2) 返回？",
+              "learner_answer": "取决于函数体",
+              "verdict": "correct",
+              "concept": "函数定义与调用",
+              "difficulty": "basic"
+            },
+            {
+              "source_id": "K015",
+              "fact_id": null,
+              "question": "open('scores.txt', 'r') 之后应该用什么读取全部内容？",
+              "learner_answer": "read()",
+              "verdict": "incorrect",
+              "concept": "文件读写",
+              "difficulty": "intermediate"
+            }
+          ],
+          "quotes": []
+        }
+      },
+      "expected_profile": {
+        "learner_id": "learner-demo-project-003",
+        "level": "basic",
+        "known_concepts": [
+          "列表",
+          "函数定义与调用",
+          "参数与返回值"
+        ],
+        "weak_concepts": [
+          "文件读写"
+        ],
+        "goal": "用 Python 做一个可以读取成绩文件并统计平均分的工具",
+        "ability_dimensions": [
+          {
+            "label": "概念理解",
+            "value": 0.75
+          },
+          {
+            "label": "代码认知",
+            "value": 0.75
+          },
+          {
+            "label": "诊断表现",
+            "value": 0.67
+          }
+        ]
+      }
+    },
+    {
+      "profile_id": "L4_conflict_wangfang",
+      "name": "王芳",
+      "archetype": "画像冲突学习者",
+      "learner_request": {
+        "learner_id": "learner-demo-conflict-004",
+        "goal": "学习 Python 文件读写",
+        "background": "姓名：王芳；学习背景：自学过一点 Python，自评有基础；每周预计学习：6小时；Python基础：intermediate；偏好：balanced；其他编程语言：无",
+        "self_rating": "intermediate",
+        "learning_goal_spec": {
+          "mode": "curriculum_node",
+          "selected_node_ids": [
+            "PY-CH04-S04"
+          ]
+        }
+      },
+      "expected_evidence": {
+        "background": {
+          "evidence_type": "background",
+          "learner_id": "learner-demo-conflict-004",
+          "education_context": "自学过一点 Python",
+          "prior_languages": [],
+          "prior_topics": [],
+          "goal_raw": "学习 Python 文件读写",
+          "time_budget": "6 小时/周",
+          "quotes": [
+            {
+              "field": "education_context",
+              "text": "自学过一点 Python"
+            }
+          ]
+        },
+        "self_assessment": {
+          "evidence_type": "self_assessment",
+          "self_rating": "intermediate",
+          "claimed_known": [
+            "变量与赋值",
+            "基本数据类型",
+            "for 循环"
+          ],
+          "claimed_weak": [],
+          "quotes": [
+            {
+              "field": "claimed_known",
+              "text": "基础语法我都会"
+            }
+          ]
+        },
+        "objective_diagnosis": {
+          "evidence_type": "objective_diagnosis",
+          "items": [
+            {
+              "source_id": "K002",
+              "fact_id": null,
+              "question": "以下哪个语句能创建一个变量？",
+              "learner_answer": "错误的答案",
+              "verdict": "incorrect",
+              "concept": "变量与赋值",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K003",
+              "fact_id": null,
+              "question": "3.14 属于哪种数据类型？",
+              "learner_answer": "错误的答案",
+              "verdict": "incorrect",
+              "concept": "基本数据类型",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": null,
+              "question": "for 循环打印 0-4 用什么？",
+              "learner_answer": "错误的答案",
+              "verdict": "incorrect",
+              "concept": "for 循环",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K015",
+              "fact_id": null,
+              "question": "读取文件全部内容用什么？",
+              "learner_answer": "错误的答案",
+              "verdict": "incorrect",
+              "concept": "文件读写",
+              "difficulty": "intermediate"
+            }
+          ],
+          "quotes": []
+        }
+      },
+      "expected_profile": {
+        "learner_id": "learner-demo-conflict-004",
+        "level": "beginner",
+        "known_concepts": [],
+        "weak_concepts": [
+          "变量与赋值",
+          "基本数据类型",
+          "for 循环",
+          "文件读写"
+        ],
+        "goal": "学习 Python 文件读写",
+        "ability_dimensions": [
+          {
+            "label": "概念理解",
+            "value": 0.2
+          },
+          {
+            "label": "代码认知",
+            "value": 0.2
+          },
+          {
+            "label": "诊断表现",
+            "value": 0.15
+          }
+        ]
+      },
+      "note": "自评 intermediate（说有基础），但客观诊断连 beginner 题都答错 → 触发画像冲突/reprofile"
+    },
+    {
+      "profile_id": "L5_advanced_liqiang",
+      "name": "李强",
+      "archetype": "基础较强学习者",
+      "learner_request": {
+        "learner_id": "learner-demo-advanced-005",
+        "goal": "用 Python 完成一个成绩统计器综合项目",
+        "background": "姓名：李强；学习背景：计算机相关专业，有 Java 基础；每周预计学习：10小时；Python基础：advanced；偏好：project；其他编程语言：Java",
+        "self_rating": "advanced",
+        "learning_goal_spec": {
+          "mode": "curriculum_node",
+          "selected_node_ids": [
+            "PY-CH04-S03"
+          ]
+        }
+      },
+      "expected_evidence": {
+        "background": {
+          "evidence_type": "background",
+          "learner_id": "learner-demo-advanced-005",
+          "education_context": "计算机相关专业，有 Java 基础",
+          "prior_languages": [
+            "Java"
+          ],
+          "prior_topics": [
+            "变量与赋值",
+            "for 循环",
+            "列表",
+            "函数定义与调用"
+          ],
+          "goal_raw": "用 Python 完成一个成绩统计器综合项目",
+          "time_budget": "10 小时/周",
+          "quotes": [
+            {
+              "field": "education_context",
+              "text": "有 Java 基础"
+            }
+          ]
+        },
+        "self_assessment": {
+          "evidence_type": "self_assessment",
+          "self_rating": "advanced",
+          "claimed_known": [
+            "变量与赋值",
+            "基本数据类型",
+            "for 循环",
+            "列表",
+            "函数定义与调用"
+          ],
+          "claimed_weak": [],
+          "quotes": [
+            {
+              "field": "claimed_known",
+              "text": "基础语法和函数都熟练"
+            }
+          ]
+        },
+        "objective_diagnosis": {
+          "evidence_type": "objective_diagnosis",
+          "items": [
+            {
+              "source_id": "K002",
+              "fact_id": null,
+              "question": "以下哪个语句能创建一个变量？",
+              "learner_answer": "x = 5",
+              "verdict": "correct",
+              "concept": "变量与赋值",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K007",
+              "fact_id": null,
+              "question": "for 循环打印 0-4 用什么？",
+              "learner_answer": "range(5)",
+              "verdict": "correct",
+              "concept": "for 循环",
+              "difficulty": "beginner"
+            },
+            {
+              "source_id": "K009",
+              "fact_id": null,
+              "question": "给列表追加元素用什么？",
+              "learner_answer": "scores.append(78)",
+              "verdict": "correct",
+              "concept": "列表",
+              "difficulty": "basic"
+            },
+            {
+              "source_id": "K013",
+              "fact_id": null,
+              "question": "def 定义函数后怎么调用？",
+              "learner_answer": "函数名加括号",
+              "verdict": "correct",
+              "concept": "函数定义与调用",
+              "difficulty": "basic"
+            },
+            {
+              "source_id": "K018",
+              "fact_id": null,
+              "question": "统计成绩平均分需要哪些步骤？",
+              "learner_answer": "读取、求和、除以数量",
+              "verdict": "correct",
+              "concept": "成绩统计器综合项目",
+              "difficulty": "integrated"
+            }
+          ],
+          "quotes": []
+        }
+      },
+      "expected_profile": {
+        "learner_id": "learner-demo-advanced-005",
+        "level": "integrated",
+        "known_concepts": [
+          "变量与赋值",
+          "基本数据类型",
+          "for 循环",
+          "列表",
+          "函数定义与调用"
+        ],
+        "weak_concepts": [],
+        "goal": "用 Python 完成一个成绩统计器综合项目",
+        "ability_dimensions": [
+          {
+            "label": "概念理解",
+            "value": 0.95
+          },
+          {
+            "label": "代码认知",
+            "value": 0.9
+          },
+          {
+            "label": "诊断表现",
+            "value": 1.0
+          }
+        ]
+      },
+      "note": "自评 advanced（基础强），客观诊断全对（确实强）→ 画像 integrated"
+    }
+  ]
+}

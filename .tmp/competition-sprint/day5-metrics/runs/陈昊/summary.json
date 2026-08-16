@@ -1,0 +1,20 @@
+{
+  "name": "陈昊",
+  "learner_id": "day5-51c29e649b",
+  "session_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7",
+  "status": "blocked",
+  "round_no": 1,
+  "self_rating": "beginner",
+  "goal": "能独立完成一个带循环的成绩统计程序",
+  "profile_level": "basic",
+  "known_concepts": [
+    "列表",
+    "变量与赋值",
+    "基本数据类型"
+  ],
+  "weak_concepts": [],
+  "path_node_count": 1,
+  "decision_action": null,
+  "events_count": 13,
+  "blocked_reason": "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁；INVALID_EXPECTED_TYPE"
+}
