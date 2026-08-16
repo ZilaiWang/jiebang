@@ -711,7 +711,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       },
       output_schema_id: "role_c_assessment_public_author_payload_v1",
       output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
-      temperature: this.assessmentTemperature,
+      // 变式轮次（有 prior_assessment_items，即 remediate/reinforce/advance 的下一轮）
+      // 需要随机性来生成"同知识点不同题面"，否则温度 0 会让模型复制上一轮题面、触发 novelty 重复门禁。
+      // 首轮保持低温以保证格式稳定。
+      temperature: (request.prior_assessment_items?.length ?? 0) > 0
+        ? Math.max(this.assessmentTemperature, 0.6)
+        : this.assessmentTemperature,
       max_tokens: this.assessmentPublicMaxTokens,
       idempotency_identity: {
         spec_id: request.generation_spec.spec_id,

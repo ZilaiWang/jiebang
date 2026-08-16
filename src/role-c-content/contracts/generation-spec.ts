@@ -59,7 +59,7 @@ export interface GenerationSpec {
   policies: {
     external_knowledge_allowed: false
     citation_required: true
-    max_semantic_revision: 1
+    max_semantic_revision: 0 | 1 | 2
     max_tool_retry: 2
     seed: number
   }
@@ -180,7 +180,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
   const policies: GenerationSpec["policies"] = {
     external_knowledge_allowed: false,
     citation_required: true,
-    max_semantic_revision: 1,
+    max_semantic_revision: 2,
     max_tool_retry: 2,
     seed,
   }

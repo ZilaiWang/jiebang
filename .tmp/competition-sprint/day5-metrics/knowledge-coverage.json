@@ -1,0 +1,72 @@
+{
+  "report_kind": "role_c_knowledge_coverage",
+  "generated_at": "2026-08-16T19:16:21.926663",
+  "purpose": "路径目标知识点 vs 三类资源覆盖情况，统计核心知识点覆盖率",
+  "scenarios": [
+    {
+      "learner_id": "day5-cbe9a7e226",
+      "name": "李强",
+      "status": "completed",
+      "target_source_ids": [
+        "K018"
+      ],
+      "covered_source_ids": [
+        "K018"
+      ],
+      "missing_source_ids": [],
+      "knowledge_coverage": 1.0
+    },
+    {
+      "learner_id": "day5-2cef9038d4",
+      "name": "张伟",
+      "status": "waiting_for_user",
+      "target_source_ids": [
+        "K007"
+      ],
+      "covered_source_ids": [
+        "K007"
+      ],
+      "missing_source_ids": [],
+      "knowledge_coverage": 1.0
+    },
+    {
+      "learner_id": "day5-833705bfc5",
+      "name": "王芳",
+      "status": "waiting_for_user",
+      "target_source_ids": [
+        "K002"
+      ],
+      "covered_source_ids": [
+        "K002"
+      ],
+      "missing_source_ids": [],
+      "knowledge_coverage": 1.0
+    },
+    {
+      "learner_id": "day5-29b388b1f0",
+      "name": "林晓",
+      "status": "waiting_for_user",
+      "target_source_ids": [
+        "K007"
+      ],
+      "covered_source_ids": [
+        "K007"
+      ],
+      "missing_source_ids": [],
+      "knowledge_coverage": 1.0
+    },
+    {
+      "learner_id": "day5-3fa7bd443b",
+      "name": "陈昊",
+      "status": "waiting_for_user",
+      "target_source_ids": [
+        "K009"
+      ],
+      "covered_source_ids": [
+        "K009"
+      ],
+      "missing_source_ids": [],
+      "knowledge_coverage": 1.0
+    }
+  ]
+}

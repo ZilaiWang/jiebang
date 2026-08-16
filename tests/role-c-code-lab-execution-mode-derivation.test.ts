@@ -11,10 +11,10 @@ import {
 import type { ExecutionContract } from "../src/role-c-content/contracts/artifacts"
 
 /** 构造最小 CodeLabRequest，只填 deriveCodeLabExecutionMode 需要的字段。 */
-function requestFor(title: string, facts: string[], level: string) {
+function requestFor(title: string, facts: string[], level: string, goal = "") {
   return {
     generation_spec: {
-      path_node: { target_source_ids: ["S1"] },
+      path_node: { target_source_ids: ["S1"], ...(goal ? { goal } : {}) },
       learner_adaptation: { level },
     },
     evidence_pack: {
@@ -63,6 +63,24 @@ describe("deriveCodeLabExecutionMode（execution_mode 确定性推导）", () =>
       "basic",
     ))).toBe("function")
   })
+
+  test("成绩统计器综合项目：facts 提及函数但无 def/return，goal 输出型 → stdin_stdout（死结回归）", () => {
+    expect(deriveCodeLabExecutionMode(requestFor(
+      "成绩统计器综合项目",
+      ["成绩统计项目可综合练习列表、循环和函数。", "成绩列表可以用 for 循环逐项累计求和。", "把统计逻辑封装为函数可提升复用性。"],
+      "integrated",
+      "用 Python 完成一个成绩统计器综合项目",
+    ))).toBe("stdin_stdout")
+  })
+
+  test("函数专题：facts 含 def 代码关键字，goal 非输出型 → function", () => {
+    expect(deriveCodeLabExecutionMode(requestFor(
+      "函数定义与调用",
+      ["def 用于定义函数。", "函数把可复用逻辑封装成命名代码块。"],
+      "basic",
+      "学习函数定义与调用",
+    ))).toBe("function")
+  })
 })
 
 describe("freezeCodeLabExecutionContract（确定性字段冻结）", () => {
@@ -81,6 +99,11 @@ describe("freezeCodeLabExecutionContract（确定性字段冻结）", () => {
     expect(frozen.execution_mode).toBe("stdin_stdout")
     expect(frozen.language).toBe("python")
     expect(frozen.entry_point).toBeUndefined()
+  })
+
+  test("stdin_stdout 冻结：output_contract.kind 确定为 string（避免 expected 类型错配）", () => {
+    const frozen = freezeCodeLabExecutionContract(modelContract, "stdin_stdout")
+    expect(frozen.output_contract.kind).toBe("string")
   })
 
   test("function 冻结：保留模型的 entry_point 命名", () => {

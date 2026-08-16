@@ -1,0 +1,138 @@
+{
+  "report_kind": "role_c_hallucination_rate",
+  "generated_at": "2026-08-16T19:16:21.926660",
+  "purpose": "抽取每组三类资源的知识引用，与当前证据包比对，统计幻觉率（无效引用比例）",
+  "evidence_kb_version": "python_basic",
+  "scenarios": [
+    {
+      "learner_id": "day5-cbe9a7e226",
+      "name": "李强",
+      "status": "completed",
+      "total_citations": 6,
+      "unknown_or_unsupported_citations": [],
+      "hallucination_rate": 0.0,
+      "publishable": true,
+      "artifacts": [
+        {
+          "artifact": "concept-tutor",
+          "ref_count": 6,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "code-lab",
+          "ref_count": 3,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "tiered-evaluator",
+          "ref_count": 3,
+          "unknown_refs": []
+        }
+      ]
+    },
+    {
+      "learner_id": "day5-2cef9038d4",
+      "name": "张伟",
+      "status": "waiting_for_user",
+      "total_citations": 5,
+      "unknown_or_unsupported_citations": [],
+      "hallucination_rate": 0.0,
+      "publishable": true,
+      "artifacts": [
+        {
+          "artifact": "concept-tutor",
+          "ref_count": 5,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "code-lab",
+          "ref_count": 3,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "tiered-evaluator",
+          "ref_count": 3,
+          "unknown_refs": []
+        }
+      ]
+    },
+    {
+      "learner_id": "day5-833705bfc5",
+      "name": "王芳",
+      "status": "waiting_for_user",
+      "total_citations": 4,
+      "unknown_or_unsupported_citations": [],
+      "hallucination_rate": 0.0,
+      "publishable": true,
+      "artifacts": [
+        {
+          "artifact": "concept-tutor",
+          "ref_count": 4,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "code-lab",
+          "ref_count": 3,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "tiered-evaluator",
+          "ref_count": 3,
+          "unknown_refs": []
+        }
+      ]
+    },
+    {
+      "learner_id": "day5-29b388b1f0",
+      "name": "林晓",
+      "status": "waiting_for_user",
+      "total_citations": 5,
+      "unknown_or_unsupported_citations": [],
+      "hallucination_rate": 0.0,
+      "publishable": true,
+      "artifacts": [
+        {
+          "artifact": "concept-tutor",
+          "ref_count": 5,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "code-lab",
+          "ref_count": 3,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "tiered-evaluator",
+          "ref_count": 3,
+          "unknown_refs": []
+        }
+      ]
+    },
+    {
+      "learner_id": "day5-3fa7bd443b",
+      "name": "陈昊",
+      "status": "waiting_for_user",
+      "total_citations": 5,
+      "unknown_or_unsupported_citations": [],
+      "hallucination_rate": 0.0,
+      "publishable": true,
+      "artifacts": [
+        {
+          "artifact": "concept-tutor",
+          "ref_count": 5,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "code-lab",
+          "ref_count": 3,
+          "unknown_refs": []
+        },
+        {
+          "artifact": "tiered-evaluator",
+          "ref_count": 3,
+          "unknown_refs": []
+        }
+      ]
+    }
+  ]
+}
