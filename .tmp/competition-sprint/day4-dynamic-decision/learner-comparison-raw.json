@@ -1,0 +1,184 @@
+{
+  "workflow": "Day4_Learner_Comparison",
+  "generated_at": "2026-08-15T18:24:42",
+  "results": [
+    {
+      "learner_id": "day4-1cbf929648",
+      "archetype": "new",
+      "goal": "学习 Python for 循环",
+      "status": "waiting_for_user",
+      "round": 2,
+      "wrong_difficulty": "beginner",
+      "profile": {
+        "level": "beginner",
+        "known_concepts": [
+          "变量与赋值",
+          "基本数据类型"
+        ],
+        "weak_concepts": [
+          "for 循环"
+        ]
+      },
+      "path_nodes": [
+        {
+          "node_id": "FN-K007-S1-1786789296223",
+          "status": "in_progress",
+          "title": null
+        }
+      ],
+      "decision_action": "remediate",
+      "next_round_action": null,
+      "adaptation": "remediate",
+      "blocked_reason": null,
+      "name": "林晓",
+      "attempts": 2
+    },
+    {
+      "learner_id": "day4-356bc40dbb",
+      "archetype": "beginner",
+      "status": "blocked",
+      "blocked_reason": "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁；INVALID_EXPECTED_TYPE",
+      "profile": {
+        "learner_id": "day4-356bc40dbb",
+        "level": "basic",
+        "known_concepts": [
+          "列表",
+          "变量与赋值",
+          "基本数据类型"
+        ],
+        "weak_concepts": [],
+        "goal": "能独立完成一个带循环的成绩统计程序",
+        "ability_dimensions": [
+          {
+            "label": "概念理解",
+            "value": 0.95
+          },
+          {
+            "label": "代码认知",
+            "value": 0.45
+          },
+          {
+            "label": "诊断表现",
+            "value": 1
+          }
+        ]
+      },
+      "formal_path": {
+        "path_id": "PATH-day4-356bc40dbb-1786789425786",
+        "learner_id": "day4-356bc40dbb",
+        "original_goal": "能独立完成一个带循环的成绩统计程序",
+        "nodes": [
+          {
+            "schema_version": "1.0",
+            "node_id": "FN-K009-S1-1786789425786",
+            "target_source_ids": [
+              "K009"
+            ],
+            "prerequisite_source_ids": [
+              "K002",
+              "K003"
+            ],
+            "goal": "列表",
+            "objectives": [
+              {
+                "objective_id": "OBJ-K009",
+                "source_id": "K009",
+                "required_fact_ids": [
+                  "F001",
+                  "F002",
+                  "F003"
+                ],
+                "observable_behavior": "recognize",
+                "importance": "core"
+              }
+            ],
+            "assessment_blueprint": {
+              "tier_1_count": 2,
+              "tier_2_count": 2,
+              "tier_3_count": 1,
+              "required_modalities": [
+                "mcq",
+                "true_false"
+              ]
+            },
+            "status": "in_progress",
+            "stage_order": 1
+          }
+        ],
+        "current_node_index": 0,
+        "profile_snapshot": {
+          "schema_version": "1.0",
+          "profile_id": "PROFILE-f1d9acb2",
+          "profile_version": "RUN-c5f985bb-ed3e-4964-b03a-c583fc7cb0ca-profile-v1",
+          "learner_id": "day4-356bc40dbb",
+          "level": "basic",
+          "known_concepts": [
+            "列表",
+            "变量与赋值",
+            "基本数据类型"
+          ],
+          "weak_concepts": [],
+          "goal": "能独立完成一个带循环的成绩统计程序",
+          "preferred_contexts": [],
+          "accommodations": [],
+          "provenance_ref": "profile-builder:deterministic-result"
+        },
+        "planning_outcome": {
+          "status": "ready",
+          "code": "PATH_READY",
+          "message": "已形成可执行的正式学习路径",
+          "requested_source_ids": [
+            "K009"
+          ],
+          "resolved_source_ids": [
+            "K009"
+          ],
+          "unresolved_source_ids": []
+        },
+        "created_at": "2026-08-15T10:23:45.786Z",
+        "updated_at": "2026-08-15T10:23:45.786Z"
+      },
+      "next_round_action": null,
+      "name": "陈昊",
+      "attempts": 4
+    },
+    {
+      "learner_id": "day4-626e8ee306",
+      "archetype": "intermediate",
+      "goal": "用 Python 做一个可以读取成绩文件并统计平均分的工具",
+      "status": "blocked",
+      "round": 2,
+      "wrong_difficulty": "basic",
+      "profile": {
+        "level": "beginner",
+        "known_concepts": [
+          "for 循环",
+          "成绩统计器综合项目",
+          "变量与赋值",
+          "基本数据类型"
+        ],
+        "weak_concepts": [
+          "列表"
+        ]
+      },
+      "path_nodes": [
+        {
+          "node_id": "FN-K007-S1-1786789447041",
+          "status": "in_progress",
+          "title": null
+        },
+        {
+          "node_id": "FN-K009-S2-1786789447041",
+          "status": "pending",
+          "title": null
+        }
+      ],
+      "decision_action": "reinforce",
+      "next_round_action": "reinforce",
+      "adaptation": null,
+      "blocked_reason": "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁；INVALID_EXPECTED_TYPE",
+      "name": "张伟",
+      "attempts": 1
+    }
+  ]
+}

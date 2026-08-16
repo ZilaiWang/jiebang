@@ -1,0 +1,21 @@
+{
+  "name": "李强",
+  "learner_id": "day5-6fd3029716",
+  "session_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d",
+  "status": "blocked",
+  "round_no": 1,
+  "self_rating": "advanced",
+  "goal": "用 Python 完成一个成绩统计器综合项目",
+  "profile_level": "integrated",
+  "known_concepts": [
+    "成绩统计器综合项目",
+    "for 循环",
+    "列表",
+    "函数定义与调用"
+  ],
+  "weak_concepts": [],
+  "path_node_count": 1,
+  "decision_action": null,
+  "events_count": 13,
+  "blocked_reason": "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁；INVALID_EXPECTED_TYPE"
+}

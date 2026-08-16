@@ -1,0 +1,105 @@
+[
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-session_created-oa6tjjxn",
+    "event_type": "session_created",
+    "stage": "objective_diagnosis",
+    "message": "learning-orchestrator created a persistent session",
+    "timestamp": "2026-08-16T02:28:47.770Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_completed-iprp4iuv",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
+    "worker": "background-collector",
+    "message": "background-collector accepted learner background",
+    "timestamp": "2026-08-16T02:28:47.770Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_completed-vlq2dsc0",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
+    "worker": "self-assessor",
+    "message": "self-assessor accepted learner self assessment",
+    "timestamp": "2026-08-16T02:28:47.770Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_invoked-whp9gzuv",
+    "event_type": "worker_invoked",
+    "stage": "objective_diagnosis",
+    "worker": "objective-diagnostician",
+    "message": "objective-diagnostician prepared grounded questions",
+    "timestamp": "2026-08-16T02:28:47.770Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-waiting_for_user-752yhjsa",
+    "event_type": "waiting_for_user",
+    "stage": "objective_diagnosis",
+    "worker": "objective-diagnostician",
+    "message": "waiting for diagnosis answers",
+    "timestamp": "2026-08-16T02:28:47.770Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_completed-g3r6sj0m",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
+    "worker": "objective-diagnostician",
+    "message": "objective-diagnostician completed grounded diagnosis",
+    "timestamp": "2026-08-16T02:28:50.151Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-command_received-eu3t7yua",
+    "event_type": "command_received",
+    "stage": "objective_diagnosis",
+    "worker": "objective-diagnostician",
+    "message": "received diagnosis answers",
+    "timestamp": "2026-08-16T02:28:50.151Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_invoked-pas49gem",
+    "event_type": "worker_invoked",
+    "stage": "objective_diagnosis",
+    "worker": "profile-builder",
+    "message": "invoke profile-builder",
+    "timestamp": "2026-08-16T02:28:50.152Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_completed-ukmo1tyt",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
+    "worker": "profile-builder",
+    "message": "Synthesized deterministic Role B learner profile",
+    "timestamp": "2026-08-16T02:28:50.153Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_invoked-gz95hnon",
+    "event_type": "worker_invoked",
+    "stage": "objective_diagnosis",
+    "worker": "path-planner",
+    "message": "invoke path-planner",
+    "timestamp": "2026-08-16T02:28:50.153Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_completed-ynxqs3xh",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
+    "worker": "path-planner",
+    "message": "Planned deterministic Role B formal path with A RAG evidence",
+    "timestamp": "2026-08-16T02:28:50.154Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-worker_invoked-aaovysb6",
+    "event_type": "worker_invoked",
+    "stage": "assessment",
+    "worker": "concept-tutor",
+    "message": "Role C content generation started",
+    "timestamp": "2026-08-16T02:28:50.154Z"
+  },
+  {
+    "event_id": "SESSION-2eac4b98-55b7-4141-8f99-138d377a907d-session_blocked-wv9glmm5",
+    "event_type": "session_blocked",
+    "stage": "blocked",
+    "worker": "code-lab",
+    "message": "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁；INVALID_EXPECTED_TYPE",
+    "timestamp": "2026-08-16T02:29:01.620Z"
+  }
+]
