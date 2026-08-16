@@ -23,6 +23,7 @@ export interface Day5RunMetric {
   observed_units: string[]
   missing_expected_units: string[]
   blocked_or_failed_entries: number
+  blocked_or_failed_units: string[]
   error_codes: string[]
   retry_entries: number
   manual_intervention_entries: number
@@ -41,6 +42,12 @@ export interface Day5CollaborationMetrics {
   collaboration_chain_complete_count: number
   collaboration_completion_rate: number
   runs_with_blocked_or_failed_entries: number
+  blocked_or_failed_runs_by_unit: Array<{
+    unit_name: string
+    run_count: number
+    entry_count: number
+    error_codes: string[]
+  }>
   runs: Day5RunMetric[]
   calculation: {
     denominator: "all supplied real session files"
@@ -75,6 +82,18 @@ export async function exportDay5CollaborationMetrics(input: {
     throw new Error(`Day 5 requires at least three complete sessions; received ${completeSessionCount}`)
   }
   const completeChains = runs.filter((run) => run.collaboration_chain_complete).length
+  const blockedOrFailedRunsByUnit = EXPECTED_UNITS.flatMap((unitName) => {
+    const matchingRuns = runs.filter((run) => run.blocked_or_failed_units.includes(unitName))
+    if (matchingRuns.length === 0) return []
+    const matchingEntries = sessions.flatMap(({ record }) => record.worker_ledger_history
+      .filter((entry) => entry.unit_name === unitName && (entry.status === "blocked" || entry.status === "failed")))
+    return [{
+      unit_name: unitName,
+      run_count: matchingRuns.length,
+      entry_count: matchingEntries.length,
+      error_codes: unique(matchingEntries.flatMap((entry) => entry.errors.map((error) => error.code ?? "UNSPECIFIED"))),
+    }]
+  })
   const metrics: Day5CollaborationMetrics = {
     schema_version: "1.0",
     generated_at: (input.now ?? (() => new Date().toISOString()))(),
@@ -84,6 +103,7 @@ export async function exportDay5CollaborationMetrics(input: {
     collaboration_chain_complete_count: completeChains,
     collaboration_completion_rate: completeChains / runs.length,
     runs_with_blocked_or_failed_entries: runs.filter((run) => run.blocked_or_failed_entries > 0).length,
+    blocked_or_failed_runs_by_unit: blockedOrFailedRunsByUnit,
     runs,
     calculation: {
       denominator: "all supplied real session files",
@@ -115,6 +135,9 @@ function toRunMetric(record: InteractiveSessionRecord, sourceRef: string): Day5R
   const missingExpected = EXPECTED_UNITS.filter((unit) => !observedUnits.includes(unit))
   const withoutOutput = completedUnits.filter((unit) => !completedWithOutput.includes(unit))
   const blockedOrFailedEntries = history.filter((entry) => entry.status === "blocked" || entry.status === "failed").length
+  const blockedOrFailedUnits = unique(history
+    .filter((entry) => entry.status === "blocked" || entry.status === "failed")
+    .map((entry) => entry.unit_name))
   const action = decisionAction(record.feedback)
   const unitOutputCoverageComplete = missingExpected.length === 0
     && EXPECTED_UNITS.every((unit) => completedWithOutput.includes(unit))
@@ -128,6 +151,7 @@ function toRunMetric(record: InteractiveSessionRecord, sourceRef: string): Day5R
     observed_units: observedUnits,
     missing_expected_units: missingExpected,
     blocked_or_failed_entries: blockedOrFailedEntries,
+    blocked_or_failed_units: blockedOrFailedUnits,
     error_codes: unique(history.flatMap((entry) => entry.errors.map((error) => error.code ?? "UNSPECIFIED"))),
     retry_entries: history.filter((entry) => entry.retry?.scheduled === true || entry.attempt_no > 1).length,
     manual_intervention_entries: history.filter((entry) => entry.manual_intervention.occurred).length,

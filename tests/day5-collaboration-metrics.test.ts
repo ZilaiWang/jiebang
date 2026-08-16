@@ -6,7 +6,7 @@ import { exportDay5CollaborationMetrics } from "../src/orchestration/day5-collab
 
 const units = ["background-collector", "self-assessor", "objective-diagnostician", "profile-builder", "path-planner", "concept-tutor", "code-lab", "tiered-evaluator"]
 
-async function writeSession(root: string, index: number, options?: { missingLedger?: boolean; blocked?: boolean; missingOutput?: string }): Promise<string> {
+async function writeSession(root: string, index: number, options?: { missingLedger?: boolean; blocked?: boolean; missingOutput?: string; failedUnit?: string; errorCode?: string }): Promise<string> {
   const path = join(root, `session-${index}.json`)
   const history = options?.missingLedger ? undefined : units.map((unit, step) => ({
     entry_id: `E-${index}-${step}`,
@@ -19,14 +19,14 @@ async function writeSession(root: string, index: number, options?: { missingLedg
     unit_name: unit,
     execution_type: unit === "tiered-evaluator" ? "reviewed_pipeline" : "deterministic_adapter",
     stage: unit === "tiered-evaluator" ? "assessment" : "objective_diagnosis",
-    status: "completed",
+    status: unit === options?.failedUnit ? "failed" : "completed",
     started_at: "2026-08-16T00:00:00.000Z",
     finished_at: "2026-08-16T00:00:01.000Z",
     input_refs: [],
     output_refs: [{ ref_id: `${unit}:artifact`, verified_exists: unit !== options?.missingOutput }],
     evidence_refs: [],
     execution_ref: { ref_id: `${unit}:execution`, verified_exists: true },
-    errors: [],
+    errors: unit === options?.failedUnit ? [{ code: options.errorCode ?? "CONTENT_INVALID" }] : [],
     retry: { is_retry: false },
     manual_intervention: { occurred: false },
     observability: {},
@@ -66,6 +66,23 @@ test("keeps a failed artifact check in the denominator", async () => {
   expect(metrics.collaboration_completion_rate).toBeCloseTo(2 / 3)
   expect(metrics.runs[2].completed_units_without_verified_output).toContain("code-lab")
   expect(metrics.runs[2].unit_output_coverage_complete).toBe(false)
+})
+
+test("summarizes blocked or failed runs by execution unit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "day5-metrics-failures-"))
+  const sessions = await Promise.all([
+    writeSession(root, 1),
+    writeSession(root, 2),
+    writeSession(root, 3),
+    writeSession(root, 4, { blocked: true, failedUnit: "code-lab", errorCode: "CONTENT_INVALID" }),
+    writeSession(root, 5, { blocked: true, failedUnit: "tiered-evaluator", errorCode: "CONTENT_NOT_NOVEL" }),
+  ])
+  const metrics = await exportDay5CollaborationMetrics({ session_files: sessions, output_file: join(root, "out.json") })
+  expect(metrics.runs[3].blocked_or_failed_units).toEqual(["code-lab"])
+  expect(metrics.blocked_or_failed_runs_by_unit).toEqual([
+    { unit_name: "code-lab", run_count: 1, entry_count: 1, error_codes: ["CONTENT_INVALID"] },
+    { unit_name: "tiered-evaluator", run_count: 1, entry_count: 1, error_codes: ["CONTENT_NOT_NOVEL"] },
+  ])
 })
 
 test("rejects summary files without append-only worker ledger", async () => {

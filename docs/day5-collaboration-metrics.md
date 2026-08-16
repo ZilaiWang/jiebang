@@ -18,4 +18,6 @@ bun run day5:collaboration:export -- \
 - 每个已完成单元至少有一个 `verified_exists=true` 的真实输出引用。
 - session 未进入 blocked，已形成反馈决策，且 ledger 中没有 blocked/failed 记录。
 
-协同完成率的分母是全部输入运行，分子是满足上述条件的运行。`unit_output_coverage_complete` 另行保留“曾完成全部单元与产物覆盖”的事实；后续轮次 blocked 的运行仍不计为整链完成。导出器不读取或输出 secure artifact 内容，也不把描述性路径当成已存在产物。
+协同完成率的分母是全部输入运行，分子是满足上述条件的运行。`unit_output_coverage_complete` 另行保留“曾完成全部单元与产物覆盖”的事实；后续轮次 blocked 的运行仍不计为整链完成。
+
+`blocked_or_failed_units` 记录单组运行中发生阻塞或失败的执行单元；`blocked_or_failed_runs_by_unit` 按执行单元汇总受影响的运行数、ledger记录数和错误码，使阻塞位置无需回查原始会话即可复核。导出器不读取或输出 secure artifact 内容，也不把描述性路径当成已存在产物。
