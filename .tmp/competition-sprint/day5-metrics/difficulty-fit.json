@@ -1,0 +1,57 @@
+{
+  "report_kind": "role_d_difficulty_fit",
+  "generated_at": "2026-08-16T21:38:48.980278",
+  "purpose": "资源真实难度（generation_spec.difficulty/DifficultyVector，按画像 level 计算）vs 画像 level 匹配度；决策动作调整难度（remediate 降、advance 推进）",
+  "scenarios": [
+    {
+      "learner_id": "day5-9cd69ff174",
+      "name": "李强",
+      "status": "completed",
+      "profile_level": "integrated",
+      "decision_action": "advance",
+      "resource_difficulty_base": 4,
+      "difficulty_adjustment": "推进新节点（保持难度，新节点按画像重新算）",
+      "difficulty_fit_rate": 1.0
+    },
+    {
+      "learner_id": "day5-b98b65591d",
+      "name": "张伟",
+      "status": "waiting_for_user",
+      "profile_level": "intermediate",
+      "decision_action": "reinforce",
+      "resource_difficulty_base": 3,
+      "difficulty_adjustment": "复用父 spec difficulty（保持画像难度）",
+      "difficulty_fit_rate": 1.0
+    },
+    {
+      "learner_id": "day5-e40a0659d9",
+      "name": "林晓",
+      "status": "waiting_for_user",
+      "profile_level": "beginner",
+      "decision_action": "remediate",
+      "resource_difficulty_base": 1,
+      "difficulty_adjustment": "remedialDifficulty 降难度（cognitive/reasoning/code/prereq 各-1，scaffold+1）",
+      "difficulty_fit_rate": 1.0
+    },
+    {
+      "learner_id": "day5-8e82ae51e5",
+      "name": "陈昊",
+      "status": "waiting_for_user",
+      "profile_level": "basic",
+      "decision_action": "reinforce",
+      "resource_difficulty_base": 2,
+      "difficulty_adjustment": "复用父 spec difficulty（保持画像难度）",
+      "difficulty_fit_rate": 1.0
+    },
+    {
+      "learner_id": "day5-51686bc068",
+      "name": "王芳",
+      "status": "waiting_for_user",
+      "profile_level": "beginner",
+      "decision_action": "advance",
+      "resource_difficulty_base": 1,
+      "difficulty_adjustment": "推进新节点（保持难度，新节点按画像重新算）",
+      "difficulty_fit_rate": 1.0
+    }
+  ]
+}

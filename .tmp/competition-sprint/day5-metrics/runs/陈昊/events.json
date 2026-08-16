@@ -1,105 +1,153 @@
 [
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-session_created-5m6x6o0b",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-session_created-lxsp3587",
     "event_type": "session_created",
     "stage": "objective_diagnosis",
     "message": "learning-orchestrator created a persistent session",
-    "timestamp": "2026-08-16T02:25:02.170Z"
+    "timestamp": "2026-08-16T12:56:40.483Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_completed-r61cb8uw",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-fm7oayg8",
     "event_type": "worker_completed",
     "stage": "objective_diagnosis",
     "worker": "background-collector",
     "message": "background-collector accepted learner background",
-    "timestamp": "2026-08-16T02:25:02.170Z"
+    "timestamp": "2026-08-16T12:56:40.483Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_completed-wzfpu50d",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-uuss3qxx",
     "event_type": "worker_completed",
     "stage": "objective_diagnosis",
     "worker": "self-assessor",
     "message": "self-assessor accepted learner self assessment",
-    "timestamp": "2026-08-16T02:25:02.170Z"
+    "timestamp": "2026-08-16T12:56:40.483Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_invoked-lw7ozmft",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_invoked-xbb14fg3",
     "event_type": "worker_invoked",
     "stage": "objective_diagnosis",
     "worker": "objective-diagnostician",
     "message": "objective-diagnostician prepared grounded questions",
-    "timestamp": "2026-08-16T02:25:02.170Z"
+    "timestamp": "2026-08-16T12:56:40.483Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-waiting_for_user-0qphk9q6",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-waiting_for_user-nmrnk8sw",
     "event_type": "waiting_for_user",
     "stage": "objective_diagnosis",
     "worker": "objective-diagnostician",
     "message": "waiting for diagnosis answers",
-    "timestamp": "2026-08-16T02:25:02.170Z"
+    "timestamp": "2026-08-16T12:56:40.483Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_completed-35e7nufw",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-36ltmfgk",
     "event_type": "worker_completed",
     "stage": "objective_diagnosis",
     "worker": "objective-diagnostician",
     "message": "objective-diagnostician completed grounded diagnosis",
-    "timestamp": "2026-08-16T02:25:06.772Z"
+    "timestamp": "2026-08-16T12:56:42.590Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-command_received-mv0a0yb2",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-command_received-ojwjbjff",
     "event_type": "command_received",
     "stage": "objective_diagnosis",
     "worker": "objective-diagnostician",
     "message": "received diagnosis answers",
-    "timestamp": "2026-08-16T02:25:06.772Z"
+    "timestamp": "2026-08-16T12:56:42.590Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_invoked-304ho6mg",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_invoked-3ew22mnt",
     "event_type": "worker_invoked",
     "stage": "objective_diagnosis",
     "worker": "profile-builder",
     "message": "invoke profile-builder",
-    "timestamp": "2026-08-16T02:25:06.773Z"
+    "timestamp": "2026-08-16T12:56:42.590Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_completed-noen6lkh",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-m6xmxd0y",
     "event_type": "worker_completed",
     "stage": "objective_diagnosis",
     "worker": "profile-builder",
     "message": "Synthesized deterministic Role B learner profile",
-    "timestamp": "2026-08-16T02:25:06.773Z"
+    "timestamp": "2026-08-16T12:56:42.591Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_invoked-kciavpiw",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_invoked-c4fxc01c",
     "event_type": "worker_invoked",
     "stage": "objective_diagnosis",
     "worker": "path-planner",
     "message": "invoke path-planner",
-    "timestamp": "2026-08-16T02:25:06.773Z"
+    "timestamp": "2026-08-16T12:56:42.591Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_completed-7uue3yaf",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-0lhmdwta",
     "event_type": "worker_completed",
     "stage": "objective_diagnosis",
     "worker": "path-planner",
     "message": "Planned deterministic Role B formal path with A RAG evidence",
-    "timestamp": "2026-08-16T02:25:06.774Z"
+    "timestamp": "2026-08-16T12:56:42.593Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-worker_invoked-prg5xlfc",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_invoked-mfct8eiz",
     "event_type": "worker_invoked",
     "stage": "assessment",
     "worker": "concept-tutor",
     "message": "Role C content generation started",
-    "timestamp": "2026-08-16T02:25:06.775Z"
+    "timestamp": "2026-08-16T12:56:42.593Z"
   },
   {
-    "event_id": "SESSION-c3e3ae3d-dd9d-41c2-9d12-9c59657696e7-session_blocked-ck11wcpm",
-    "event_type": "session_blocked",
-    "stage": "blocked",
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-aa7obyp6",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
+    "worker": "concept-tutor",
+    "message": "Role C reviewed concept-tutor output",
+    "timestamp": "2026-08-16T12:57:10.307Z"
+  },
+  {
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-xjgss532",
+    "event_type": "worker_completed",
+    "stage": "objective_diagnosis",
     "worker": "code-lab",
-    "message": "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁；INVALID_EXPECTED_TYPE",
-    "timestamp": "2026-08-16T02:25:18.920Z"
+    "message": "Role C reviewed code-lab output",
+    "timestamp": "2026-08-16T12:57:10.307Z"
+  },
+  {
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-worker_completed-iac6coqj",
+    "event_type": "worker_completed",
+    "stage": "assessment",
+    "worker": "tiered-evaluator",
+    "message": "Role C reviewed tiered-evaluator output",
+    "timestamp": "2026-08-16T12:57:10.307Z"
+  },
+  {
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-waiting_for_user-p6pe9idn",
+    "event_type": "waiting_for_user",
+    "stage": "assessment",
+    "worker": "tiered-evaluator",
+    "message": "waiting for assessment answers",
+    "timestamp": "2026-08-16T12:57:10.307Z"
+  },
+  {
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-command_received-zyaqjxuf",
+    "event_type": "command_received",
+    "stage": "assessment",
+    "worker": "tiered-evaluator",
+    "message": "Role C accepted and graded assessment answers",
+    "timestamp": "2026-08-16T12:57:13.039Z"
+  },
+  {
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-session_updated-txyin4iw",
+    "event_type": "session_updated",
+    "stage": "assessment",
+    "worker": "tiered-evaluator",
+    "message": "round 2 generation started in background",
+    "timestamp": "2026-08-16T12:57:13.042Z"
+  },
+  {
+    "event_id": "SESSION-dbc1bb62-b544-435d-9cae-0913c5388355-waiting_for_user-gt0snb45",
+    "event_type": "waiting_for_user",
+    "stage": "assessment",
+    "worker": "tiered-evaluator",
+    "message": "round 2 waiting for assessment answers",
+    "timestamp": "2026-08-16T12:58:11.492Z"
   }
 ]
