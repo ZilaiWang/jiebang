@@ -59,7 +59,7 @@ import {
   submitDiagnosisAnswers,
 } from "./orchestrator-client"
 import { semanticLessonLines, indentParagraphText } from "./lesson-format"
-import { abilityRadarView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, shouldPollOrchestratorSession } from "./orchestrator-view"
+import { abilityRadarView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
 import type { AssessmentPayload, Citation, CodeLabPayload, LessonPayload, PublicSessionFixture } from "./types"
 import {
   activePlan,
@@ -257,7 +257,7 @@ export function App() {
     return () => window.removeEventListener("scroll", update)
   }, [page])
 
-  const applySession = (next: any) => {
+  const applySession = async (next: any) => {
     const previousAssessmentId = liveSession?.assessment?.artifact_id
     const nextAssessmentId = next?.assessment?.artifact_id
     const assessmentChanged = Boolean(
@@ -265,7 +265,11 @@ export function App() {
       && (liveSession.round_no !== next?.round_no || (previousAssessmentId && nextAssessmentId && previousAssessmentId !== nextAssessmentId)),
     )
     if (assessmentChanged) setAssessmentAnswers({})
-    const merged = { ...next, events: Array.isArray(next.events) ? next.events : [] } as PublicSessionFixture
+    let merged = { ...next, events: Array.isArray(next.events) ? next.events : liveSession?.events ?? [] } as PublicSessionFixture
+    if (learnerId && sessionNeedsEventRefresh(liveSession, merged)) {
+      const eventResult = await getOrchestratorEvents(merged.session_id, learnerId).catch(() => ({ events: merged.events ?? [] }))
+      merged = { ...merged, events: eventResult.events ?? [] }
+    }
     setLiveSession(merged)
     if (currentUser && currentPlan) setWorkspace((value) => recordPlanPublicState(value, currentUser.id, currentPlan.id, {
       sessionId: merged.session_id,
@@ -326,7 +330,7 @@ export function App() {
             ? { mode: "custom_goal", custom_goal: goal }
             : { mode: "curriculum_node", selected_node_ids: nodeId ? [nodeId] : [] },
         })
-        applySession(created)
+        await applySession(created)
         setDiagnosisAnswers({})
         setAssessmentAnswers({})
       } catch (reason) {
@@ -340,7 +344,7 @@ export function App() {
       try {
         const next = await submitDiagnosisAnswers(liveSession.session_id, learnerId, diagnosisAnswers)
         const eventResult = await getOrchestratorEvents(liveSession.session_id, learnerId).catch(() => ({ events: [] }))
-        applySession({ ...next, events: eventResult.events ?? [] })
+        await applySession({ ...next, events: eventResult.events ?? [] })
         setAssessmentAnswers({})
       } catch (reason) { setError(reason instanceof Error ? reason.message : "提交诊断失败") }
       finally { setBusy("") }
@@ -352,7 +356,7 @@ export function App() {
       try {
         const next = await submitAssessmentAnswers(liveSession.session_id, learnerId, answersToSubmission(liveSession.assessment?.payload?.items ?? [], assessmentAnswers))
         const eventResult = await getOrchestratorEvents(liveSession.session_id, learnerId).catch(() => ({ events: [] }))
-        applySession({ ...next, events: eventResult.events ?? [] })
+        await applySession({ ...next, events: eventResult.events ?? [] })
         setAssessmentAnswers({})
         setFeedbackDismissed(false)
         setPage("feedback")
@@ -364,7 +368,7 @@ export function App() {
       setBusy("正在通过 Docker 检查这段代码…")
       setError("")
       try {
-        applySession(await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code))
+        await applySession(await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code))
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码运行失败")
       } finally { setBusy("") }
@@ -374,7 +378,7 @@ export function App() {
       setBusy("正在通过 Docker 运行代码实验…")
       setError("")
       try {
-        applySession(await requestCodeLab(liveSession.session_id, learnerId, labId, code))
+        await applySession(await requestCodeLab(liveSession.session_id, learnerId, labId, code))
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码实验运行失败")
       } finally { setBusy("") }
@@ -383,7 +387,7 @@ export function App() {
       if (!liveSession) return
       setBusy("主 Agent正在从持久化检查点重试…")
       setError("")
-      try { applySession(await retryOrchestratorSession(liveSession.session_id, learnerId)) }
+      try { await applySession(await retryOrchestratorSession(liveSession.session_id, learnerId)) }
       catch (reason) { setError(reason instanceof Error ? reason.message : "重试失败") }
       finally { setBusy("") }
     },
@@ -454,6 +458,7 @@ export function App() {
         </header>
         {busy && <div className="live-operation" role="status"><span className="operation-spinner" />{busy}</div>}
         {error && <div className="live-error" role="alert"><b>主 Agent请求未完成</b><span>{error}</span><button type="button" onClick={() => setError("")}>知道了</button></div>}
+        {liveSession && page !== "home" ? <MainFlowStatusBar session={liveSession} /> : null}
         <main>
           {page === "home" && <HomeDashboard user={currentUser} mastered={currentUser ? masteredConceptsForUser(workspace, currentUser.id) : []} providerConfigured={provider.configured} onNewPlan={requestNewPlan} onEnterPlan={enterPlan} onDeletePlan={(planId) => currentUser && setWorkspace((value) => deletePlan(value, currentUser.id, planId))} />}
           {page === "goal" && currentPlan ? <GoalPage onContinue={() => setPage("diagnosis")} /> : null}
@@ -950,6 +955,14 @@ function BlockedResourceState({ session, busy, onRetry, onRestart, title }: { se
 
 function NoSessionState({ onStart }: { onStart: () => void }) {
   return <div className="page"><section className="empty-state"><ShieldCheck size={29} /><h2>需要先创建主 Agent会话</h2><p>为避免伪造，D 不会在没有服务端会话时展示画像、学习方案、C 讲义、正式测评、评分或 Worker状态。</p><button className="primary-action" type="button" onClick={onStart}>新建真实学习会话</button></section></div>
+}
+
+function MainFlowStatusBar({ session }: { session: PublicSessionFixture }) {
+  const status = mainFlowStatusView(session)
+  return <aside className="main-flow-status" aria-label="主流程状态">
+    <div><span>{status.badge}</span><b>{status.headline}</b><p>{status.detail}</p></div>
+    <small>最近事件：{status.latestEvent}</small>
+  </aside>
 }
 
 function PageHeading({ kicker, title, description }: { kicker: string; title: string; description: string }) {

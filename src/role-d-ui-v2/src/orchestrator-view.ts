@@ -40,6 +40,68 @@ export function shouldPollOrchestratorSession(session: any): boolean {
   return Boolean(session?.session_id && session?.status === "running")
 }
 
+export interface MainFlowStatusView {
+  headline: string
+  detail: string
+  badge: string
+  latestEvent: string
+}
+
+export function mainFlowStatusView(session: any): MainFlowStatusView {
+  const waitingType = session?.waiting_for?.type
+  const waitingCount = Array.isArray(session?.waiting_for?.items) ? session.waiting_for.items.length : 0
+  const decisionAction = session?.feedback?.final_decision?.action
+  const nextRoundStatus = session?.next_round_action?.status
+  const parts = [`当前阶段：${stageLabel(session?.current_stage)}`]
+  if (waitingType) parts.push(`等待你完成 ${waitingCount} 项输入`)
+  if (decisionAction) parts.push(`反馈决策：${decisionLabel(decisionAction)}`)
+  if (nextRoundStatus) parts.push(`下一轮状态：${nextRoundStatusLabel(nextRoundStatus)}`)
+  if (session?.blocked_reason && !decisionAction) parts.push(`阻塞原因：${session.blocked_reason}`)
+  return {
+    headline: `第 ${session?.round_no ?? "--"} 轮 · ${waitingType ? waitingLabel(waitingType) : statusLabel(session?.status)}`,
+    detail: `${parts.join("；")}。`,
+    badge: String(session?.status ?? "unknown"),
+    latestEvent: latestEventLabel(session?.events),
+  }
+}
+
+export function sessionNeedsEventRefresh(currentSession: any, nextSession: any): boolean {
+  if (!nextSession?.session_id) return false
+  if (!Array.isArray(currentSession?.events) || currentSession.events.length === 0) return true
+  const currentRevision = Number(currentSession?.revision)
+  const nextRevision = Number(nextSession?.revision)
+  return Number.isFinite(currentRevision)
+    && Number.isFinite(nextRevision)
+    && nextRevision !== currentRevision
+}
+
+function latestEventLabel(events: any): string {
+  const list = Array.isArray(events) ? events : []
+  const latest = list[list.length - 1]
+  if (!latest) return "暂无事件"
+  return `${latest.worker || latest.agent || latest.event_type || "learning-orchestrator"}：${latest.message || latest.summary || latest.event_type || "事件已记录"}`
+}
+
+function statusLabel(status?: string): string {
+  return ({ waiting_for_user: "等待你继续", running: "主 Agent运行中", completed: "学习完成", blocked: "流程受阻", failed: "流程失败" } as Record<string, string>)[status ?? ""] ?? "状态未公开"
+}
+
+function stageLabel(stage?: string): string {
+  return ({ objective_diagnosis: "客观诊断", assessment: "互动学习与正式测评", completed: "学习完成", blocked: "流程受阻", failed: "流程失败" } as Record<string, string>)[stage ?? ""] ?? stage ?? "未公开"
+}
+
+function waitingLabel(type?: string): string {
+  return ({ diagnosis_answers: "等待诊断作答", assessment_answers: "等待正式测评", clarification_answer: "等待补充回答" } as Record<string, string>)[type ?? ""] ?? "等待你继续"
+}
+
+function decisionLabel(action?: string): string {
+  return ({ remediate: "开始针对性补救", reinforce: "进入巩固学习", advance: "进入下一知识节点", reprofile: "重新确认学习画像", complete: "完成本次学习" } as Record<string, string>)[action ?? ""] ?? action ?? "未公开"
+}
+
+function nextRoundStatusLabel(status?: string): string {
+  return ({ generating_next_round: "正在生成下一轮资源", waiting_for_reprofile: "等待重新画像" } as Record<string, string>)[status ?? ""] ?? status ?? "未公开"
+}
+
 export function answersMatchAssessmentItems(items: Array<{ item_id?: unknown }>, answers: Record<string, string>): boolean {
   const itemIds = items.map((item) => item.item_id).filter((itemId): itemId is string => typeof itemId === "string")
   return itemIds.length > 0

@@ -1,7 +1,34 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, answersToSubmission, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
+import { abilityRadarView, answersToSubmission, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
+  test("summarizes main flow status from public session, waiting gate, feedback, next action, and events", () => {
+    expect(mainFlowStatusView({
+      session_id: "S1",
+      status: "waiting_for_user",
+      current_stage: "objective_diagnosis",
+      round_no: 1,
+      waiting_for: { type: "diagnosis_answers", items: [{ item_id: "D1" }, { item_id: "D2" }] },
+      events: [{ event_type: "waiting_for_user", message: "waiting for diagnosis answers", timestamp: "2026-08-17T01:00:00.000Z", worker: "objective-diagnostician" }],
+    })).toEqual({
+      headline: "第 1 轮 · 等待诊断作答",
+      detail: "当前阶段：客观诊断；等待你完成 2 项输入。",
+      badge: "waiting_for_user",
+      latestEvent: "objective-diagnostician：waiting for diagnosis answers",
+    })
+
+    expect(mainFlowStatusView({
+      session_id: "S1",
+      status: "running",
+      current_stage: "assessment",
+      round_no: 2,
+      waiting_for: null,
+      next_round_action: { action: "advance", status: "generating_next_round", target_node_id: "NODE-2", feedback_id: "FB-1" },
+      feedback: { final_decision: { action: "advance" } },
+      events: [{ event_type: "session_updated", message: "round 2 generation started in background", timestamp: "2026-08-17T01:01:00.000Z", worker: "tiered-evaluator" }],
+    }).detail).toBe("当前阶段：互动学习与正式测评；反馈决策：进入下一知识节点；下一轮状态：正在生成下一轮资源。")
+  })
+
   test("routes diagnosis completion and plan re-entry to the learning plan before C content", () => {
     expect(pageForSession({ status: "waiting_for_user", current_stage: "objective_diagnosis", waiting_for: { type: "diagnosis_answers" } })).toBe("diagnosis")
     expect(pageForSession({ status: "waiting_for_user", current_stage: "assessment", waiting_for: { type: "assessment_answers" }, profile: {}, formal_path: {}, current_path_node: {}, learning_resources: { concept_lesson: {} } })).toBe("path")
