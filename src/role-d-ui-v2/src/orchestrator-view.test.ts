@@ -1,7 +1,40 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, answersToSubmission, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
+import { abilityRadarView, agentTimelineView, answersToSubmission, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
+  test("builds a truthful Agent timeline with attempts, public artifacts, failures, and retries", () => {
+    const timeline = agentTimelineView({ worker_ledger_history: [{
+      entry_id: "LEDGER-1",
+      round_no: 2,
+      attempt_no: 2,
+      unit_name: "code-lab",
+      execution_type: "reviewed_pipeline",
+      status: "blocked",
+      started_at: "2026-08-17T01:02:03.000Z",
+      duration_ms: 1250,
+      output_refs: [
+        { ref_id: "LAB-1", locator: "sessions/S1.json#/learning_resources/code_lab", visibility: "public", verified_exists: true },
+        { ref_id: "INTERNAL-1", locator: "internal/run.json", visibility: "internal", verified_exists: true },
+        { ref_id: "SECURE-1", locator: null, visibility: "secure", verified_exists: true },
+      ],
+      summary: "code lab generation blocked",
+      errors: [{ code: "CONTENT_INVALID", message: "invalid expected type" }],
+      retry: { eligible: true, scheduled: true, reason: "regenerate", next_attempt_no: 3 },
+    }] })
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0]).toMatchObject({
+      id: "LEDGER-1",
+      unit: "code-lab",
+      statusLabel: "已阻塞",
+      roundLabel: "第 2 轮",
+      attemptLabel: "第 2 次尝试",
+      executionType: "受审核生成流程",
+      errorLabel: "CONTENT_INVALID：invalid expected type",
+      retryLabel: "已安排第 3 次尝试：regenerate",
+    })
+    expect(timeline[0].artifactRefs).toEqual([{ id: "LAB-1", locator: "sessions/S1.json#/learning_resources/code_lab", verified: true }])
+  })
+
   test("summarizes main flow status from public session, waiting gate, feedback, next action, and events", () => {
     expect(mainFlowStatusView({
       session_id: "S1",

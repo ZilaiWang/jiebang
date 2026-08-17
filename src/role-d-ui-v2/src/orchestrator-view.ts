@@ -47,6 +47,64 @@ export interface MainFlowStatusView {
   latestEvent: string
 }
 
+export interface AgentTimelineEntryView {
+  id: string
+  unit: string
+  status: string
+  statusLabel: string
+  roundLabel: string
+  attemptLabel: string
+  executionType: string
+  summary: string
+  timeLabel: string
+  artifactRefs: Array<{ id: string; locator: string | null; verified: boolean }>
+  errorLabel: string | null
+  retryLabel: string | null
+}
+
+export function agentTimelineView(session: any): AgentTimelineEntryView[] {
+  const history = Array.isArray(session?.worker_ledger_history) ? session.worker_ledger_history : []
+  return history.map((entry: any, index: number) => {
+    const outputs = Array.isArray(entry?.output_refs) ? entry.output_refs : []
+    const errors = Array.isArray(entry?.errors) ? entry.errors : []
+    const retry = entry?.retry
+    return {
+      id: String(entry?.entry_id ?? `timeline-${index}`),
+      unit: String(entry?.unit_name ?? "unknown"),
+      status: String(entry?.status ?? "unknown"),
+      statusLabel: timelineStatusLabel(entry?.status),
+      roundLabel: `第 ${Number(entry?.round_no) || 1} 轮`,
+      attemptLabel: `第 ${Number(entry?.attempt_no) || 1} 次尝试`,
+      executionType: executionTypeLabel(entry?.execution_type),
+      summary: String(entry?.summary ?? "主 Agent未公开执行摘要"),
+      timeLabel: timelineTimeLabel(entry?.started_at, entry?.duration_ms),
+      artifactRefs: outputs
+        .filter((ref: any) => ref?.visibility === "public")
+        .map((ref: any) => ({ id: String(ref?.ref_id ?? "unknown"), locator: typeof ref?.locator === "string" ? ref.locator : null, verified: ref?.verified_exists === true })),
+      errorLabel: errors.length ? errors.map((error: any) => `${error?.code ? `${error.code}：` : ""}${error?.message ?? "未知错误"}`).join("；") : null,
+      retryLabel: retry?.scheduled
+        ? `已安排第 ${retry.next_attempt_no ?? "?"} 次尝试${retry.reason ? `：${retry.reason}` : ""}`
+        : retry?.eligible
+          ? `可重试${retry.reason ? `：${retry.reason}` : ""}`
+          : null,
+    }
+  })
+}
+
+function timelineStatusLabel(status?: string): string {
+  return ({ invoked: "已调用", running: "正在运行", waiting_for_user: "等待用户", completed: "已完成", blocked: "已阻塞", failed: "执行失败", skipped: "已跳过" } as Record<string, string>)[status ?? ""] ?? "状态未公开"
+}
+
+function executionTypeLabel(type?: string): string {
+  return ({ opencode_primary: "OpenCode 主 Agent", opencode_subagent: "OpenCode 子 Agent", deterministic_adapter: "确定性适配器", reviewed_pipeline: "受审核生成流程", external_port: "外部能力接口", session_logic: "主会话逻辑", manual: "人工操作", unknown: "类型未公开" } as Record<string, string>)[type ?? ""] ?? String(type ?? "类型未公开")
+}
+
+function timelineTimeLabel(startedAt?: string, durationMs?: number | null): string {
+  const parsed = typeof startedAt === "string" ? new Date(startedAt) : null
+  const started = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "时间未公开"
+  return typeof durationMs === "number" ? `${started} · ${durationMs} ms` : started
+}
+
 export function mainFlowStatusView(session: any): MainFlowStatusView {
   const waitingType = session?.waiting_for?.type
   const waitingCount = Array.isArray(session?.waiting_for?.items) ? session.waiting_for.items.length : 0
