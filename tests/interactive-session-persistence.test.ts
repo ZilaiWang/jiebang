@@ -242,6 +242,13 @@ test("keeps failed review visible and blocks publication after Role C review exh
   })
   const persisted = await store.load(record.session_id)
   persisted.private.role_c_failed_generations = 1
+  persisted.next_round_action = {
+    action: "remediate",
+    round_no: 2,
+    target_node_id: "NODE-1",
+    feedback_id: "FB-1",
+    status: "generating_next_round",
+  }
   ;(await import("../src/orchestration/interactive-session") as any).__test_applyRoleCGenerationFailure(persisted, {
     ok: false,
     reason: "role-c.code-lab.secure 未在有限修复次数内通过校验；HIDDEN_TEST_EXPECTED_LEAK；NO_REPAIR_PROGRESS",
@@ -261,6 +268,7 @@ test("keeps failed review visible and blocks publication after Role C review exh
   expect(persisted.learning_resources).toEqual({ concept_lesson: null, code_lab: null })
   expect(persisted.assessment).toBeNull()
   expect(persisted.status).toBe("blocked")
+  expect(persisted.next_round_action).toBeNull()
   expect(persisted.content_review).toMatchObject({
     overall_status: "blocked",
     publish_allowed: false,

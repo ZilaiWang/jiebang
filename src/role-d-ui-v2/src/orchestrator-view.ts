@@ -36,6 +36,21 @@ export function nextRoundResourceGate(session: any): { ready: boolean; label: st
     : { ready: false, label: "等待 C 发布下一轮新资源…" }
 }
 
+/** True only when the persisted feedback grades the assessment currently published. */
+export function currentAssessmentAlreadyGraded(session: any): boolean {
+  const currentItems = Array.isArray(session?.assessment?.payload?.items)
+    ? session.assessment.payload.items
+    : []
+  const feedbackItems = Array.isArray(session?.feedback?.assessment_items?.items)
+    ? session.feedback.assessment_items.items
+    : []
+  const currentIds = currentItems.map((item: any) => item?.item_id).filter(Boolean)
+  const feedbackIds = new Set(feedbackItems.map((item: any) => item?.item_id).filter(Boolean))
+  return currentIds.length > 0
+    && feedbackIds.size === currentIds.length
+    && currentIds.every((itemId: string) => feedbackIds.has(itemId))
+}
+
 export function shouldPollOrchestratorSession(session: any): boolean {
   return Boolean(session?.session_id && session?.status === "running")
 }
@@ -137,7 +152,12 @@ export function mainFlowStatusView(session: any): MainFlowStatusView {
   const nextRoundStatus = session?.next_round_action?.status
   const parts = [`当前阶段：${stageLabel(session?.current_stage)}`]
   if (waitingType) parts.push(`等待你完成 ${waitingCount} 项输入`)
-  if (decisionAction) parts.push(`反馈决策：${decisionLabel(decisionAction)}`)
+  if (decisionAction) {
+    const decisionPrefix = currentAssessmentAlreadyGraded(session)
+      ? "本轮反馈决策"
+      : "当前资源依据的上一轮决策"
+    parts.push(`${decisionPrefix}：${decisionLabel(decisionAction)}`)
+  }
   if (nextRoundStatus) parts.push(`下一轮状态：${nextRoundStatusLabel(nextRoundStatus)}`)
   if (session?.blocked_reason && !decisionAction) parts.push(`阻塞原因：${session.blocked_reason}`)
   return {

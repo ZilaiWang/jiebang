@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { OpenAICompatibleModelGateway } from "../src/role-c-content/contracts/model-gateway"
+import { ModelGatewayError, OpenAICompatibleModelGateway } from "../src/role-c-content/contracts/model-gateway"
 
 const schema = { type: "object", properties: { ok: { type: "boolean" }, items: { type: "array" } }, required: ["ok"] }
 
@@ -46,5 +46,34 @@ describe("OpenAI-compatible model JSON extraction tolerance", () => {
       max_tokens: 100,
       idempotency_key: "probe-prose-python-literals",
     })).resolves.toEqual({ ok: true, items: [false, null] })
+  })
+
+  test("classifies malformed nested JSON as INVALID_JSON rather than a network error", async () => {
+    const gateway = new OpenAICompatibleModelGateway({
+      endpoint: "https://example.test/chat/completions",
+      model: "probe",
+      response_format: "text_json",
+      max_transport_retries: 0,
+      fetch_impl: async () => new Response(JSON.stringify({
+        choices: [{ message: { content: '{"ok": true, "items": [1, 2}' }, finish_reason: "stop" }],
+      }), { status: 200, headers: { "content-type": "application/json" } }),
+    })
+
+    try {
+      await gateway.generateStructured({
+        task: "probe-invalid-json",
+        system_prompt: "return JSON",
+        input: {},
+        output_schema_id: "probe_v1",
+        output_schema: schema,
+        temperature: 0,
+        max_tokens: 100,
+        idempotency_key: "probe-invalid-json",
+      })
+      throw new Error("expected invalid JSON")
+    } catch (error) {
+      expect(error).toBeInstanceOf(ModelGatewayError)
+      expect((error as ModelGatewayError).code).toBe("INVALID_JSON")
+    }
   })
 })

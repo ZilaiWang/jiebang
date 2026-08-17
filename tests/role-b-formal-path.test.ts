@@ -81,7 +81,7 @@ describe("buildFormalPath", () => {
     expect(loopNodes.length).toBeGreaterThan(0)
     // 所有节点的 goal 字段都应该是原始目标
     for (const node of path.nodes) {
-      expect(node.goal).toBe("学会循环遍历数据")
+      expect(node.goal).toBe(kb.items.find((item) => item.sourceId === node.target_source_ids[0])!.title)
     }
   })
 

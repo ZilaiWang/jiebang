@@ -111,7 +111,21 @@ describe("orchestrator UI state mapping", () => {
       next_round_action: { action: "advance", status: "generating_next_round", target_node_id: "NODE-2", feedback_id: "FB-1" },
       feedback: { final_decision: { action: "advance" } },
       events: [{ event_type: "session_updated", message: "round 2 generation started in background", timestamp: "2026-08-17T01:01:00.000Z", worker: "tiered-evaluator" }],
-    }).detail).toBe("当前阶段：互动学习与正式测评；反馈决策：进入下一知识节点；下一轮状态：正在生成下一轮资源。")
+    }).detail).toBe("当前阶段：互动学习与正式测评；当前资源依据的上一轮决策：进入下一知识节点；下一轮状态：正在生成下一轮资源。")
+  })
+
+  test("labels historical feedback as the previous-round basis once a fresh form is published", () => {
+    expect(mainFlowStatusView({
+      status: "waiting_for_user",
+      current_stage: "assessment",
+      round_no: 3,
+      waiting_for: { type: "assessment_answers", items: [{ item_id: "NEW-1" }] },
+      assessment: { payload: { items: [{ item_id: "NEW-1" }] } },
+      feedback: {
+        final_decision: { action: "remediate" },
+        assessment_items: { items: [{ item_id: "OLD-1" }] },
+      },
+    }).detail).toContain("当前资源依据的上一轮决策：开始针对性补救")
   })
 
   test("routes diagnosis completion and plan re-entry to the learning plan before C content", () => {

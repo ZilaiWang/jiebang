@@ -119,7 +119,7 @@ export function buildFormalPath(input: BuildFormalPathInput): FormalLearningPath
   )
 
   // 构建有序节点列表：先修 → 目标
-  const nodes = buildOrderedNodes(learnerProfile, knowledgeBase, goalItems, originalGoal)
+  const nodes = buildOrderedNodes(learnerProfile, knowledgeBase, goalItems)
   const requestedSourceIds = [...new Set(goalSourceIds ?? [])]
   const resolvedSourceIds = goalItems.map((item) => item.sourceId)
   const unresolvedSourceIds = requestedSourceIds.filter((sourceId) => !resolvedSourceIds.includes(sourceId))
@@ -382,7 +382,6 @@ function buildOrderedNodes(
   profile: LearnerProfile,
   kb: KnowledgeBase,
   goalItems: KnowledgeItem[],
-  originalGoal: string,
 ): FormalPathNode[] {
   if (goalItems.length === 0) {
     // 找不到匹配知识点时返回空列表
@@ -445,12 +444,12 @@ function buildOrderedNodes(
     })
     if (isKnown) continue
 
-    nodes.push(createFormalNode(prereq, originalGoal, stage++, "pending"))
+    nodes.push(createFormalNode(prereq, stage++, "pending"))
   }
 
   // 目标节点
   for (const item of sortedGoalItems) {
-    nodes.push(createFormalNode(item, originalGoal, stage++, "pending"))
+    nodes.push(createFormalNode(item, stage++, "pending"))
   }
 
   return nodes
@@ -458,7 +457,6 @@ function buildOrderedNodes(
 
 function createFormalNode(
   item: KnowledgeItem,
-  goal: string,
   stageOrder: number,
   status: FormalPathNodeStatus,
 ): FormalPathNode {
@@ -490,7 +488,9 @@ function createFormalNode(
     prerequisite_source_ids: (item.prerequisites ?? []).filter(
       (pid) => pid !== item.sourceId,
     ),
-    goal,
+    // Each node owns its canonical knowledge topic. The unchanged learner goal
+    // remains available at FormalLearningPath.original_goal.
+    goal: item.title,
     objectives,
     assessment_blueprint: blueprint,
     status,
