@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { nextRoundResourceGate } from "./orchestrator-view"
+import { currentAssessmentAlreadyGraded, nextRoundResourceGate } from "./orchestrator-view"
 
 describe("next-round resource gate", () => {
   test("blocks navigation while the main Agent is waiting for C to publish the new round", () => {
@@ -34,5 +34,21 @@ describe("next-round resource gate", () => {
       assessment: { payload: { items: [{ item_id: "OLD-1" }] } },
       learning_resources: { concept_lesson: { artifact_id: "OLD-LESSON" } },
     }).ready).toBe(false)
+  })
+})
+
+describe("current assessment feedback identity", () => {
+  test("上一轮反馈不能把已经发布的新一轮测评判为结束", () => {
+    expect(currentAssessmentAlreadyGraded({
+      assessment: { payload: { items: [{ item_id: "ROUND-2-A" }, { item_id: "ROUND-2-B" }] } },
+      feedback: { assessment_items: { items: [{ item_id: "ROUND-1-A" }, { item_id: "ROUND-1-B" }] } },
+    })).toBe(false)
+  })
+
+  test("反馈题目身份与当前测评完全一致时才判为本轮已评分", () => {
+    expect(currentAssessmentAlreadyGraded({
+      assessment: { payload: { items: [{ item_id: "A" }, { item_id: "B" }] } },
+      feedback: { assessment_items: { items: [{ item_id: "B" }, { item_id: "A" }] } },
+    })).toBe(true)
   })
 })

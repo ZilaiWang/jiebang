@@ -367,7 +367,14 @@ function parseJson(value: string): unknown {
   } catch {
     const extracted = extractFirstJsonValue(candidate)
     if (extracted !== undefined) {
-      return JSON.parse(normalizePythonLiterals(extracted))
+      try {
+        return JSON.parse(normalizePythonLiterals(extracted))
+      } catch {
+        // A balanced outer object can still contain a malformed nested array.
+        // Continue to the final normalization path so the caller receives the
+        // correct INVALID_JSON classification instead of a misleading network
+        // error from a leaked SyntaxError.
+      }
     }
     try {
       const normalized = normalizePythonLiterals(candidate)

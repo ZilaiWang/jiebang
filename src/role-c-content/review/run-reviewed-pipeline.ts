@@ -666,6 +666,10 @@ function reviewFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : ""
   if (/EVIDENCE_MUTATED|EVIDENCE_MISMATCH/u.test(message)) return "REVIEW_EVIDENCE_MISMATCH"
   if (/RUN_MISMATCH|INPUT_HASH_MISMATCH|SPEC_HASH_MISMATCH|POLICY_MISMATCH|ROUND_MISMATCH/u.test(message)) return "REVIEW_IDENTITY_MISMATCH"
+  const invalidResult = /ROLE_C_REVIEW_(RESULT_[A-Z_]+|INVALID_ARBITRATION|PASS_WITH_FINDINGS|INSTRUCTION_[A-Z_]+)/u.exec(message)
+  if (invalidResult) return `REVIEW_INVALID_RESULT:${invalidResult[1]}`
+  const semanticResult = /ROLE_C_SEMANTIC_AUDIT_(RESULT_[A-Z_]+)/u.exec(message)
+  if (semanticResult) return `REVIEW_INVALID_RESULT:SEMANTIC_AUDIT_${semanticResult[1]}`
   if (/RESULT_|INVALID_ARBITRATION|PASS_WITH_FINDINGS|INSTRUCTION_/u.test(message)) return "REVIEW_INVALID_RESULT"
   return "REVIEW_TRANSPORT_ERROR"
 }

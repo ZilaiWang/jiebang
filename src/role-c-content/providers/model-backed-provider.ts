@@ -6,6 +6,7 @@ import type {
   CodeLabRequest,
   CodeLabVerificationFeedback,
   ConceptTutorRequest,
+  PriorAssessmentItem,
   RoleCContentProvider,
   TieredEvaluatorRequest,
 } from "../agents/types"
@@ -104,6 +105,7 @@ import {
   type CodeLabSecureAuthorPayload,
   type AssessmentSecureAuthorPayload,
   type AssessmentPublicAuthorPayload,
+  type AssessmentItemPlan,
   type ConceptSegmentAuthorPayload,
 } from "./staged-generation"
 
@@ -731,6 +733,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           form_id: formId,
           objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
           item_plan: plan,
+          novelty_design_brief: buildAssessmentNoveltyDesignBrief(
+            plan,
+            request.prior_assessment_items ?? [],
+          ),
         },
       },
       output_schema_id: "role_c_assessment_public_author_payload_v1",
@@ -1348,19 +1354,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         repair_directive: repairDirective,
       }),
     })
-    const candidate = structuredClone(previousOutput) as T
-    const items = asRecord(candidate).items
-    if (!Array.isArray(items)) return candidate
-    for (const replacement of patch.replacements) {
-      if (!indices.includes(replacement.index) || !items[replacement.index]) continue
-      items[replacement.index] = {
-        prompt: replacement.prompt,
-        options: replacement.options,
-        starter_code: replacement.starter_code,
-        structure_meta: replacement.structure_meta,
-      }
-    }
-    return candidate
+    return applyAssessmentNoveltyPatch(previousOutput, patch.replacements, indices)
   }
 
   private async generateConceptLessonMonolithic(
@@ -1490,6 +1484,109 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     }
     return draft as AssessmentDraft
   }
+}
+
+export interface AssessmentNoveltyDesignBrief {
+  history_count: number
+  items: Array<{
+    index: number
+    objective_id: string
+    tier: 1 | 2 | 3
+    modality: AssessmentItemPlan["modality"]
+    planned_cognitive_operation: AssessmentItemPlan["cognitive_operation"]
+    variation_axis: "operation" | "reasoning_pattern" | "representation" | "context_family"
+    in_form_role: "direct_foundation" | "guided_application" | "integrated_transfer"
+    forbidden_history: Array<{
+      prompt: string
+      structure_meta?: AssessmentStructureMeta
+    }>
+  }>
+}
+
+/**
+ * Gives the author a compact, item-specific novelty plan before it writes any
+ * question. The plan does not contain question text or answers: it identifies
+ * the relevant historical tasks and rotates the semantic dimension that the
+ * model should vary. This keeps novelty in the positive authoring path instead
+ * of relying on repeated validator failures to explain the task afterwards.
+ */
+export function buildAssessmentNoveltyDesignBrief(
+  plan: AssessmentItemPlan[],
+  history: PriorAssessmentItem[],
+): AssessmentNoveltyDesignBrief {
+  const axes: AssessmentNoveltyDesignBrief["items"][number]["variation_axis"][] = [
+    "operation",
+    "reasoning_pattern",
+    "representation",
+    "context_family",
+  ]
+  return {
+    history_count: history.length,
+    items: plan.map((item, index) => ({
+      index,
+      objective_id: item.objective_id,
+      tier: item.tier,
+      modality: item.modality,
+      planned_cognitive_operation: item.cognitive_operation,
+      variation_axis: axes[(history.length + index) % axes.length]!,
+      in_form_role: item.tier === 1
+        ? "direct_foundation"
+        : item.tier === 2
+          ? "guided_application"
+          : "integrated_transfer",
+      forbidden_history: history
+        .filter((prior) => prior.objective_id === item.objective_id
+          && prior.modality === item.modality)
+        .slice(-8)
+        .map((prior) => ({
+          prompt: prior.prompt,
+          ...(prior.structure_meta
+            ? { structure_meta: structuredClone(prior.structure_meta) }
+            : {}),
+        })),
+    })),
+  }
+}
+
+export interface AssessmentNoveltyReplacement {
+  index: number
+  prompt: string
+  options: string[] | null
+  starter_code: string | null
+  structure_meta: AssessmentStructureMeta
+}
+
+/**
+ * Applies a targeted novelty rewrite without changing the frozen assessment
+ * identity and plan fields. `null` means that the modality does not expose the
+ * optional field; it must be omitted rather than serialized as null.
+ */
+export function applyAssessmentNoveltyPatch<T>(
+  previousOutput: T,
+  replacements: AssessmentNoveltyReplacement[],
+  allowedIndices: number[],
+): T {
+  const candidate = structuredClone(previousOutput) as T
+  const items = asRecord(candidate).items
+  if (!Array.isArray(items)) return candidate
+  for (const replacement of replacements) {
+    const existing = items[replacement.index]
+    if (!allowedIndices.includes(replacement.index)
+      || !existing
+      || typeof existing !== "object"
+      || Array.isArray(existing)) continue
+    const updated = {
+      ...existing,
+      prompt: replacement.prompt,
+      structure_meta: structuredClone(replacement.structure_meta),
+    }
+    if (replacement.options === null) delete updated.options
+    else updated.options = structuredClone(replacement.options)
+    if (replacement.starter_code === null) delete updated.starter_code
+    else updated.starter_code = replacement.starter_code
+    items[replacement.index] = updated
+  }
+  return candidate
 }
 
 function stageRepairContext(
