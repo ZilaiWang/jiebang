@@ -14,15 +14,19 @@
       "type": "object",
       "required": ["profile_version", "kb_version", "rag_version", "prompt_version", "model_config_hash", "schema_version"],
       "properties": {
-        "profile_version": { "type": "string", "minLength": 1 }, "kb_version": { "type": "string", "minLength": 1 },
-        "rag_version": { "type": "string", "minLength": 1 }, "prompt_version": { "type": "string", "minLength": 1 },
-        "model_config_hash": { "type": "string", "minLength": 1 }, "schema_version": { "const": "1.0" },
+        "profile_version": { "type": "string", "minLength": 1 },
+        "kb_version": { "type": "string", "minLength": 1 },
+        "rag_version": { "type": "string", "minLength": 1 },
+        "prompt_version": { "type": "string", "minLength": 1 },
+        "model_config_hash": { "type": "string", "minLength": 1 },
+        "schema_version": { "const": "1.0" },
         "runner_image_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
       },
       "additionalProperties": false
     },
     "profile_ref": {
-      "type": "object", "required": ["profile_id", "profile_version", "profile_content_hash"],
+      "type": "object",
+      "required": ["profile_id", "profile_version", "profile_content_hash"],
       "properties": {
         "profile_id": { "type": "string", "minLength": 1 },
         "profile_version": { "type": "string", "minLength": 1 },
@@ -31,72 +35,131 @@
       "additionalProperties": false
     },
     "path_node": {
-      "type": "object", "required": ["node_id", "target_source_ids", "prerequisite_source_ids", "goal"],
+      "type": "object",
+      "required": ["node_id", "target_source_ids", "prerequisite_source_ids", "goal"],
       "properties": {
         "node_id": { "type": "string", "minLength": 1 },
-        "target_source_ids": { "type": "array", "minItems": 1, "maxItems": 30, "uniqueItems": true, "items": { "type": "string", "pattern": "^K[0-9]{3}$" } },
-        "prerequisite_source_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^K[0-9]{3}$" } },
+        "target_source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+        },
+        "prerequisite_source_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+        },
         "goal": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
     "targets": {
-      "type": "array", "minItems": 1, "maxItems": 30,
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
       "items": {
-        "type": "object", "required": ["objective_id", "source_id", "required_fact_ids", "observable_behavior", "importance"],
+        "type": "object",
+        "required": ["objective_id", "source_id", "required_fact_ids", "observable_behavior", "importance"],
         "properties": {
-          "objective_id": { "type": "string", "minLength": 1 }, "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
-          "required_fact_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^F[0-9]{3}$" } },
+          "objective_id": { "type": "string", "minLength": 1 },
+          "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "required_fact_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^F[0-9]{3}$" }
+          },
           "observable_behavior": { "enum": ["recognize", "explain", "trace", "apply", "debug", "create"] },
-          "importance": { "enum": ["core", "supporting"] }
+          "importance": { "enum": ["core", "supporting"] },
+          "is_primary": { "type": "boolean", "description": "显式声明本节点主要实验目标（由上游路径规划标记，不依赖数组顺序）。code-lab 执行契约由 primary objective 决定。" }
         },
         "additionalProperties": false
       },
       "additionalProperties": false
     },
     "learner_adaptation": {
-      "type": "object", "required": ["level", "known_concepts", "weak_concepts", "preferred_contexts", "scaffold_level", "reading_density", "accommodations"],
+      "type": "object",
+      "required": ["level", "known_concepts", "weak_concepts", "preferred_contexts", "scaffold_level", "reading_density", "accommodations"],
       "properties": {
         "level": { "enum": ["beginner", "basic", "intermediate", "integrated"] },
-        "known_concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "weak_concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "preferred_contexts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "known_concepts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "weak_concepts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "preferred_contexts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "scaffold_level": { "type": "integer", "minimum": 0, "maximum": 3 },
         "reading_density": { "enum": ["low", "medium", "high"] },
-        "accommodations": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+        "accommodations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
       },
       "additionalProperties": false
     },
     "difficulty": {
-      "type": "object", "required": ["domain_complexity", "cognitive_demand", "reasoning_steps", "code_complexity", "prerequisite_load", "scaffold_strength"],
+      "type": "object",
+      "required": ["domain_complexity", "cognitive_demand", "reasoning_steps", "code_complexity", "prerequisite_load", "scaffold_strength"],
       "properties": {
         "domain_complexity": { "type": "number", "minimum": 0, "maximum": 5 },
         "cognitive_demand": { "type": "number", "minimum": 0, "maximum": 5 },
         "reasoning_steps": { "type": "number", "minimum": 0, "maximum": 5 },
         "code_complexity": { "type": "number", "minimum": 0, "maximum": 5 },
         "prerequisite_load": { "type": "number", "minimum": 0, "maximum": 5 },
-        "scaffold_strength": { "type": "number", "minimum": 0, "maximum": 5 }
+        "scaffold_strength": { "type": "number", "minimum": 0, "maximum": 5 },
+        "transfer_distance": { "type": "number", "minimum": 0, "maximum": 5, "description": "迁移距离：0=同情境复现，1=近迁移，2=跨情境（教学挑战维度，可空）" },
+        "boundary_condition_density": { "type": "number", "minimum": 0, "maximum": 5, "description": "边界情况密度：0=无边界考察，5=密集边界辨析（教学挑战维度，可空）" },
+        "task_composition": { "type": "number", "minimum": 0, "maximum": 5, "description": "任务组合度：0=单操作，5=多操作组合（教学挑战维度，可空）" }
       },
       "additionalProperties": false
     },
     "assessment_blueprint": {
-      "type": "object", "required": ["tier_1_count", "tier_2_count", "tier_3_count", "required_modalities"],
+      "type": "object",
+      "required": ["tier_1_count", "tier_2_count", "tier_3_count", "required_modalities"],
       "anyOf": [
-        { "properties": { "tier_1_count": { "minimum": 1 } } },
-        { "properties": { "tier_2_count": { "minimum": 1 } } }
+        {
+          "properties": {
+            "tier_1_count": { "minimum": 1 }
+          }
+        },
+        {
+          "properties": {
+            "tier_2_count": { "minimum": 1 }
+          }
+        }
       ],
       "properties": {
-        "tier_1_count": { "type": "integer", "minimum": 0, "maximum": 20 }, "tier_2_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "tier_1_count": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "tier_2_count": { "type": "integer", "minimum": 0, "maximum": 20 },
         "tier_3_count": { "type": "integer", "minimum": 0, "maximum": 20 },
-        "required_modalities": { "type": "array", "uniqueItems": true, "items": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] } }
+        "required_modalities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] }
+        }
       },
       "additionalProperties": false
     },
     "policies": {
-      "type": "object", "required": ["external_knowledge_allowed", "citation_required", "max_semantic_revision", "max_tool_retry", "seed"],
+      "type": "object",
+      "required": ["external_knowledge_allowed", "citation_required", "max_semantic_revision", "max_tool_retry", "seed"],
       "properties": {
-        "external_knowledge_allowed": { "const": false }, "citation_required": { "const": true },
-        "max_semantic_revision": { "enum": [1, 2] }, "max_tool_retry": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "external_knowledge_allowed": { "const": false },
+        "citation_required": { "const": true },
+        "max_semantic_revision": { "enum": [1, 2] },
+        "max_tool_retry": { "type": "integer", "minimum": 0, "maximum": 2 },
         "seed": { "type": "integer" }
       },
       "additionalProperties": false

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import type { PriorAssessmentItem } from "../agents/types"
 import type {
   AssessmentPublicArtifact,
   AssessmentSecureArtifact,
@@ -1287,6 +1288,7 @@ export class LearningCycleService {
       parent_spec: structuredClone(run.pipeline_input.generation_spec),
       profile_snapshot: structuredClone(run.profile_snapshot),
       current_evidence_pack: structuredClone(run.pipeline_input.evidence_pack),
+      prior_assessment_items: priorAssessmentItemsFromRun(run),
       ...(input.next_path_node
         ? { next_path_node: structuredClone(input.next_path_node) }
         : {}),
@@ -2388,6 +2390,48 @@ function readyAssessment(run: LearningRunRecord): AssessmentPublicArtifact {
     throw new LearningCycleServiceError("INVALID_READY_RUN", "run 缺少 ready assessment_public")
   }
   return artifact
+}
+
+/** 历史题目账本上限：5 题/轮 × 6 轮，防无限增长。 */
+const PRIOR_ASSESSMENT_LEDGER_LIMIT = 30
+
+/**
+ * 从上一轮 run 的 assessment_public 提取正式测评公开题（PriorAssessmentItem[]），
+ * 传给下一轮用于变式命制与 novelty 校验。没有已发布测评时返回空数组。
+ *
+ * 必须合并 run.pipeline_input.prior_assessment_items（前几轮已累计的历史）：
+ * 只传"上一轮"会导致第 3 轮只避开第 2 轮、第 1 轮题目重新出现。累计账本按
+ * form_id:item_id 去重并设数量上限。
+ */
+function priorAssessmentItemsFromRun(run: LearningRunRecord): PriorAssessmentItem[] {
+  const artifact = run.pipeline_result.public_artifacts.assessment
+  const payload = artifact?.payload
+  const currentItems: PriorAssessmentItem[] = (!payload || !Array.isArray(payload.items))
+    ? []
+    : payload.items.map((item) => ({
+        form_id: payload.form_id,
+        item_id: item.item_id,
+        objective_id: item.objective_id,
+        modality: item.modality,
+        prompt: item.prompt,
+        options: item.options?.map((option) => option.text) ?? [],
+        ...(item.starter_code ? { starter_code: item.starter_code } : {}),
+        ...(item.structure_meta ? { structure_meta: structuredClone(item.structure_meta) } : {}),
+      }))
+  return mergePriorAssessmentLedger(
+    run.pipeline_input.prior_assessment_items ?? [],
+    currentItems,
+  ).slice(-PRIOR_ASSESSMENT_LEDGER_LIMIT)
+}
+
+function mergePriorAssessmentLedger(
+  existing: PriorAssessmentItem[],
+  incoming: PriorAssessmentItem[],
+): PriorAssessmentItem[] {
+  return [...new Map([...existing, ...incoming].map((item) => [
+    `${item.form_id}:${item.item_id}`,
+    structuredClone(item),
+  ])).values()]
 }
 
 function allowedRoutedSet(

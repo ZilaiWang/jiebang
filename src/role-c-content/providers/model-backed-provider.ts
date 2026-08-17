@@ -15,6 +15,7 @@ import { buildAssessmentAuthorModelInput } from "../context/assessment-context"
 import type {
   AssessmentPublicPayload,
   AssessmentSecurePayload,
+  AssessmentStructureMeta,
   CodeLabPublicPayload,
   CodeLabSecurePayload,
   ConceptLessonPayload,
@@ -305,14 +306,24 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
 
   async generateCodeLab(request: CodeLabRequest): Promise<CodeLabDraft> {
     assertVersionCompatibility(request, this.gateway, CODE_LAB_PROMPT_VERSION)
-    if (this.generationStrategy === "monolithic") return this.generateCodeLabMonolithic(request)
+    if (this.generationStrategy === "monolithic") {
+      // monolithic 是兼容/基准路径（非生产入口），不走 staged_contract；
+      // 生产入口（content-pipeline / worker-adapters）一律 staged + blueprint。
+      return this.generateCodeLabMonolithic(request)
+    }
 
     const modelInput = buildCodeLabModelInput(request)
     const identity = request.resource_blueprint?.code_lab ?? buildLabIdentity(request.generation_spec)
     const objectivePlan = request.resource_blueprint?.code_lab.objective_plan
       ?? buildCodeLabObjectivePlan(request.generation_spec)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
-    const executionMode = deriveCodeLabExecutionMode(request)
+    const taskContract = request.resource_blueprint?.code_lab.task_contract
+    // 执行接口由 planning 层的 CodeLabTaskContract 决定（先设计题，再定判题接口）。
+    // 生产路径（content-pipeline / worker-adapters）必须先构建 blueprint 传入契约；
+    // deriveCodeLabExecutionMode 仅作为显式标记的兼容 fallback（单测/脚本/旧数据），
+    // 不得静默用于生产。
+    const executionMode = taskContract?.execution_mode
+      ?? deriveCodeLabExecutionMode(request)
     const publicAuthor = await this.generateStage<CodeLabPublicAuthorPayload>({
       task: "role-c.code-lab.public",
       system_prompt: CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
@@ -323,6 +334,19 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
           objective_plan: objectivePlan,
           execution_mode: executionMode,
+          ...(taskContract
+            ? {
+                task_contract: {
+                  task_kind: taskContract.task_kind,
+                  primary_objective_id: taskContract.primary_objective_id,
+                  program_entry: taskContract.program_entry,
+                  input_form: taskContract.input_form,
+                  output_form: taskContract.output_form,
+                  grading_invocation: taskContract.grading_invocation,
+                  output_constraint: taskContract.output_constraint,
+                },
+              }
+            : {}),
         },
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
@@ -1302,6 +1326,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         prompt: string
         options: string[] | null
         starter_code: string | null
+        structure_meta: AssessmentStructureMeta
       }>
     }>({
       task: "role-c.tiered-evaluator.public.novelty-repair",
@@ -1332,6 +1357,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         prompt: replacement.prompt,
         options: replacement.options,
         starter_code: replacement.starter_code,
+        structure_meta: replacement.structure_meta,
       }
     }
     return candidate
@@ -1547,7 +1573,7 @@ function assessmentNoveltyPatchSchema(indices: number[]): Record<string, unknown
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["index", "prompt", "options", "starter_code"],
+          required: ["index", "prompt", "options", "starter_code", "structure_meta"],
           properties: {
             index: { type: "integer", enum: indices },
             prompt: { type: "string", minLength: 1 },
@@ -1562,6 +1588,18 @@ function assessmentNoveltyPatchSchema(indices: number[]): Record<string, unknown
                 { type: "null" },
                 { type: "string", minLength: 1 },
               ],
+            },
+            structure_meta: {
+              type: "object",
+              additionalProperties: false,
+              required: ["operation", "reasoning_pattern", "representation", "context_family", "answer_form"],
+              properties: {
+                operation: { type: "string", minLength: 1 },
+                reasoning_pattern: { type: "string", minLength: 1 },
+                representation: { type: "string", minLength: 1 },
+                context_family: { type: "string", minLength: 1 },
+                answer_form: { type: "string", minLength: 1 },
+              },
             },
           },
         },

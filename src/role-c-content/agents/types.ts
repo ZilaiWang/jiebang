@@ -2,6 +2,7 @@ import type {
   AssessmentArtifactPair,
   AssessmentPublicPayload,
   AssessmentSecurePayload,
+  AssessmentStructureMeta,
   CodeLabArtifactPair,
   CodeLabPublicPayload,
   CodeLabSecurePayload,
@@ -34,6 +35,8 @@ export interface PriorAssessmentItem {
   prompt: string
   options: string[]
   starter_code?: string
+  /** 题目结构元数据（发布时随公开题保存），novelty 校验用它做结构级去重。 */
+  structure_meta?: AssessmentStructureMeta
 }
 
 export interface GenerationRecoveryContext {

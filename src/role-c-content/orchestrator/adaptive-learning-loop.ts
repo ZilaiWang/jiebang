@@ -605,19 +605,9 @@ function adaptiveExecutionIdentity(
 function nextRoundPipelineInput(
   preparation: GenerationReadyNextRound,
 ): CPipelineInput {
-  return {
-    generation_spec: structuredClone(preparation.generation_spec),
-    evidence_pack: structuredClone(preparation.evidence_pack),
-    next_round_context: {
-      request_id: preparation.request_id,
-      parent_spec_id: preparation.parent_spec_id,
-      prior_feedback_ref: preparation.prior_feedback_ref,
-      trigger_grade_artifact_id: preparation.trigger_grade_artifact_id,
-      action: preparation.generation_action,
-      focus_objective_ids: [...preparation.focus_objective_ids],
-      reason_codes: [...preparation.trigger_decision.reason_codes],
-    },
-  }
+  // 必须复用准备阶段冻结的完整 pipeline_input（含 prior_assessment_items），
+  // 不能从 generation_spec/evidence_pack 重新拼装，否则执行输入与幂等键不匹配。
+  return structuredClone(preparation.pipeline_input)
 }
 
 function journalEntry(

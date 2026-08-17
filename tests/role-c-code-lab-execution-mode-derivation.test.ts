@@ -165,6 +165,14 @@ describe("explicitFunctionTask 门禁：教学讲解不被误杀", () => {
     )
     expect(issues.some((i) => i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH"))).toBe(true)
   })
+
+  test("完整 stdin/stdout 程序内定义辅助函数不触发函数接口门禁", () => {
+    const issues = validateCodeLabPublicAuthorAgainstPlan(
+      payloadWith("编写完整程序，从标准输入读取数据，可定义 helper 函数组织计算，并使用 print 输出结果。"),
+      plan,
+    )
+    expect(issues.filter((i) => i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH"))).toEqual([])
+  })
 })
 
 describe("组合一致性：模型写错 mode/entry_point 时，derive+freeze 全链纠正", () => {

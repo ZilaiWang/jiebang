@@ -61,6 +61,7 @@ import {
   ROLE_C_PROMPT_MANIFEST_VERSION,
   runRecoverableReviewedCPipeline,
   stableId,
+  teachingChallengeForAction,
   TrustedAssessmentVerifier,
   TrustedCodeLabVerifier,
   type AgentTraceEvent,
@@ -316,6 +317,13 @@ export async function generateRoleCForRoleDWithRuntime(
     code_runner: runner,
   })
   let readyContext: RecoverableReviewedReadyContext | undefined
+  // 主交互链路与正式续轮服务（learning-cycle-service → next-round）共享同一套
+  // 教学挑战模型：remediate/reinforce 轮次按画像基线计算难度与支架偏移
+  // （teachingChallengeForAction），不再让主交互链路忽略 action 而停留在默认基线。
+  const nextRoundAction = input.next_round_context?.action
+  const challenge = (nextRoundAction === "remediate" || nextRoundAction === "reinforce")
+    ? teachingChallengeForAction(profileSnapshot.level, nextRoundAction)
+    : undefined
   const built = buildGenerationSpec({
       run_id: input.runId,
       profile_snapshot: profileSnapshot,
@@ -331,6 +339,15 @@ export async function generateRoleCForRoleDWithRuntime(
       // seed 由 run_id 派生：同一轮确定性结构稳定（幂等/审计可复现），
       // 不同轮/不同重试自然产生不同变体，不再全仓库写死同一 seed。
       seed: seedFromRunId(input.runId),
+      ...(challenge ? { difficulty: challenge.difficulty } : {}),
+      ...(challenge
+        ? {
+            adaptive_shell: {
+              scaffold_level: challenge.scaffold_level,
+              reading_density: challenge.reading_density,
+            },
+          }
+        : {}),
     })
   if (!built.ok) {
     const message = built.errors.join("；")
@@ -507,12 +524,13 @@ export function createRoleCRecoveryEvidenceRefreshPort(
       )
       const objectives = request.target_objectives?.length
         ? structuredClone(request.target_objectives)
-        : sourceIds.map((sourceId) => ({
+        : sourceIds.map((sourceId, index) => ({
             objective_id: `RECOVERY-${sourceId}`,
             source_id: sourceId,
             required_fact_ids: requiredFactsBySource[sourceId] ?? [],
             observable_behavior: "explain" as const,
             importance: "core" as const,
+            is_primary: index === 0 ? (true as const) : undefined,
           }))
       const merged = await retrieveLearningEvidence(buildLearningEvidenceRequest({
         run_id: request.run_id,

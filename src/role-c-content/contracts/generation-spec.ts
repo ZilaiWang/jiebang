@@ -28,6 +28,14 @@ export interface DifficultyVector {
   code_complexity: number
   prerequisite_load: number
   scaffold_strength: number
+  /**
+   * 教学挑战维度（区别于"学习难度"）：学习难度描述知识负荷，教学挑战描述
+   * 同一知识边界内任务的迁移/边界/组合要求。remediate 保持低值，reinforce
+   * 增加。可空：旧数据/单测构造未提供时视为基线低值，仅 numeric 0..5。
+   */
+  transfer_distance?: number
+  boundary_condition_density?: number
+  task_composition?: number
 }
 
 export interface GenerationSpec {
@@ -381,7 +389,7 @@ function createGapRequest(
   }
 }
 
-function adaptationDefaults(level: LearnerLevel): {
+export function adaptationDefaults(level: LearnerLevel): {
   scaffold_level: 0 | 1 | 2 | 3
   reading_density: "low" | "medium" | "high"
   difficulty: DifficultyVector
@@ -403,6 +411,10 @@ function adaptationDefaults(level: LearnerLevel): {
       code_complexity: Math.max(0, selected.base - 1),
       prerequisite_load: Math.max(0, selected.base - 1),
       scaffold_strength: selected.scaffold_level,
+      // 教学挑战基线：越高级别越需要迁移/边界/组合，beginner/basic 为 0
+      transfer_distance: Math.max(0, selected.base - 2),
+      boundary_condition_density: Math.max(0, selected.base - 3),
+      task_composition: Math.max(0, selected.base - 2),
     },
   }
 }

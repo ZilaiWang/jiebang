@@ -1,4 +1,4 @@
-import type { RoleCAgents } from "../agents/types"
+import type { PriorAssessmentItem, RoleCAgents } from "../agents/types"
 import type { EvidenceGapRequest, RagEvidencePack } from "../contracts/evidence-pack"
 import type { DynamicFeedbackResult } from "../contracts/dynamic-feedback"
 import {
@@ -11,6 +11,7 @@ import {
   type DifficultyVector,
   type GenerationSpec,
 } from "../contracts/generation-spec"
+import { teachingChallengeForAction } from "./teaching-challenge"
 import type {
   LearnerProfileSnapshot,
   LearningPathNode,
@@ -63,6 +64,12 @@ export interface PrepareNextRoundInput {
    * are inherited from the parent spec.
    */
   current_generation_versions?: NextRoundGenerationVersions
+  /**
+   * 上一轮已发布的正式测评公开题（prior assessment items），用于下一轮
+   * 变式命制与 novelty 校验。由调用方（learning-cycle-service）从上一轮
+   * pipeline_result.public_artifacts.assessment 提取后传入。
+   */
+  prior_assessment_items?: PriorAssessmentItem[]
 }
 
 interface NextRoundIdentity {
@@ -113,6 +120,15 @@ export interface GenerationReadyNextRound {
   profile_snapshot: LearnerProfileSnapshot
   generation_spec: GenerationSpec
   evidence_pack: RagEvidencePack
+  /**
+   * Backend-frozen COMPLETE pipeline input: generation_spec + evidence_pack +
+   * next_round_context + prior_assessment_items. Preparation, idempotency
+   * checking and execution must all operate on this exact object. Never
+   * reassemble a partial copy from generation_spec/evidence_pack — the
+   * reassembled object omits prior_assessment_items and produces a different
+   * idempotency key than the one computed at preparation time.
+   */
+  pipeline_input: CPipelineInput
 }
 
 export interface AwaitingPathNodeNextRound {
@@ -422,18 +438,19 @@ export function prepareNextRound(input: PrepareNextRoundInput): NextRoundPrepara
       : {}),
   }
   const currentPath = pathFromSpec(input.parent_spec)
-  const difficulty = action === "remediate"
-    ? remedialDifficulty(input.parent_spec.difficulty)
-    : structuredClone(input.parent_spec.difficulty)
-  const adaptiveShell = action === "remediate"
-    ? {
-        scaffold_level: incrementScaffoldLevel(input.parent_spec.learner_adaptation.scaffold_level),
-        reading_density: reduceReadingDensity(input.parent_spec.learner_adaptation.reading_density),
-      }
-    : {
-        scaffold_level: input.parent_spec.learner_adaptation.scaffold_level,
-        reading_density: input.parent_spec.learner_adaptation.reading_density,
-      }
+  // 画像决定能力区间（readiness baseline）；remediate/reinforce 决定区间内的教学挑战：
+  // - remediate：降认知/推理/组合负荷 + 增支架（更近迁移、更直接修正）
+  // - reinforce：减支架 + 增迁移/边界/组合挑战（更远迁移、更多辨析、更高独立）
+  // - advance：推进新节点，难度按新基线重新决定，不复用父难度
+  // 统一走 teachingChallengeForAction：以画像基线为锚点计算偏移并 clamp 到 0..5，
+  // 连续 reinforce/remediate 不会把难度逐轮累加到越界；scaffold_strength 与
+  // scaffold_level 同源派生，保证一致。
+  const challenge = teachingChallengeForAction(nextProfile.level, action)
+  const difficulty = challenge.difficulty
+  const adaptiveShell = {
+    scaffold_level: challenge.scaffold_level,
+    reading_density: challenge.reading_density,
+  }
   return buildReadyNextRound({
     input,
     action,
@@ -458,11 +475,10 @@ export async function executePreparedNextRound(
   if (prepared.status !== "generation_ready") {
     throw new Error("NEXT_ROUND_NOT_READY")
   }
-  const frozenInput = freezePipelineInput({
-    generation_spec: prepared.generation_spec,
-    evidence_pack: prepared.evidence_pack,
-    next_round_context: nextRoundContext(prepared),
-  })
+  // 执行阶段必须使用准备阶段冻结的同一份完整 pipeline_input（含
+  // prior_assessment_items），不能从 generation_spec/evidence_pack 重新拼装。
+  // 重新拼装会丢失 prior_assessment_items，导致幂等键与准备阶段不一致。
+  const frozenInput = prepared.pipeline_input
   const frozenDecision = deepFreeze(structuredClone(prepared.trigger_decision))
   const expectedPreparedKey = contentHash({
     contract: "role-c-next-round-prepared-execution-v2",
@@ -933,6 +949,9 @@ function buildReadyNextRound(input: {
   const frozenInput = freezePipelineInput({
     generation_spec: built.spec,
     evidence_pack: input.evidence,
+    ...(input.input.prior_assessment_items
+      ? { prior_assessment_items: input.input.prior_assessment_items }
+      : {}),
     next_round_context: {
       request_id: identity.request_id,
       parent_spec_id: input.input.parent_spec.spec_id,
@@ -967,20 +986,7 @@ function buildReadyNextRound(input: {
     profile_snapshot: deepFreeze(structuredClone(input.profile)),
     generation_spec: frozenInput.generation_spec,
     evidence_pack: frozenInput.evidence_pack,
-  }
-}
-
-function nextRoundContext(
-  prepared: GenerationReadyNextRound,
-): NonNullable<CPipelineInput["next_round_context"]> {
-  return {
-    request_id: prepared.request_id,
-    parent_spec_id: prepared.parent_spec_id,
-    prior_feedback_ref: prepared.prior_feedback_ref,
-    trigger_grade_artifact_id: prepared.trigger_grade_artifact_id,
-    action: prepared.generation_action,
-    focus_objective_ids: [...prepared.focus_objective_ids],
-    reason_codes: [...prepared.trigger_decision.reason_codes],
+    pipeline_input: frozenInput,
   }
 }
 
@@ -1061,32 +1067,6 @@ function pathFromSpec(spec: GenerationSpec): LearningPathNode {
     objectives: structuredClone(spec.targets),
     assessment_blueprint: structuredClone(spec.assessment_blueprint),
   }
-}
-
-function remedialDifficulty(parent: DifficultyVector): DifficultyVector {
-  return {
-    domain_complexity: parent.domain_complexity,
-    cognitive_demand: decrement(parent.cognitive_demand),
-    reasoning_steps: decrement(parent.reasoning_steps),
-    code_complexity: decrement(parent.code_complexity),
-    prerequisite_load: decrement(parent.prerequisite_load),
-    scaffold_strength: Math.min(5, parent.scaffold_strength + 1),
-  }
-}
-
-function decrement(value: number): number {
-  return Math.max(0, value - 1)
-}
-
-function incrementScaffoldLevel(value: 0 | 1 | 2 | 3): 0 | 1 | 2 | 3 {
-  return Math.min(3, value + 1) as 0 | 1 | 2 | 3
-}
-
-function reduceReadingDensity(
-  value: "low" | "medium" | "high",
-): "low" | "medium" | "high" {
-  if (value === "high") return "medium"
-  return "low"
 }
 
 function validateFeedback(input: PrepareNextRoundInput): string[] {

@@ -21,6 +21,7 @@ import {
   ROLE_C_PROMPT_MANIFEST_VERSION,
 } from "../src/role-c-content"
 import { deriveCodeLabExecutionMode } from "../src/role-c-content/providers/staged-generation"
+import { buildResourceBlueprint } from "../src/role-c-content/planning/resource-blueprint"
 
 type Scenario = {
   sourceId: string
@@ -148,11 +149,19 @@ async function main() {
       const started = Date.now()
       let outcome: Record<string, unknown>
       try {
-        const draft = await provider.generateCodeLab({ generation_spec: built.spec, evidence_pack: evidence, concept_artifact: concept })
+        // 通过 planning 层的 CodeLabTaskContract 决定执行接口（不再由生成阶段用关键词猜）
+        const blueprint = buildResourceBlueprint(built.spec, evidence)
+        const draft = await provider.generateCodeLab({
+          generation_spec: built.spec,
+          evidence_pack: evidence,
+          concept_artifact: concept,
+          resource_blueprint: blueprint,
+        })
         const publicPayload = draft.public_draft.payload
         outcome = {
           status: "ok",
           mode: publicPayload.execution_contract.execution_mode,
+          task_kind: blueprint.code_lab.task_contract.task_kind,
           entry_point: publicPayload.execution_contract.entry_point ?? null,
           starter_head: publicPayload.starter_code.split("\n")[0]?.slice(0, 60),
         }

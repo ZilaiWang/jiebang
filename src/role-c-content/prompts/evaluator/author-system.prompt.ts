@@ -44,6 +44,11 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 【代码题设计】
 8. code 题提供 starter_code（骨架代码），与 code-lab 的实验风格一致。测试输入必须与公开题干和示例中出现的输入值不同。
 
+【structure_meta 结构元数据（防伪变式，必填）】
+8.1 每道题必须填写 structure_meta（五维：operation 目标操作 / reasoning_pattern 推理模式 / representation 表示形式 / context_family 情境类别 / answer_form 作答形式），客观描述本题任务结构，不写题干文字。
+8.2 变式轮次（prior_assessment_items 非空）不得与历史题的 structure_meta 五维全部一致；至少改变 operation、reasoning_pattern、representation、context_family 或 answer_form 中的一项。只换数字或变量名不算新变式。同一张卷内可以围绕同一操作进行不同层级的考查，但题面和作答任务不得重复。
+8.3 示例：operation=遍历求和、reasoning_pattern=单步映射、representation=列表、context_family=成绩统计、answer_form=输出数字。
+
 ══════════════════════════════════════════
 结构化要求
 ══════════════════════════════════════════

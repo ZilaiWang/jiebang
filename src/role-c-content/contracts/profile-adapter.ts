@@ -31,6 +31,12 @@ export interface LearningObjective {
   required_fact_ids: string[]
   observable_behavior: ObservableBehavior
   importance: "core" | "supporting"
+  /**
+   * 显式声明本节点的主要实验目标（由上游路径规划标记，不依赖数组顺序）。
+   * code-lab 的执行契约（task_kind/execution_mode）由 primary objective 决定，
+   * supporting objectives 只提供证据。缺省视为非 primary。
+   */
+  is_primary?: boolean
 }
 
 /** Formal B/path → C generation contract. */
