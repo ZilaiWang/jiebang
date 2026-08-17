@@ -1,7 +1,92 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, activeAdaptationView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
+  test("builds a truthful Agent timeline with attempts, public artifacts, failures, and retries", () => {
+    const timeline = agentTimelineView({ worker_ledger_history: [{
+      entry_id: "LEDGER-1",
+      round_no: 2,
+      attempt_no: 2,
+      unit_name: "code-lab",
+      execution_type: "reviewed_pipeline",
+      status: "blocked",
+      started_at: "2026-08-17T01:02:03.000Z",
+      duration_ms: 1250,
+      output_refs: [
+        { ref_id: "LAB-1", locator: "sessions/S1.json#/learning_resources/code_lab", visibility: "public", verified_exists: true },
+        { ref_id: "INTERNAL-1", locator: "internal/run.json", visibility: "internal", verified_exists: true },
+        { ref_id: "SECURE-1", locator: null, visibility: "secure", verified_exists: true },
+      ],
+      summary: "code lab generation blocked",
+      errors: [{ code: "CONTENT_INVALID", message: "invalid expected type" }],
+      retry: { eligible: true, scheduled: true, reason: "regenerate", next_attempt_no: 3 },
+    }] })
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0]).toMatchObject({
+      id: "LEDGER-1",
+      unit: "code-lab",
+      statusLabel: "已阻塞",
+      roundLabel: "第 2 轮",
+      attemptLabel: "第 2 次尝试",
+      executionType: "受审核生成流程",
+      errorLabel: "CONTENT_INVALID：invalid expected type",
+      retryLabel: "已安排第 3 次尝试：regenerate",
+    })
+    expect(timeline[0].artifactRefs).toEqual([{ id: "LAB-1", locator: "sessions/S1.json#/learning_resources/code_lab", verified: true }])
+  })
+
+  test("merges lifecycle snapshots and does not present historical starts as currently running", () => {
+    const base = { round_no: 1, attempt_no: 1, unit_name: "tiered-evaluator", execution_type: "reviewed_pipeline" }
+    const timeline = agentTimelineView({
+      status: "waiting_for_user",
+      worker_ledger_history: [
+        { ...base, entry_id: "START", status: "running", started_at: "2026-08-17T01:00:00.000Z", summary: "正在生成正式测评", output_refs: [] },
+        { ...base, entry_id: "FAILED", status: "failed", started_at: "2026-08-17T01:00:10.000Z", summary: "测评防重失败", errors: [{ code: "DUPLICATE", message: "题目重复" }], output_refs: [] },
+        { ...base, entry_id: "RESTART", status: "running", started_at: "2026-08-17T01:00:11.000Z", summary: "重新生成正式测评", output_refs: [] },
+        { ...base, entry_id: "DONE", status: "completed", started_at: "2026-08-17T01:00:20.000Z", duration_ms: 9000, summary: "正式测评已发布", output_refs: [{ ref_id: "FORM-1", visibility: "public", locator: "sessions/S1.json#/assessment", verified_exists: true }] },
+      ],
+    })
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0]).toMatchObject({
+      unit: "tiered-evaluator",
+      status: "completed",
+      statusLabel: "已完成",
+      summary: "正式测评已发布",
+      attemptLabel: "尝试次数未完整记录",
+      retryLabel: "本次执行曾失败或阻塞，修复后已完成",
+    })
+    expect(timeline[0].artifactRefs).toEqual([{ id: "FORM-1", locator: "sessions/S1.json#/assessment", verified: true }])
+  })
+
+  test("marks an orphaned historical running snapshot as not current after the session stops", () => {
+    const timeline = agentTimelineView({ status: "waiting_for_user", worker_ledger_history: [{
+      entry_id: "START", round_no: 1, attempt_no: 1, unit_name: "profile-builder", execution_type: "deterministic_adapter",
+      status: "running", started_at: "2026-08-17T01:00:00.000Z", summary: "invoke profile-builder",
+    }] })
+    expect(timeline[0]).toMatchObject({ status: "invoked", statusLabel: "历史启动记录" })
+  })
+
+  test("orders timeline workers by the main Agent ledger sequence within each round", () => {
+    const entry = (unit_name: string, step_index: number, attempt_no = 1) => ({
+      entry_id: `${unit_name}-${attempt_no}`, unit_name, step_index, attempt_no, round_no: 1,
+      execution_type: "session_logic", status: "completed", started_at: "2026-08-17T01:00:00.000Z",
+    })
+    const timeline = agentTimelineView({ status: "waiting_for_user", worker_ledger_history: [
+      entry("tiered-evaluator", 8),
+      entry("profile-builder", 4, 2),
+      entry("background-collector", 1),
+      entry("profile-builder", 4, 1),
+      entry("path-planner", 5),
+    ] })
+    expect(timeline.map((item) => `${item.unit}:${item.attemptLabel}`)).toEqual([
+      "background-collector:第 1 次尝试",
+      "profile-builder:第 1 次尝试",
+      "profile-builder:第 2 次尝试",
+      "path-planner:第 1 次尝试",
+      "tiered-evaluator:第 1 次尝试",
+    ])
+  })
+
   test("summarizes main flow status from public session, waiting gate, feedback, next action, and events", () => {
     expect(mainFlowStatusView({
       session_id: "S1",

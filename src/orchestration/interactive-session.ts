@@ -536,11 +536,8 @@ export class InteractiveSessionStore {
             this.diagnosticQuestionAuthor(),
           )
         } catch (error) {
-          throw new InteractiveSessionError(
-            "DIAGNOSTIC_GENERATION_FAILED",
-            error instanceof Error ? error.message : "AI 诊断题生成失败",
-            503,
-          )
+          applyDiagnosticGenerationFailure(record, error)
+          updated = record
         }
         const response = publicSessionView(updated)
         updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
@@ -562,7 +559,13 @@ export class InteractiveSessionStore {
         )
         record.private.role_c_generation_recovery = recovery
         const startedAt = new Date().toISOString()
-        upsertLedger(record, workerForRoleCFailure(generationFailure), "running", `${generationFailure.nextAction} 已开始`, { startedAt })
+        const recoveryWorker = workerForRoleCFailure(generationFailure)
+        const recoveryAttemptNo = nextWorkerAttemptNo(record, recoveryWorker, record.round_no)
+        upsertLedger(record, recoveryWorker, "running", `${generationFailure.nextAction} 已开始`, {
+          startedAt,
+          attemptNo: recoveryAttemptNo,
+          executionType: "reviewed_pipeline",
+        })
         record.events.push(event(record.session_id, "session_updated", "assessment", `${generationFailure.nextAction} started`, startedAt, workerForRoleCFailure(generationFailure)))
         record.updated_at = startedAt
         const response = publicSessionView(record)
@@ -747,7 +750,6 @@ export class InteractiveSessionStore {
         || currentBeforeSave.private.role_c) return
       if (!next.ok) {
         applyRoleCGenerationFailure(record, next)
-        markRoleCWorkersFailed(record, next)
         record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString(), workerForRoleCFailure(next.failure)))
         record.updated_at = new Date().toISOString()
         await this.save(record)
@@ -1180,19 +1182,7 @@ async function continueAfterAssessment(
     try {
       return await resetToDiagnosisPhase(record, dataRoot, diagnosticQuestionAuthor)
     } catch (error) {
-      record.status = "blocked"
-      record.current_stage = "blocked"
-      record.waiting_for = null
-      record.blocked_reason = `DIAGNOSTIC_GENERATION_FAILED: ${error instanceof Error ? error.message : "AI 诊断题生成失败"}`
-      record.events.push(event(
-        record.session_id,
-        "session_blocked",
-        "blocked",
-        record.blocked_reason,
-        new Date().toISOString(),
-        "objective-diagnostician",
-      ))
-      record.updated_at = new Date().toISOString()
+      applyDiagnosticGenerationFailure(record, error)
       return record
     }
   }
@@ -1731,6 +1721,7 @@ function applyRoleCGenerationFailure(
   record.status = "blocked"
   record.current_stage = "blocked"
   record.waiting_for = null
+  record.next_round_action = null
   record.blocked_reason = result.reason
   if (!result.failure) {
     record.terminal_outcome = null
@@ -1836,10 +1827,10 @@ async function applyFormalRoleCRound(
   record.blocked_reason = null
   record.terminal_outcome = null
   record.next_round_action = null
-  record.private.role_c_failed_generations = 0
   record.private.role_c_generation_recovery = null
   record.rag_result = round.rag_result
   markContentReviewPassed(record)
+  record.private.role_c_failed_generations = 0
   record.learning_resources = { concept_lesson: round.concept_lesson, code_lab: round.code_lab }
   record.assessment = round.assessment
   record.private.assessment_history = mergeAssessmentHistory(
@@ -2104,6 +2095,7 @@ async function resetToDiagnosisPhase(
   )
   const diagnosisItems = diagnosis.items
   const answerKey = diagnosis.answerKey
+  const diagnosisAttemptNo = nextWorkerAttemptNo(record, "objective-diagnostician", 1)
   await saveLearnerMemory(dataRoot, {
     ...learnerMemory,
     recent_assessment_items: mergeAssessmentHistory(priorHistory, diagnosis.history),
@@ -2130,7 +2122,7 @@ async function resetToDiagnosisPhase(
     worker_ledger: [],
     worker_ledger_history: [
       ...(record.worker_ledger_history ?? []),
-      createWorkerLedgerHistoryEntry(record.session_id, record.run_id, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待重新诊断作答", "objective_diagnosis", now, null, "session_logic", true),
+      createWorkerLedgerHistoryEntry(record.session_id, record.run_id, 1, 3, diagnosisAttemptNo, "objective-diagnostician", "waiting_for_user", "等待重新诊断作答", "objective_diagnosis", now, null, "session_logic", true),
     ],
     // 清空命令账本：新画像阶段的 command_id 从零开始，旧键复用不再重放旧响应。
     processed_commands: {},
@@ -2187,6 +2179,7 @@ async function continueAfterDiagnosis(
   record.terminal_outcome = null
   record.waiting_for = null
   upsertLedger(record, "objective-diagnostician", "completed", "已接收并判定诊断答案", {
+    attemptNo: latestWorkerAttemptNo(record, "objective-diagnostician", 1),
     inputRefs: ["objective-diagnostician:diagnosis-form"],
     outputRefs: ["objective-diagnostician:interactive-result"],
   })
@@ -2251,8 +2244,9 @@ async function continueAfterDiagnosis(
   record.private.diagnosis_answers = structuredClone(answers as Record<string, string>)
   for (const step of ORCHESTRATION_WORKER_SEQUENCE.slice(3, 5)) {
     const startedAt = new Date().toISOString()
+    const workerAttemptNo = nextWorkerAttemptNo(record, step.worker, record.round_no)
     record.events.push(event(record.session_id, "worker_invoked", stageForWorker(step.worker), `invoke ${step.worker}`, startedAt, step.worker))
-    upsertLedger(record, step.worker, "running", `invoke ${step.worker}`, { startedAt, inputRefs, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
+    upsertLedger(record, step.worker, "running", `invoke ${step.worker}`, { startedAt, attemptNo: workerAttemptNo, inputRefs, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
     const invocation = {
       ...createScaffoldWorkerInvocation({
         session_id: record.session_id,
@@ -2281,7 +2275,7 @@ async function continueAfterDiagnosis(
         : null
       const endedAt = new Date().toISOString()
       record.events.push(event(record.session_id, "session_blocked", record.current_stage, record.blocked_reason, endedAt, step.worker))
-      upsertLedger(record, step.worker, record.status, failureMessage, { startedAt, finishedAt: endedAt, inputRefs, error: { message: failureMessage }, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
+      upsertLedger(record, step.worker, record.status, failureMessage, { startedAt, finishedAt: endedAt, attemptNo: workerAttemptNo, inputRefs, error: { message: failureMessage }, stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
       record.updated_at = new Date().toISOString()
       return record
     }
@@ -2290,7 +2284,7 @@ async function continueAfterDiagnosis(
     inputRefs = result.output_refs
     const endedAt = new Date().toISOString()
     record.events.push(event(record.session_id, "worker_completed", stageForWorker(step.worker), result.summary, endedAt, step.worker))
-    upsertLedger(record, step.worker, "completed", result.summary, { startedAt, finishedAt: endedAt, inputRefs: workerInputRefs, outputRefs: result.output_refs, evidenceRefs: result.evidence_refs.map((ref) => ref.ref_id), stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
+    upsertLedger(record, step.worker, "completed", result.summary, { startedAt, finishedAt: endedAt, attemptNo: workerAttemptNo, inputRefs: workerInputRefs, outputRefs: result.output_refs, evidenceRefs: result.evidence_refs.map((ref) => ref.ref_id), stepIndex: ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === step.worker) + 1 })
   }
 
   const profileArtifacts = upstreamArtifacts["profile-builder"] as { profile: unknown }
@@ -2346,9 +2340,9 @@ async function continueAfterDiagnosis(
   record.terminal_outcome = null
   const generationStartedAt = new Date().toISOString()
   markContentReviewStarted(record)
-  upsertLedger(record, "concept-tutor", "running", "正在生成概念讲解", { startedAt: generationStartedAt })
-  upsertLedger(record, "code-lab", "pending", "等待生成代码实验")
-  upsertLedger(record, "tiered-evaluator", "pending", "等待生成正式测评")
+  upsertLedger(record, "concept-tutor", "running", "正在生成概念讲解", { startedAt: generationStartedAt, attemptNo: latestWorkerAttemptNo(record, "concept-tutor", record.round_no) })
+  upsertLedger(record, "code-lab", "pending", "等待生成代码实验", { attemptNo: latestWorkerAttemptNo(record, "code-lab", record.round_no) })
+  upsertLedger(record, "tiered-evaluator", "pending", "等待生成正式测评", { attemptNo: latestWorkerAttemptNo(record, "tiered-evaluator", record.round_no) })
   record.events.push(event(record.session_id, "worker_invoked", "assessment", "Role C content generation started", generationStartedAt, "concept-tutor"))
   record.updated_at = new Date().toISOString()
   return record
@@ -2364,6 +2358,7 @@ function markReviewedRoleCWorkers(record: InteractiveSessionRecord): void {
       inputRefs,
       outputRefs: [`${worker}:reviewed-result`],
       evidenceRefs: ["path-planner:a-rag-result"],
+      attemptNo: latestWorkerAttemptNo(record, worker, record.round_no),
     })
     record.events.push(event(record.session_id, "worker_completed", stageForWorker(worker), `Role C reviewed ${worker} output`, new Date().toISOString(), worker))
   }
@@ -2403,9 +2398,16 @@ function markContentReviewStarted(record: InteractiveSessionRecord): void {
     "code-lab": "pending",
     "tiered-evaluator": "pending",
   })
-  upsertLedger(record, "concept-tutor", "running", "Role C 内容进入审核阶段：concept-tutor reviewing", { executionType: "reviewed_pipeline" })
-  upsertLedger(record, "code-lab", "pending", "等待前序审核通过后进入代码实验审核", { executionType: "reviewed_pipeline" })
-  upsertLedger(record, "tiered-evaluator", "pending", "等待前序审核通过后进入测评审核", { executionType: "reviewed_pipeline" })
+  for (const [worker, status, summary] of [
+    ["concept-tutor", "running", "Role C 内容进入审核阶段：concept-tutor reviewing"],
+    ["code-lab", "pending", "等待前序审核通过后进入代码实验审核"],
+    ["tiered-evaluator", "pending", "等待前序审核通过后进入测评审核"],
+  ] as const) {
+    upsertLedger(record, worker, status, summary, {
+      attemptNo: nextWorkerAttemptNo(record, worker, record.round_no),
+      executionType: "reviewed_pipeline",
+    })
+  }
 }
 
 function markContentReviewPassed(record: InteractiveSessionRecord): void {
@@ -2414,9 +2416,9 @@ function markContentReviewPassed(record: InteractiveSessionRecord): void {
     "code-lab": "passed",
     "tiered-evaluator": "passed",
   }, { published: true })
-  upsertLedger(record, "concept-tutor", "completed", "审核通过，概念讲解已发布", { outputRefs: ["concept-tutor:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
-  upsertLedger(record, "code-lab", "completed", "审核通过，代码实验已发布", { outputRefs: ["code-lab:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
-  upsertLedger(record, "tiered-evaluator", "completed", "审核通过，正式测评已发布", { outputRefs: ["tiered-evaluator:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
+  upsertLedger(record, "concept-tutor", "completed", "审核通过，概念讲解已发布", { attemptNo: latestWorkerAttemptNo(record, "concept-tutor", record.round_no), outputRefs: ["concept-tutor:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
+  upsertLedger(record, "code-lab", "completed", "审核通过，代码实验已发布", { attemptNo: latestWorkerAttemptNo(record, "code-lab", record.round_no), outputRefs: ["code-lab:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
+  upsertLedger(record, "tiered-evaluator", "completed", "审核通过，正式测评已发布", { attemptNo: latestWorkerAttemptNo(record, "tiered-evaluator", record.round_no), outputRefs: ["tiered-evaluator:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
 }
 
 function markContentReviewFailed(record: InteractiveSessionRecord, result: Extract<FormalRoleCRoundResult, { ok: false }>): void {
@@ -2431,9 +2433,21 @@ function markContentReviewFailed(record: InteractiveSessionRecord, result: Extra
     repairAttemptNo: record.private.role_c_failed_generations ?? 0,
   })
   upsertLedger(record, failedWorker, exhausted ? "blocked" : "failed", exhausted ? `审核/修复多次失败，进入 blocked：${result.reason}` : `审核失败，等待修复后重审：${result.reason}`, {
-    attemptNo: Math.max(1, record.private.role_c_failed_generations ?? 1),
+    attemptNo: latestWorkerAttemptNo(record, failedWorker, record.round_no),
     executionType: "reviewed_pipeline",
-    error: { code: result.failure?.code, message: result.reason },
+    error: {
+      code: result.failure?.code,
+      message: result.reason,
+      severity: result.failure?.canRetry === true && !exhausted ? "recoverable" : "fatal",
+    },
+    retry: result.failure?.canRetry === true && !exhausted
+      ? {
+          eligible: true,
+          scheduled: true,
+          reason: result.failure.nextAction,
+          next_attempt_no: latestWorkerAttemptNo(record, failedWorker, record.round_no) + 1,
+        }
+      : { eligible: false, scheduled: false, reason: result.failure?.nextAction ?? null, next_attempt_no: null },
   })
 }
 
@@ -2443,17 +2457,35 @@ function workerForRoleCFailure(failure?: RoleCGenerationFailure): WorkerName {
   return "tiered-evaluator"
 }
 
-function markRoleCWorkersFailed(
-  record: InteractiveSessionRecord,
-  result: Extract<FormalRoleCRoundResult, { ok: false }>,
-): void {
-  const failedWorker = workerForRoleCFailure(result.failure)
-  const workers = interactiveSessionProductionBoundary().reviewed_role_c_workers
-  const failedIndex = workers.indexOf(failedWorker as typeof workers[number])
-  workers.forEach((worker, index) => {
-    const status = index < failedIndex ? "completed" : index === failedIndex ? "blocked" : "pending"
-    upsertLedger(record, worker, status, index === failedIndex ? result.reason : status === "completed" ? "本阶段内容已生成" : "等待前序阶段恢复")
+function latestWorkerAttemptNo(record: InteractiveSessionRecord, worker: WorkerName, roundNo: number): number {
+  const attempts = (record.worker_ledger_history ?? [])
+    .filter((entry) => entry.round_no === roundNo && entry.unit_name === worker)
+    .map((entry) => entry.attempt_no)
+  return Math.max(1, ...attempts)
+}
+
+function nextWorkerAttemptNo(record: InteractiveSessionRecord, worker: WorkerName, roundNo: number): number {
+  const attempts = (record.worker_ledger_history ?? [])
+    .filter((entry) => entry.round_no === roundNo && entry.unit_name === worker)
+    .map((entry) => entry.attempt_no)
+  return attempts.length === 0 ? 1 : Math.max(...attempts) + 1
+}
+
+function applyDiagnosticGenerationFailure(record: InteractiveSessionRecord, error: unknown): void {
+  const blockedAt = new Date().toISOString()
+  record.status = "blocked"
+  record.current_stage = "blocked"
+  record.waiting_for = null
+  record.blocked_reason = `DIAGNOSTIC_GENERATION_FAILED: ${error instanceof Error ? error.message : "AI 诊断题生成失败"}`
+  upsertLedger(record, "objective-diagnostician", "blocked", record.blocked_reason, {
+    startedAt: blockedAt,
+    finishedAt: blockedAt,
+    attemptNo: nextWorkerAttemptNo(record, "objective-diagnostician", 1),
+    executionType: "session_logic",
+    error: { code: "DIAGNOSTIC_GENERATION_FAILED", message: record.blocked_reason },
   })
+  record.events.push(event(record.session_id, "session_blocked", "blocked", record.blocked_reason, blockedAt, "objective-diagnostician"))
+  record.updated_at = blockedAt
 }
 
 function publicUpstreamArtifacts(artifacts: Record<string, unknown>): Record<string, unknown> {
@@ -2547,7 +2579,8 @@ function upsertLedger(
     evidenceRefs?: string[]
     executionType?: WorkerLedgerHistoryEntry["execution_type"]
     manualIntervention?: boolean
-    error?: { code?: string; message: string } | null
+    error?: { code?: string; message: string; severity?: "warning" | "recoverable" | "fatal" } | null
+    retry?: WorkerLedgerHistoryEntry["retry"]
   } = {},
 ): void {
   const updatedAt = options.finishedAt ?? options.startedAt ?? new Date().toISOString()
@@ -2576,6 +2609,7 @@ function upsertLedger(
     options.outputRefs ?? [],
     options.evidenceRefs ?? [],
     options.error ?? null,
+    options.retry ?? null,
   ))
 }
 
@@ -2596,7 +2630,8 @@ function createWorkerLedgerHistoryEntry(
   inputRefs: string[] = [],
   outputRefs: string[] = [],
   evidenceRefs: string[] = [],
-  error: { code?: string; message: string } | null = null,
+  error: { code?: string; message: string; severity?: "warning" | "recoverable" | "fatal" } | null = null,
+  retry: WorkerLedgerHistoryEntry["retry"] = null,
 ): WorkerLedgerHistoryEntry {
   const durationMs = finishedAt ? Math.max(0, new Date(finishedAt).getTime() - new Date(startedAt).getTime()) : null
   const entryId = `${sessionId}-${recordSafeWorker(worker)}-${startedAt}-${Math.random().toString(36).slice(2, 8)}`
@@ -2624,8 +2659,8 @@ function createWorkerLedgerHistoryEntry(
     execution_ref: ledgerRef(`${entryId}:execution`, "trace", "orchestrator", `sessions/${sessionId}.json#/worker_ledger_history`, true),
     next_action: nextActionForWorker(worker, status),
     decision_source: status === "waiting_for_user" ? "user" : status === "running" ? "orchestrator" : "worker_output",
-    errors: error ? [{ ...error, severity: status === "failed" ? "fatal" : "recoverable", source: worker }] : [],
-    retry: null,
+    errors: error ? [{ code: error.code, message: error.message, severity: error.severity ?? (status === "failed" ? "fatal" : "recoverable"), source: worker }] : [],
+    retry,
     manual_intervention: manualIntervention
       ? { occurred: true, kind: "user_input", reason: "normal product interaction", occurred_at: finishedAt ?? startedAt, evidence_ref: null }
       : { occurred: false, kind: null, reason: null, occurred_at: null, evidence_ref: null },
@@ -2705,6 +2740,7 @@ function recordSafeWorker(worker: WorkerName): string {
 }
 
 export const __test_applyRoleCGenerationFailure = applyRoleCGenerationFailure
+export const __test_applyDiagnosticGenerationFailure = applyDiagnosticGenerationFailure
 
 function safeId(value: string): string {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(value)) {

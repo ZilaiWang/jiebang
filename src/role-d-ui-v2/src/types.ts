@@ -90,6 +90,29 @@ export interface PublicSessionFixture {
     status: string
     summary?: string
   }>
+  worker_ledger_history?: Array<{
+    entry_id: string
+    round_no: number
+    attempt_no: number
+    unit_name: string
+    execution_type: string
+    stage: string
+    status: "invoked" | "running" | "waiting_for_user" | "completed" | "blocked" | "failed" | "skipped"
+    started_at: string
+    finished_at: string | null
+    duration_ms: number | null
+    output_refs: Array<{
+      ref_id: string
+      kind: string
+      locator: string | null
+      visibility: "public" | "internal" | "secure"
+      verified_exists: boolean
+    }>
+    summary: string
+    next_action: string | null
+    errors: Array<{ code?: string; message: string; severity: string; source: string }>
+    retry: null | { eligible: boolean; scheduled: boolean; reason: string | null; next_attempt_no: number | null }
+  }>
   content_review?: null | {
     overall_status: "pending" | "reviewing" | "repairing" | "passed" | "failed" | "degraded" | "blocked"
     publish_allowed: boolean

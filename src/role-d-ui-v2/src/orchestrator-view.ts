@@ -40,11 +40,109 @@ export function shouldPollOrchestratorSession(session: any): boolean {
   return Boolean(session?.session_id && session?.status === "running")
 }
 
+/** True only when the persisted feedback grades the assessment currently published. */
+export function currentAssessmentAlreadyGraded(session: any): boolean {
+  const currentItems = Array.isArray(session?.assessment?.payload?.items)
+    ? session.assessment.payload.items
+    : []
+  const feedbackItems = Array.isArray(session?.feedback?.assessment_items?.items)
+    ? session.feedback.assessment_items.items
+    : []
+  const currentIds = currentItems.map((item: any) => item?.item_id).filter(Boolean)
+  const feedbackIds = new Set(feedbackItems.map((item: any) => item?.item_id).filter(Boolean))
+  return currentIds.length > 0
+    && feedbackIds.size === currentIds.length
+    && currentIds.every((itemId: string) => feedbackIds.has(itemId))
+}
+
 export interface MainFlowStatusView {
   headline: string
   detail: string
   badge: string
   latestEvent: string
+}
+
+export interface AgentTimelineEntryView {
+  id: string
+  unit: string
+  status: string
+  statusLabel: string
+  roundLabel: string
+  attemptLabel: string
+  executionType: string
+  summary: string
+  timeLabel: string
+  artifactRefs: Array<{ id: string; locator: string | null; verified: boolean }>
+  errorLabel: string | null
+  retryLabel: string | null
+}
+
+export function agentTimelineView(session: any): AgentTimelineEntryView[] {
+  const history = Array.isArray(session?.worker_ledger_history) ? session.worker_ledger_history : []
+  const executions = new Map<string, any[]>()
+  history.forEach((entry: any, index: number) => {
+    const key = [entry?.unit_name ?? "unknown", Number(entry?.round_no) || 1, Number(entry?.attempt_no) || 1].join("::")
+    const entries = executions.get(key) ?? []
+    entries.push({ ...entry, __index: index })
+    executions.set(key, entries)
+  })
+  return [...executions.entries()].map(([key, entries]) => {
+    const entry = entries[entries.length - 1]
+    const outputs = entries.flatMap((item: any) => Array.isArray(item?.output_refs) ? item.output_refs : [])
+    const errors = entries.flatMap((item: any) => Array.isArray(item?.errors) ? item.errors : [])
+    const retry = [...entries].reverse().find((item: any) => item?.retry)?.retry
+    const hadFailure = entries.some((item: any) => item?.status === "failed" || item?.status === "blocked")
+    const hasTerminal = entries.some((item: any) => ["completed", "failed", "blocked", "skipped"].includes(item?.status))
+    const status = entry?.status === "running" && session?.status !== "running" && !hasTerminal ? "invoked" : entry?.status
+    const uniqueOutputs = [...new Map(outputs.map((ref: any) => [ref?.ref_id ?? JSON.stringify(ref), ref])).values()] as any[]
+    return { view: {
+      id: entries.length === 1 ? String(entry?.entry_id ?? key) : key,
+      unit: String(entry?.unit_name ?? "unknown"),
+      status: String(status ?? "unknown"),
+      statusLabel: timelineStatusLabel(status),
+      roundLabel: `第 ${Number(entry?.round_no) || 1} 轮`,
+      attemptLabel: hadFailure && entry?.status === "completed"
+        ? "尝试次数未完整记录"
+        : `第 ${Number(entry?.attempt_no) || 1} 次尝试`,
+      executionType: executionTypeLabel(entry?.execution_type),
+      summary: String(entry?.summary ?? "主 Agent未公开执行摘要"),
+      timeLabel: timelineTimeLabel(entries[0]?.started_at, entry?.duration_ms),
+      artifactRefs: uniqueOutputs
+        .filter((ref: any) => ref?.visibility === "public")
+        .map((ref: any) => ({ id: String(ref?.ref_id ?? "unknown"), locator: typeof ref?.locator === "string" ? ref.locator : null, verified: ref?.verified_exists === true })),
+      errorLabel: errors.length ? errors.map((error: any) => `${error?.code ? `${error.code}：` : ""}${error?.message ?? "未知错误"}`).join("；") : null,
+      retryLabel: hadFailure && entry?.status === "completed"
+        ? "本次执行曾失败或阻塞，修复后已完成"
+        : retry?.scheduled
+        ? `已安排第 ${retry.next_attempt_no ?? "?"} 次尝试${retry.reason ? `：${retry.reason}` : ""}`
+        : retry?.eligible
+          ? `可重试${retry.reason ? `：${retry.reason}` : ""}`
+          : null,
+    }, order: {
+      round: Number(entry?.round_no) || 1,
+      step: Math.min(...entries.map((item: any) => Number(item?.step_index) || Number.MAX_SAFE_INTEGER)),
+      attempt: Number(entry?.attempt_no) || 1,
+      firstSeen: Math.min(...entries.map((item: any) => Number(item?.__index) || 0)),
+    } }
+  }).sort((left, right) => left.order.round - right.order.round
+    || left.order.step - right.order.step
+    || left.order.attempt - right.order.attempt
+    || left.order.firstSeen - right.order.firstSeen)
+    .map((entry) => entry.view)
+}
+
+function timelineStatusLabel(status?: string): string {
+  return ({ invoked: "历史启动记录", running: "正在运行", waiting_for_user: "等待用户", completed: "已完成", blocked: "已阻塞", failed: "执行失败", skipped: "已跳过" } as Record<string, string>)[status ?? ""] ?? "状态未公开"
+}
+
+function executionTypeLabel(type?: string): string {
+  return ({ opencode_primary: "OpenCode 主 Agent", opencode_subagent: "OpenCode 子 Agent", deterministic_adapter: "确定性适配器", reviewed_pipeline: "受审核生成流程", external_port: "外部能力接口", session_logic: "主会话逻辑", manual: "人工操作", unknown: "类型未公开" } as Record<string, string>)[type ?? ""] ?? String(type ?? "类型未公开")
+}
+
+function timelineTimeLabel(startedAt?: string, durationMs?: number | null): string {
+  const parsed = typeof startedAt === "string" ? new Date(startedAt) : null
+  const started = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "时间未公开"
+  return typeof durationMs === "number" ? `${started} · ${durationMs} ms` : started
 }
 
 export function activeNextRoundActionView(session: any): any | null {
