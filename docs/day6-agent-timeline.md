@@ -2,7 +2,7 @@
 
 ## 作用范围
 
-本改动在角色4现有的“学习记录”页内增加 Agent 时间线，不改动主会话状态机、审核策略、动态决策或整体页面导航。
+本改动在角色4现有页面结构内增加“协同记录”时间线，不改动主会话状态机、审核策略或动态决策。
 
 ## 数据来源
 
@@ -30,9 +30,11 @@
 ## 验证
 
 ```bash
-bun test src/role-d-ui-v2/src/orchestrator-view.test.ts src/role-d-ui-v2/src/orchestrator-polling.test.ts
-bun x tsc -p src/role-d-ui-v2/tsconfig.json --noEmit
+bun test tests/interactive-session-persistence.test.ts tests/main-agent-session-architecture.test.ts src/role-d-ui-v2/src/orchestrator-view.test.ts src/role-d-ui-v2/src/plan-navigation.test.ts
+bun run typecheck
 bun run role-d:v2:build
 ```
 
-真实会话对照记录位于 `.tmp/competition-sprint/day6-ux/agent-timeline-explanation.md`。运行产物保留在本机 `.tmp`，不随代码 PR 提交。
+2026-08-17 的关联验证结果为 46 pass、0 fail；类型检查和前端生产构建通过。真实浏览器截图位于 `.tmp/competition-sprint/day6-ux/agent-timeline-screenshot.png`，对应本机真实第 2 轮会话：第 1 次测评生成失败及已安排重试、第 2 次尝试完成均保留在时间线中。
+
+本次同时修正协同状态映射：生成失败后不再用旧的兼容写入覆盖审核流水中的 `failed`、错误级别与重试元数据。运行产物保留在本机 `.tmp`，不随代码 PR 提交。

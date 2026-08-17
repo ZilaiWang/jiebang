@@ -61,6 +61,7 @@ import {
 import { semanticLessonLines, indentParagraphText } from "./lesson-format"
 import { abilityRadarView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
 import type { AssessmentPayload, Citation, CodeLabPayload, LessonPayload, PublicSessionFixture } from "./types"
+import { planNavSection } from "./plan-navigation"
 import {
   activePlan,
   activeUser,
@@ -140,6 +141,7 @@ const navItems: Array<{ id: Page; label: string; icon: typeof Home }> = [
   { id: "path", label: "学习方案", icon: FolderTree },
   { id: "lesson", label: "互动学习", icon: BookOpen },
   { id: "assessment", label: "正式测评", icon: ListChecks },
+  { id: "history", label: "协同记录", icon: History },
 ]
 
 export function App() {
@@ -620,12 +622,6 @@ function NavButton({ item, current, onClick, disabled = false }: { item: (typeof
   return <button className={current === item.id ? "is-active" : ""} disabled={disabled} type="button" onClick={() => onClick(item.id)}><Icon size={16} />{item.label}</button>
 }
 
-function planNavSection(page: Page): Page {
-  if (page === "diagnosis") return "goal"
-  if (page === "feedback" || page === "history") return "assessment"
-  return page
-}
-
 export function GoalPage({ onContinue: _onContinue }: { onContinue: () => void }) {
   const { create, busy, dockerReady } = useLive()
   const chapters = PYTHON_CURRICULUM
@@ -945,7 +941,7 @@ function HistoryPage() {
   const { refreshEvents } = useLive()
   const activeSession = useRequiredSession()
   const events = activeSession.events.slice(-10).reverse()
-  const timeline = agentTimelineView(activeSession).slice().reverse()
+  const timeline = agentTimelineView(activeSession)
   const flow = mainFlowStatusView(activeSession)
   return <div className="page history-page"><PageHeading kicker="Agent 协同记录" title="主 Agent 与执行单元的真实时间线" description="页面只读取 session、worker_ledger_history 与 events，不伪造调用、产物或重试。" /><div className="history-refresh"><button className="secondary-action" type="button" onClick={() => void refreshEvents()}>刷新真实事件</button></div><section className="history-layout"><article className="session-summary"><span>当前主 Agent 会话</span><h2>{activeSession.session_id}</h2><p>{flow.detail}</p><dl><div><dt>主 Agent 状态</dt><dd>{flow.badge}</dd></div><div><dt>当前阶段</dt><dd>{activeSession.current_stage}</dd></div><div><dt>轮次</dt><dd>{activeSession.round_no}</dd></div><div><dt>审核</dt><dd>{activeSession.content_review?.overall_status ?? "未启动"}</dd></div><div><dt>下一步</dt><dd>{activeSession.next_round_action?.action ?? (activeSession.feedback as any)?.final_decision?.action ?? "待决策"}</dd></div></dl></article><div className="agent-timeline">{timeline.length ? timeline.map((entry) => <article className={`agent-timeline-entry status-${entry.status}`} key={entry.id}><span className={`agent-status status-${entry.status}`} /><div className="agent-timeline-body"><header><div><b>{workerLabel(entry.unit)}</b><small>{entry.executionType} · {entry.roundLabel} · {entry.attemptLabel}</small></div><em>{entry.statusLabel}</em></header><p>{entry.summary}</p>{entry.errorLabel ? <p className="agent-timeline-error">{entry.errorLabel}</p> : null}{entry.retryLabel ? <p className="agent-timeline-retry"><RotateCcw size={13} />{entry.retryLabel}</p> : null}{entry.artifactRefs.length ? <div className="agent-artifact-refs">{entry.artifactRefs.map((ref) => <span className={ref.verified ? "is-verified" : "is-unverified"} title={ref.locator ?? "未公开定位"} key={ref.id}><FileText size={12} />{ref.id}{ref.verified ? " · 已核对" : " · 未核对"}</span>)}</div> : <small className="agent-no-artifact">本次执行未公开产物引用</small>}<time>{entry.timeLabel}</time></div></article>) : <MissingContent text="当前会话尚未公开追加式 Worker 调度历史。" />}</div></section><section className="raw-event-section"><header><div><small>会话事件</small><h2>最近 {events.length} 条 events</h2></div></header><div className="event-timeline">{events.map((event, index) => <article key={`${event.seq ?? index}-${event.event_type}`}><span className={`event-dot status-${event.status ?? "pending"}`} /><div><div><b>{eventStage(event)}</b><time>{formatTime(event.timestamp ?? event.occurred_at)}</time></div><p>{event.summary || event.message || event.event_type}</p><small>{event.agent || event.worker || "learning-orchestrator"}</small></div></article>)}</div></section></div>
 }

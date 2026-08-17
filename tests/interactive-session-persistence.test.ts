@@ -275,4 +275,71 @@ test("keeps failed review visible and blocks publication after Role C review exh
     },
   })
   expect(persisted.terminal_outcome?.generation_failure?.canRetry).toBe(false)
+  expect(persisted.worker_ledger_history
+    .filter((entry) => entry.unit_name === "code-lab" && entry.status === "blocked")
+    .at(-1)).toMatchObject({
+      attempt_no: 1,
+      errors: [expect.objectContaining({ severity: "fatal" })],
+      retry: { eligible: false, scheduled: false, next_attempt_no: null },
+    })
+})
+
+test("records a recoverable Role C failure with an explicit next retry attempt", async () => {
+  const { store, record } = await fixture()
+  const persisted = await store.load(record.session_id)
+  ;(await import("../src/orchestration/interactive-session")).__test_applyRoleCGenerationFailure(persisted, {
+    ok: false,
+    reason: "assessment needs a novel variant",
+    failure: {
+      code: "CONTENT_NOT_NOVEL",
+      stage: "assessment",
+      issueCodes: ["ASSESSMENT_DUPLICATE"],
+      repairScope: "artifact",
+      nextAction: "regenerate_assessment",
+      canRetry: true,
+      message: "assessment needs a novel variant",
+      fingerprint: "FAIL-NOVELTY-1",
+    },
+  })
+  expect(persisted.worker_ledger_history
+    .filter((entry) => entry.unit_name === "tiered-evaluator" && entry.status === "failed")
+    .at(-1)).toMatchObject({
+      attempt_no: 1,
+      errors: [expect.objectContaining({ severity: "recoverable" })],
+      retry: { eligible: true, scheduled: true, reason: "regenerate_assessment", next_attempt_no: 2 },
+    })
+  expect(persisted.worker_ledger.find((entry) => entry.worker === "tiered-evaluator")).toMatchObject({
+    status: "failed",
+    summary: expect.stringContaining("等待修复后重审"),
+  })
+  expect(persisted.content_review?.workers["tiered-evaluator"]).toMatchObject({
+    status: "failed",
+    published: false,
+  })
+})
+
+test("records a reprofile diagnosis-generation block in both current and append-only worker ledgers", async () => {
+  const { store, record } = await fixture()
+  const persisted = await store.load(record.session_id)
+  const { __test_applyDiagnosticGenerationFailure } = await import("../src/orchestration/interactive-session")
+
+  __test_applyDiagnosticGenerationFailure(persisted, new Error("new diagnosis duplicated a published item"))
+
+  expect(persisted).toMatchObject({
+    status: "blocked",
+    current_stage: "blocked",
+    waiting_for: null,
+    blocked_reason: expect.stringContaining("DIAGNOSTIC_GENERATION_FAILED"),
+  })
+  expect(persisted.worker_ledger.find((entry) => entry.worker === "objective-diagnostician")).toMatchObject({
+    status: "blocked",
+    summary: expect.stringContaining("new diagnosis duplicated"),
+  })
+  expect(persisted.worker_ledger_history.filter((entry) => entry.unit_name === "objective-diagnostician").at(-1)).toMatchObject({
+    status: "blocked",
+    attempt_no: 2,
+    execution_type: "session_logic",
+    errors: [expect.objectContaining({ code: "DIAGNOSTIC_GENERATION_FAILED" })],
+  })
+  expect(persisted.events.at(-1)).toMatchObject({ event_type: "session_blocked", worker: "objective-diagnostician" })
 })
