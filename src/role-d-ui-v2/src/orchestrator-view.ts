@@ -36,21 +36,6 @@ export function nextRoundResourceGate(session: any): { ready: boolean; label: st
     : { ready: false, label: "等待 C 发布下一轮新资源…" }
 }
 
-/** True only when the persisted feedback grades the assessment currently published. */
-export function currentAssessmentAlreadyGraded(session: any): boolean {
-  const currentItems = Array.isArray(session?.assessment?.payload?.items)
-    ? session.assessment.payload.items
-    : []
-  const feedbackItems = Array.isArray(session?.feedback?.assessment_items?.items)
-    ? session.feedback.assessment_items.items
-    : []
-  const currentIds = currentItems.map((item: any) => item?.item_id).filter(Boolean)
-  const feedbackIds = new Set(feedbackItems.map((item: any) => item?.item_id).filter(Boolean))
-  return currentIds.length > 0
-    && feedbackIds.size === currentIds.length
-    && currentIds.every((itemId: string) => feedbackIds.has(itemId))
-}
-
 export function shouldPollOrchestratorSession(session: any): boolean {
   return Boolean(session?.session_id && session?.status === "running")
 }
@@ -62,19 +47,37 @@ export interface MainFlowStatusView {
   latestEvent: string
 }
 
+export function activeNextRoundActionView(session: any): any | null {
+  const action = session?.next_round_action
+  if (!action) return null
+  if (typeof action.round_no === "number" && typeof session?.round_no === "number" && action.round_no !== session.round_no) return null
+  if (action.status === "waiting_for_reprofile") {
+    return session?.current_stage === "assessment" && session?.status === "running" ? action : null
+  }
+  if (action.status === "generating_next_round") {
+    return session?.status === "running" ? action : null
+  }
+  return null
+}
+
+export function activeAdaptationView(session: any): any | null {
+  const adaptation = session?.adaptation
+  if (adaptation?.adaptation_action !== "remediate" && adaptation?.adaptation_action !== "reinforce") return null
+  if (typeof adaptation.round_no === "number" && typeof session?.round_no === "number" && adaptation.round_no !== session.round_no) return null
+  return adaptation
+}
+
 export function mainFlowStatusView(session: any): MainFlowStatusView {
   const waitingType = session?.waiting_for?.type
   const waitingCount = Array.isArray(session?.waiting_for?.items) ? session.waiting_for.items.length : 0
-  const decisionAction = session?.feedback?.final_decision?.action
-  const nextRoundStatus = session?.next_round_action?.status
+  const nextRoundAction = activeNextRoundActionView(session)
+  const decisionAction = nextRoundAction || session?.status === "completed" || session?.status === "blocked" || session?.status === "failed"
+    ? session?.feedback?.final_decision?.action
+    : undefined
+  const nextRoundStatus = nextRoundAction?.status
   const parts = [`当前阶段：${stageLabel(session?.current_stage)}`]
   if (waitingType) parts.push(`等待你完成 ${waitingCount} 项输入`)
-  if (decisionAction) {
-    const decisionPrefix = currentAssessmentAlreadyGraded(session)
-      ? "本轮反馈决策"
-      : "当前资源依据的上一轮决策"
-    parts.push(`${decisionPrefix}：${decisionLabel(decisionAction)}`)
-  }
+  if (decisionAction) parts.push(`反馈决策：${decisionLabel(decisionAction)}`)
   if (nextRoundStatus) parts.push(`下一轮状态：${nextRoundStatusLabel(nextRoundStatus)}`)
   if (session?.blocked_reason && !decisionAction) parts.push(`阻塞原因：${session.blocked_reason}`)
   return {
@@ -127,6 +130,28 @@ export function answersMatchAssessmentItems(items: Array<{ item_id?: unknown }>,
   return itemIds.length > 0
     && itemIds.length === Object.keys(answers).length
     && itemIds.every((itemId) => Object.prototype.hasOwnProperty.call(answers, itemId))
+}
+
+export function assessmentEntryBlockedByPriorFeedback(session: any, feedbackDismissed: boolean): boolean {
+  if (session?.status === "completed") return true
+  if (!session?.feedback || !feedbackDismissed) return false
+  const waitingItems = session?.waiting_for?.type === "assessment_answers" && Array.isArray(session.waiting_for.items)
+    ? session.waiting_for.items
+    : []
+  const assessmentItems = Array.isArray(session?.assessment?.payload?.items)
+    ? session.assessment.payload.items
+    : []
+  const priorItems = Array.isArray(session?.feedback?.assessment_items?.items)
+    ? session.feedback.assessment_items.items
+    : []
+  const waitingIds = waitingItems.map((item: any) => item?.item_id).filter(Boolean)
+  const assessmentIds = assessmentItems.map((item: any) => item?.item_id).filter(Boolean)
+  const priorIds = new Set(priorItems.map((item: any) => item?.item_id).filter(Boolean))
+  const hasFreshAssessment = waitingIds.length > 0
+    && assessmentIds.length === waitingIds.length
+    && waitingIds.every((id: string) => assessmentIds.includes(id))
+    && waitingIds.every((id: string) => !priorIds.has(id))
+  return !hasFreshAssessment
 }
 
 export function isFinalAdvanceSession(session: any): boolean {
@@ -182,11 +207,13 @@ export function pageForSession(session: any, options?: { feedbackDismissed?: boo
   return "goal"
 }
 
-export function pathNodeTitle(node: any, ragItems: Array<{ source_id: string; title?: string }>): string {
+export function pathNodeTitle(node: any, ragItems: Array<{ source_id: string; title?: string }>, overallGoal?: string): string {
   const target = node?.target_source_ids?.[0]
-  if (!target) return node?.goal ?? "未命名节点"
+  const nodeGoal = typeof node?.goal === "string" && node.goal.trim().length > 0 ? node.goal : undefined
+  const safeGoal = nodeGoal && nodeGoal !== overallGoal ? nodeGoal : undefined
+  if (!target) return safeGoal ?? "未解析知识节点"
   const title = ragItems.find((item) => item.source_id === target)?.title
-  return title || node?.goal || "未命名节点"
+  return title || safeGoal || `未解析知识节点（${target}）`
 }
 
 export interface PathChainEntry {

@@ -951,6 +951,10 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
 
 export function publicSessionView(record: InteractiveSessionRecord): InteractiveSessionPublicView {
   const { private: _private, processed_commands: _processed, learner_request: _request, owner_id: _owner, events: _events, ...view } = structuredClone(record)
+  if (view.rag_result && view.formal_path) {
+    view.formal_path = canonicalizeFormalPathNodeTopics(view.formal_path as FormalLearningPath, view.rag_result as RagResult)
+    view.current_path_node = canonicalizePathNodeTopic(view.current_path_node as LearningPathNode | null, view.rag_result as RagResult)
+  }
   return view
 }
 
@@ -1727,10 +1731,6 @@ function applyRoleCGenerationFailure(
   record.status = "blocked"
   record.current_stage = "blocked"
   record.waiting_for = null
-  // The generation action is no longer running once the session is blocked.
-  // Retry context remains private; the public action must not keep advertising
-  // a stale `generating_next_round` state.
-  record.next_round_action = null
   record.blocked_reason = result.reason
   if (!result.failure) {
     record.terminal_outcome = null
@@ -1817,7 +1817,6 @@ function applyUnexpectedRoleCGenerationFailure(
   record.status = "failed"
   record.current_stage = "failed"
   record.waiting_for = null
-  record.next_round_action = null
   record.blocked_reason = message
   record.terminal_outcome = {
     kind: "content_generation_failed",

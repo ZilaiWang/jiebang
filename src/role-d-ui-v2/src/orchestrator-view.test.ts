@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, answersToSubmission, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
   test("summarizes main flow status from public session, waiting gate, feedback, next action, and events", () => {
@@ -26,21 +26,40 @@ describe("orchestrator UI state mapping", () => {
       next_round_action: { action: "advance", status: "generating_next_round", target_node_id: "NODE-2", feedback_id: "FB-1" },
       feedback: { final_decision: { action: "advance" } },
       events: [{ event_type: "session_updated", message: "round 2 generation started in background", timestamp: "2026-08-17T01:01:00.000Z", worker: "tiered-evaluator" }],
-    }).detail).toBe("当前阶段：互动学习与正式测评；当前资源依据的上一轮决策：进入下一知识节点；下一轮状态：正在生成下一轮资源。")
+    }).detail).toBe("当前阶段：互动学习与正式测评；反馈决策：进入下一知识节点；下一轮状态：正在生成下一轮资源。")
   })
 
-  test("labels historical feedback as the previous-round basis once a fresh form is published", () => {
+  test("hides stale completed actions after the session has moved on", () => {
     expect(mainFlowStatusView({
+      session_id: "S1",
+      status: "waiting_for_user",
+      current_stage: "objective_diagnosis",
+      round_no: 1,
+      waiting_for: { type: "diagnosis_answers", items: [{ item_id: "D1" }] },
+      next_round_action: { action: "reprofile", status: "waiting_for_reprofile", round_no: 1, target_node_id: "NODE-1", feedback_id: "FB-1" },
+      feedback: null,
+    }).detail).toBe("当前阶段：客观诊断；等待你完成 1 项输入。")
+
+    expect(mainFlowStatusView({
+      session_id: "S1",
       status: "waiting_for_user",
       current_stage: "assessment",
-      round_no: 3,
-      waiting_for: { type: "assessment_answers", items: [{ item_id: "NEW-1" }] },
-      assessment: { payload: { items: [{ item_id: "NEW-1" }] } },
-      feedback: {
-        final_decision: { action: "remediate" },
-        assessment_items: { items: [{ item_id: "OLD-1" }] },
-      },
-    }).detail).toContain("当前资源依据的上一轮决策：开始针对性补救")
+      round_no: 2,
+      waiting_for: { type: "assessment_answers", items: [{ item_id: "R2-Q1" }] },
+      next_round_action: { action: "remediate", status: "generating_next_round", round_no: 1, target_node_id: "NODE-1", feedback_id: "FB-1" },
+      feedback: null,
+    }).detail).toBe("当前阶段：互动学习与正式测评；等待你完成 1 项输入。")
+  })
+
+  test("hides stale remediate adaptation once the current round no longer matches it", () => {
+    expect(activeAdaptationView({
+      round_no: 2,
+      adaptation: { adaptation_action: "remediate", round_no: 1, adaptation_summary: "old", target_objective_ids: [], addressed_misconception_tags: [] },
+    })).toBeNull()
+    expect(activeAdaptationView({
+      round_no: 2,
+      adaptation: { adaptation_action: "remediate", round_no: 2, adaptation_summary: "current", target_objective_ids: [], addressed_misconception_tags: [] },
+    })?.adaptation_summary).toBe("current")
   })
 
   test("routes diagnosis completion and plan re-entry to the learning plan before C content", () => {
@@ -74,6 +93,12 @@ describe("orchestrator UI state mapping", () => {
     expect(pathNodeTitle({ target_source_ids: ["K009"], goal: "学习列表" }, rag)).toBe("列表")
     expect(pathNodeTitle({ target_source_ids: ["K999"], goal: "学习列表" }, rag)).toBe("学习列表")
     expect(pathNodeTitle({ target_source_ids: [], goal: "学习列表" }, rag)).toBe("学习列表")
+  })
+
+  test("does not fall back to the overall plan goal for unresolved path node titles", () => {
+    const overallGoal = "学习for 循环"
+    expect(pathNodeTitle({ target_source_ids: ["K003"], goal: overallGoal }, [], overallGoal)).toBe("未解析知识节点（K003）")
+    expect(pathNodeTitle({ target_source_ids: [], goal: overallGoal }, [], overallGoal)).toBe("未解析知识节点")
   })
 
   test("expands the chain with every referenced prerequisite, marking mastered ones", () => {
@@ -140,6 +165,23 @@ describe("orchestrator UI state mapping", () => {
     const graded = { status: "waiting_for_user", current_stage: "assessment", profile: {}, formal_path: { nodes: [] }, current_path_node: {}, feedback: { final_decision: { action: "advance" } }, learning_resources: { concept_lesson: { payload: {} } } }
     expect(pageForSession(graded)).toBe("feedback")
     expect(pageForSession(graded, { feedbackDismissed: true })).toBe("path")
+  })
+
+  test("does not treat prior-round feedback as completed when a fresh second-round assessment is waiting", () => {
+    const secondRoundReady = {
+      status: "waiting_for_user",
+      current_stage: "assessment",
+      round_no: 2,
+      waiting_for: { type: "assessment_answers", items: [{ item_id: "R2-Q1" }, { item_id: "R2-Q2" }] },
+      feedback: {
+        final_decision: { action: "remediate" },
+        assessment_items: { items: [{ item_id: "R1-Q1" }, { item_id: "R1-Q2" }] },
+      },
+      assessment: { artifact_id: "ASSESSMENT-R2", payload: { items: [{ item_id: "R2-Q1" }, { item_id: "R2-Q2" }] } },
+      learning_resources: { concept_lesson: { payload: {} } },
+    }
+
+    expect(assessmentEntryBlockedByPriorFeedback(secondRoundReady, true)).toBe(false)
   })
 
   test("maps blocked sessions to a truthful recovery action", () => {
