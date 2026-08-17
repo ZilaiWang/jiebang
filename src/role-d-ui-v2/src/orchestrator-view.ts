@@ -314,6 +314,32 @@ export function pathNodeTitle(node: any, ragItems: Array<{ source_id: string; ti
   return title || safeGoal || `未解析知识节点（${target}）`
 }
 
+/**
+ * 解释"为什么学这个节点"：只使用 B 公开的 stage_order（路径位置）、
+ * prerequisite_source_ids（先修依赖）与画像 known_concepts（已掌握）推导，
+ * 不自行编造学习原因。
+ */
+export function pathNodeWhyView(
+  node: any,
+  ragItems: Array<{ source_id: string; title?: string }>,
+  knownConcepts: string[],
+  overallGoal?: string,
+): string | null {
+  const title = pathNodeTitle(node, ragItems, overallGoal)
+  const prereqs: string[] = Array.isArray(node?.prerequisite_source_ids) ? node.prerequisite_source_ids : []
+  const mastered = new Set(knownConcepts.map((concept) => concept.trim()))
+  const prereqTitles = prereqs.map((sourceId) => ragItems.find((item) => item.source_id === sourceId)?.title ?? sourceId)
+  const pending = prereqTitles.filter((item) => !mastered.has(item))
+  const masteredPrereqs = prereqTitles.filter((item) => mastered.has(item))
+  const stage = typeof node?.stage_order === "number" ? node.stage_order : null
+  const parts: string[] = []
+  if (stage != null) parts.push(`这是学习路径的第 ${stage} 步${stage === 1 ? "，是你学习目标的起点" : ""}`)
+  if (pending.length) parts.push(`学「${title}」前需要先掌握 ${pending.join("、")}`)
+  if (masteredPrereqs.length) parts.push(`其中 ${masteredPrereqs.join("、")} 已标记为已掌握`)
+  if (!parts.length) return null
+  return parts.join("；") + "。"
+}
+
 export interface PathChainEntry {
   node_id: string
   source_id: string
@@ -481,10 +507,13 @@ export function blockedSessionAction(session: any): { canRetry: boolean; label: 
       regenerate_assessment: "重新生成正式测评",
       retry_provider: "重试内容生成服务",
     }
-    return {
-      canRetry: generationFailure.canRetry === true,
-      label: labels[generationFailure.nextAction] ?? "调整学习目标",
+    const canRetry = generationFailure.canRetry === true
+    if (canRetry) {
+      return { canRetry: true, label: labels[generationFailure.nextAction] ?? "重新生成当前学习资源" }
     }
+    // 内容生成失败且上游"失败2次"兜底把 nextAction 改成了 change_goal：
+    // 这是 C 生成服务的问题，不是用户目标问题，不应引导用户"调整学习目标"。
+    return { canRetry: false, label: "内容生成暂时失败，请稍后重试" }
   }
   if (outcome?.kind === "unsupported_goal") {
     return { canRetry: false, label: "调整学习目标" }
