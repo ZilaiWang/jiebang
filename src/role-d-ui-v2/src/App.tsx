@@ -37,7 +37,7 @@ import {
   UserRound,
   X,
 } from "lucide-react"
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, useContext, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import EditorExport from "react-simple-code-editor"
 import Prism from "prismjs"
@@ -67,7 +67,7 @@ import {
 } from "./fact-lookup"
 import { codeSubmissionHint, labFeedbackExplanations, publicTestChecklist } from "./lab-feedback"
 import { LoopVisualizerToggle } from "./loop-visualizer"
-import { abilityRadarView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, currentAssessmentAlreadyGraded, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
 import type { AssessmentPayload, Citation, CodeLabPayload, LessonPayload, PublicSessionFixture } from "./types"
 import { planNavSection } from "./plan-navigation"
 import {
@@ -138,12 +138,6 @@ function useRequiredSession() {
   const { session } = useLive()
   if (!session) throw new Error("This page requires an active orchestrator session")
   return session
-}
-
-/** 从当前会话的 rag_result 构建引用事实索引（Day6：引用证据可查看事实原文）。 */
-function useFactIndex(): FactIndex {
-  const activeSession = useRequiredSession()
-  return useMemo(() => buildFactIndex(activeSession.rag_result), [activeSession.rag_result])
 }
 
 type Page = "home" | "goal" | "diagnosis" | "path" | "lesson" | "assessment" | "feedback" | "history"
@@ -273,7 +267,7 @@ export function App() {
     return () => window.removeEventListener("scroll", update)
   }, [page])
 
-  const applySession = async (next: any, options: { preservePage?: boolean } = {}) => {
+  const applySession = async (next: any) => {
     const previousAssessmentId = liveSession?.assessment?.artifact_id
     const nextAssessmentId = next?.assessment?.artifact_id
     const assessmentChanged = Boolean(
@@ -293,7 +287,7 @@ export function App() {
       stage: merged.current_stage,
       knownConcepts: merged.profile?.known_concepts ?? currentPlan.knownConcepts ?? [],
     }))
-    if (!options.preservePage) setPage(pageForSession(merged, { feedbackDismissed }))
+    setPage(pageForSession(merged, { feedbackDismissed }))
     setError("")
   }
 
@@ -384,10 +378,7 @@ export function App() {
       setBusy("正在通过 Docker 检查这段代码…")
       setError("")
       try {
-        await applySession(
-          await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code),
-          { preservePage: true },
-        )
+        await applySession(await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code))
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码运行失败")
       } finally { setBusy("") }
@@ -397,10 +388,7 @@ export function App() {
       setBusy("正在通过 Docker 运行代码实验…")
       setError("")
       try {
-        await applySession(
-          await requestCodeLab(liveSession.session_id, learnerId, labId, code),
-          { preservePage: true },
-        )
+        await applySession(await requestCodeLab(liveSession.session_id, learnerId, labId, code))
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码实验运行失败")
       } finally { setBusy("") }
@@ -488,7 +476,7 @@ export function App() {
           {page === "path" && (liveSession ? <PathPage planName={currentPlan?.name} onContinue={() => setPage("lesson")} /> : <NoSessionState onStart={() => setPage("goal")} />)}
           {page === "lesson" && (liveSession ? <LessonPage onAssessment={() => setPage("assessment")} /> : <NoSessionState onStart={() => setPage("goal")} />)}
           {page === "assessment" && (liveSession ? (
-            liveSession.status === "completed" || (feedbackDismissed && currentAssessmentAlreadyGraded(liveSession))
+            assessmentEntryBlockedByPriorFeedback(liveSession, feedbackDismissed)
               ? <RedirectPage title="本轮测评已结束" message="你已经完成本轮测评，无法返回答题界面。" action="查看评分反馈" onAction={() => setPage("feedback")} />
               : <AssessmentPage onFeedback={() => setPage("feedback")} />
           ) : <NoSessionState onStart={() => setPage("goal")} />)}
@@ -688,6 +676,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const ragItems = Array.isArray(ragResult?.results) ? ragResult.results : []
   const radar = abilityRadarView(profile)
   const chain = pathChainView(pathNodes as any, ragItems, profile?.known_concepts ?? [])
+  const titleForPathNode = (node: any) => pathNodeTitle(node, ragItems, formalPath?.original_goal)
   const hasLesson = Boolean(activeSession.learning_resources.concept_lesson?.payload)
   const hasBlockedResource = activeSession.status === "blocked" || activeSession.status === "failed"
   const recoveryAction = blockedSessionAction(activeSession)
@@ -724,11 +713,11 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
 
     <section className="learning-path-visual">
       <header><div><small>学习路径图 · B正式路径</small><h2>{formalPath?.original_goal ?? displayPlanName}</h2></div><span>{pathNodes.length} 个节点</span></header>
-      {pathNodes.length ? <div className="path-node-flow">{pathNodes.map((node: any, index: number) => <article className={`path-flow-node status-${node.status ?? "pending"}`} key={node.node_id}><div className="path-flow-index">{String(index + 1).padStart(2, "0")}</div><div><span>{node.status === "in_progress" ? "当前节点" : node.status === "completed" ? "已完成" : node.status === "blocked" ? "受阻" : "待学习"}</span><h3>{pathNodeTitle(node, ragItems)}</h3><p>目标来源：{node.target_source_ids?.join("、") || "未公开"}</p><small>先修：{node.prerequisite_source_ids?.length ? node.prerequisite_source_ids.join("、") : "无公开先修"}{node.goal && pathNodeTitle(node, ragItems) !== node.goal ? ` · 计划：${node.goal}` : ""}</small></div>{index < pathNodes.length - 1 && <ArrowRight className="path-flow-arrow" size={18} />}</article>)}</div> : <MissingContent text="B尚未公开正式学习路径节点。" />}
+      {pathNodes.length ? <div className="path-node-flow">{pathNodes.map((node: any, index: number) => <article className={`path-flow-node status-${node.status ?? "pending"}`} key={node.node_id}><div className="path-flow-index">{String(index + 1).padStart(2, "0")}</div><div><span>{node.status === "in_progress" ? "当前节点" : node.status === "completed" ? "已完成" : node.status === "blocked" ? "受阻" : "待学习"}</span><h3>{titleForPathNode(node)}</h3><p>目标来源：{node.target_source_ids?.join("、") || "未公开"}</p><small>先修：{node.prerequisite_source_ids?.length ? node.prerequisite_source_ids.join("、") : "无公开先修"}{node.goal && titleForPathNode(node) !== node.goal ? ` · 计划：${node.goal}` : ""}</small></div>{index < pathNodes.length - 1 && <ArrowRight className="path-flow-arrow" size={18} />}</article>)}</div> : <MissingContent text="B尚未公开正式学习路径节点。" />}
     </section>
 
     <section className="week2-lower-grid">
-      <article className="current-objectives-card"><header><div><small>当前节点与观察目标</small><h2>{pathNodeTitle(activeSession.current_path_node, ragItems)}</h2></div><span>{activeSession.current_path_node?.goal && pathNodeTitle(activeSession.current_path_node, ragItems) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header><div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
+      <article className="current-objectives-card"><header><div><small>当前节点与观察目标</small><h2>{titleForPathNode(activeSession.current_path_node)}</h2></div><span>{activeSession.current_path_node?.goal && titleForPathNode(activeSession.current_path_node) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header><div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
       <article className="agent-collaboration-card"><header><div><small>Agent协同过程 · 主 Agent台账</small><h2>{activeSession.worker_ledger.length} 个Worker状态</h2></div><Bot size={22} /></header><div className="agent-collaboration-list">{activeSession.worker_ledger.map((worker) => <article key={worker.worker}><span className={`agent-status status-${worker.status}`} /><div><b>{workerLabel(worker.worker)}</b><p>{worker.summary ?? "主 Agent未公开摘要"}</p></div><em>{worker.status}</em></article>)}</div></article>
       <ContentReviewCard session={activeSession} />
     </section>
@@ -750,9 +739,7 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const activeSession = useRequiredSession()
   const lesson = activeSession.learning_resources.concept_lesson?.payload
   const lab = activeSession.learning_resources.code_lab?.payload
-  const adaptation = activeSession.adaptation?.adaptation_action === "remediate" || activeSession.adaptation?.adaptation_action === "reinforce"
-    ? activeSession.adaptation
-    : null
+  const adaptation = activeAdaptationView(activeSession)
   const [tab, setTab] = useState<LessonTab>("lesson")
   const [sideTab, setSideTab] = useState<SideTab>("hint")
   const [activeSection, setActiveSection] = useState("prerequisite")
@@ -776,12 +763,11 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
 }
 
 function LessonContent({ lesson, onActive }: { lesson: LessonPayload; onActive: (id: string) => void }) {
-  const factIndex = useFactIndex()
   return <div className="lesson-document">
     <LessonSection id="prerequisite" title="连接已有知识" tone="warm" icon={<Layers3 />} onActive={onActive}>{lesson.prerequisite_bridge.length ? lesson.prerequisite_bridge.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) : <MissingContent text="C 未公开 prerequisite_bridge" />}</LessonSection>
     <LessonSection id="concept" title="核心概念" tone="plain" icon={<Lightbulb />} onActive={onActive}>{lesson.explanation_blocks.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}</LessonSection>
     <LessonSection id="examples" title="分步示例" tone="blue" icon={<Braces />} onActive={onActive}>{lesson.worked_examples.length ? lesson.worked_examples.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) : <MissingContent text="C 未公开 worked_examples" />}</LessonSection>
-    <LessonSection id="misconceptions" title="常见误区" tone="amber" icon={<MessageCircleQuestion />} onActive={onActive}>{lesson.misconceptions.length ? <div className="misconception-grid">{lesson.misconceptions.map((item) => <article key={item.misconception_tag}><b>{item.objective_id}</b><p>{item.explanation}</p><CitationChips citations={item.citations} index={factIndex} /></article>)}</div> : <MissingContent text="C 未公开 misconceptions" />}</LessonSection>
+    <LessonSection id="misconceptions" title="常见误区" tone="amber" icon={<MessageCircleQuestion />} onActive={onActive}>{lesson.misconceptions.length ? <div className="misconception-grid">{lesson.misconceptions.map((item) => <article key={item.misconception_tag}><b>{item.objective_id}</b><p>{item.explanation}</p><small>{formatCitations(item.citations)}</small></article>)}</div> : <MissingContent text="C 未公开 misconceptions" />}</LessonSection>
     <LessonSection id="summary" title="本节小结" tone="mint" icon={<CheckCircle2 />} onActive={onActive}>{lesson.summary.length ? <ol className="summary-list">{lesson.summary.flatMap((block) => { const raw = "text" in block ? (block as any).text ?? "" : ""; const cleaned = stripClaimTextFromBody(raw, (block as any).claims ?? []); return cleaned.split(/\n+/).filter(Boolean).map((line, j, arr) => { const globalIndex = arr.length > 1 ? j : 0; return <li key={`${block.block_id}-${j}`}><span className="summary-num">{globalIndex + 1}.</span><p className="summary-line">{line.trim()}</p></li>; }) })}</ol> : <MissingContent text="C 未公开 summary" />}</LessonSection>
   </div>
 }
@@ -795,13 +781,12 @@ function SemanticLessonText({ text }: { text: string }) {
   return <>{semanticLessonLines(indented).map((line, index) => <span className="semantic-lesson-line" key={`${index}-${line}`}>{line}</span>)}</>
 }
 
-/** 事实证据：C 公开的 claim 文本 + 引用来源（可点击查看事实原文），离上文空一行，紫色小字。 */
+/** 事实证据：C 公开的 claim 文本 + 引用来源，离上文空一行，紫色小字。 */
 function ClaimEvidence({ claims, citations }: { claims: Array<{ claim_id: string; text: string }>; citations: Citation[] }) {
-  const factIndex = useFactIndex()
   if (!claims.length && !citations.length) return null
   return <div className="claim-evidence">
     <div className="claim-label">证据事实：</div>
-    {citations.length > 0 && <CitationChips citations={citations} index={factIndex} />}
+    {citations.length > 0 && <div className="claim-citations">{formatCitations(citations)}</div>}
     {claims.map((claim) => <p key={claim.claim_id} className="claim-text">{claim.text}</p>)}
   </div>
 }
@@ -827,7 +812,7 @@ function RenderLessonBlock({ block }: { block: LessonPayload["explanation_blocks
   const bodyText = "text" in block ? stripClaimTextFromBody((block as any).text ?? "", claims) : ""
   if (block.block_type === "heading") return <h3 className="block-heading">{block.text}</h3>
   if (block.block_type === "paragraph") return <article className="prose-block"><p><SemanticLessonText text={bodyText} /></p><ClaimEvidence claims={claims} citations={citations} /></article>
-  if (block.block_type === "code") return <article className="code-example"><div className="code-head"><span>{block.caption ?? "Python 示例"}</span><small>{block.language}</small></div><CodeViewer code={block.code} /><LoopVisualizerToggle code={block.code} /><ClaimEvidence claims={claims} citations={citations} /></article>
+  if (block.block_type === "code") return <article className="code-example"><div className="code-head"><span>{block.caption ?? "Python 示例"}</span><small>{block.language}</small></div><CodeViewer code={block.code} /><ClaimEvidence claims={claims} citations={citations} /></article>
   if (block.block_type === "callout") return <article className={`callout callout-${block.tone}`}><b>{block.title}</b><p><SemanticLessonText text={bodyText} /></p><ClaimEvidence claims={claims} citations={citations} /></article>
   if (block.block_type === "comparison") return <article className="comparison-block"><h3>{block.title}</h3><div>{block.columns.map((column) => <section key={column.heading}><b>{column.heading}</b><p><SemanticLessonText text={stripClaimTextFromBody(column.content, claims)} /></p></section>)}</div><ClaimEvidence claims={claims} citations={citations} /></article>
   return null
@@ -848,8 +833,8 @@ function PythonCodeBlock({ code, className = "" }: { code: string; className?: s
   return <pre className={`python-code-block ${className}`.trim()}><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(code) }} /></pre>
 }
 
-function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Python 代码编辑器", hint = codeSubmissionHint() }: { value: string; onChange: (value: string) => void; minHeight?: number; ariaLabel?: string; hint?: string }) {
-  return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">{hint}</p></div>
+function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Python 代码编辑器" }: { value: string; onChange: (value: string) => void; minHeight?: number; ariaLabel?: string }) {
+  return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">请提交完整函数定义（含 def 行），不要只贴函数体。</p></div>
 }
 
 function CodeViewer({ code }: { code: string }) {
@@ -873,46 +858,29 @@ function CodeViewer({ code }: { code: string }) {
 
 function LabContent({ lab, code, setCode, busy, execution, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onRun: () => Promise<void> }) {
   if (!lab) return <EmptyState title="代码实验尚未发布" body="D 不会自造 starter code 或测试。请等待主 Agent返回 learning_resources.code_lab。" />
-  const failureReasons = labFeedbackExplanations(execution?.feedback)
-  const checklist = publicTestChecklist(lab.public_tests)
-  return <div className="lab-workspace"><section className="lab-instructions"><span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span><h2>{lab.title}</h2>{lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}<div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div></section><section className="editor-panel"><header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header><PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" hint={codeSubmissionHint(lab.execution_contract.execution_mode)} /><footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="run-button" disabled={Boolean(busy) || !code.trim()} type="button" onClick={() => void onRun()}><Play size={15} /> {busy ? "运行中…" : "运行代码"}</button></footer>{execution ? <div className={`run-result is-visible ${execution.status === "passed" ? "is-pass" : execution.status === "blocked" ? "is-blocked" : "is-fail"}`} role="status"><b>{execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b><p>{typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>{failureReasons.length > 0 && <div className="failure-reasons">{failureReasons.map((entry) => <p key={entry.code}><b>{entry.label}</b>{entry.message || "请对照任务目标检查代码。"}</p>)}</div>}{execution.status === "failed" && checklist.length > 0 && <details className="public-test-checklist"><summary>对照公开测试自查（展开查看期望行为）</summary>{checklist.map((test) => <article key={test.test_id}><b>{test.description}</b><p>期望行为：{test.expected_behavior}</p></article>)}</details>}</div> : null}</section></div>
+  return <div className="lab-workspace"><section className="lab-instructions"><span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span><h2>{lab.title}</h2>{lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}<div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div></section><section className="editor-panel"><header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header><PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" /><footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="run-button" disabled={Boolean(busy) || !code.trim()} type="button" onClick={() => void onRun()}><Play size={15} /> {busy ? "运行中…" : "运行代码"}</button></footer>{execution ? <div className="run-result is-visible" role="status"><b>{execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b><p>{typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>{execution.feedback?.map((entry) => <small key={entry.code}>{entry.message}</small>)}</div> : null}</section></div>
 }
 
 function ChecksContent({ lesson }: { lesson: LessonPayload }) {
   const [open, setOpen] = useState<string | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
-  const factIndex = useFactIndex()
   return <div className="checks-workspace"><header><span className="eyebrow"><ListChecks size={15} /> 课件内理解检查</span><h2>边学边检查，不计入正式 mastery</h2><p>题目、正确选项和解析均来自 C 的公开 micro_checks；D 只在你选择后展示。</p></header>{lesson.micro_checks.length ? lesson.micro_checks.map((check, index) => {
     const selected = answers[check.item_id]
     const feedback = microCheckFeedbackView(check, selected)
-    return <article className="micro-check" key={check.item_id}><div className="micro-number">{String(index + 1).padStart(2, "0")}</div><div><h3>{check.prompt}</h3>{check.options?.length ? <div className="check-options">{check.options.map((option) => <button className={`${selected === option.option_id ? "is-selected" : ""} ${feedback && option.option_id === check.answer_option_id ? "is-answer" : ""}`.trim()} onClick={() => setAnswers((current) => ({ ...current, [check.item_id]: option.option_id }))} type="button" key={option.option_id}>{option.label}. {option.text}</button>)}</div> : <textarea value={selected ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [check.item_id]: event.target.value }))} placeholder="C 未公开可自动核对的选项；请写下你的理解" />}{feedback && <div className={`micro-feedback ${feedback.correct ? "is-correct" : "is-wrong"}`} role="status"><b>{feedback.correct ? "回答正确" : "回答错误"}</b><p>正确答案：{feedback.answer_text}</p><small>{feedback.explanation}</small></div>}<button className="source-toggle" type="button" onClick={() => setOpen(open === check.item_id ? null : check.item_id)}>{open === check.item_id ? "收起来源" : "查看来源"} <ChevronDown size={15} /></button>{open === check.item_id && <div className="source-line"><CitationChips citations={check.citations} index={factIndex} /></div>}</div></article>
+    return <article className="micro-check" key={check.item_id}><div className="micro-number">{String(index + 1).padStart(2, "0")}</div><div><h3>{check.prompt}</h3>{check.options?.length ? <div className="check-options">{check.options.map((option) => <button className={`${selected === option.option_id ? "is-selected" : ""} ${feedback && option.option_id === check.answer_option_id ? "is-answer" : ""}`.trim()} onClick={() => setAnswers((current) => ({ ...current, [check.item_id]: option.option_id }))} type="button" key={option.option_id}>{option.label}. {option.text}</button>)}</div> : <textarea value={selected ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [check.item_id]: event.target.value }))} placeholder="C 未公开可自动核对的选项；请写下你的理解" />}{feedback && <div className={`micro-feedback ${feedback.correct ? "is-correct" : "is-wrong"}`} role="status"><b>{feedback.correct ? "回答正确" : "回答错误"}</b><p>正确答案：{feedback.answer_text}</p><small>{feedback.explanation}</small></div>}<button className="source-toggle" type="button" onClick={() => setOpen(open === check.item_id ? null : check.item_id)}>{open === check.item_id ? "收起来源" : "查看来源"} <ChevronDown size={15} /></button>{open === check.item_id && <p className="source-line">{formatCitations(check.citations)}</p>}</div></article>
   }) : <MissingContent text="C 未公开 micro_checks，D 不补造理解题。" />}</div>
 }
 
 function HintPanel({ lesson }: { lesson?: LessonPayload }) {
   const [level, setLevel] = useState(1)
-  const factIndex = useFactIndex()
   const ladder = lesson?.hint_ladders?.[0]
   const hint = ladder?.hints.find((item) => item.hint_level === level)
-  return <div className="side-panel-content"><span className="side-kicker"><Lightbulb size={15} /> 分层提示</span><h3>{ladder ? `${ladder.objective_id} 的提示阶梯` : "当前没有公开提示"}</h3>{hint ? <><p className="hint-copy">{hint.text}</p><CitationChips citations={hint.citations} index={factIndex} /><div className="hint-levels">{[1, 2, 3].map((value) => <button className={level === value ? "is-active" : ""} type="button" onClick={() => setLevel(value)} key={value}>提示 {value}</button>)}</div></> : <p className="muted-copy">D 不会临时生成提示。接入后仅展示 C 公开的 hint_ladders。</p>}</div>
+  return <div className="side-panel-content"><span className="side-kicker"><Lightbulb size={15} /> 分层提示</span><h3>{ladder ? `${ladder.objective_id} 的提示阶梯` : "当前没有公开提示"}</h3>{hint ? <><p className="hint-copy">{hint.text}</p><CitationChips citations={hint.citations} /><div className="hint-levels">{[1, 2, 3].map((value) => <button className={level === value ? "is-active" : ""} type="button" onClick={() => setLevel(value)} key={value}>提示 {value}</button>)}</div></> : <p className="muted-copy">D 不会临时生成提示。接入后仅展示 C 公开的 hint_ladders。</p>}</div>
 }
 
 function EvidencePanel({ lesson }: { lesson?: LessonPayload }) {
-  const factIndex = useFactIndex()
   const evidence = uniqueCitations([...(lesson?.used_evidence ?? []), ...(lesson ? lesson.prerequisite_bridge.flatMap(blockCitations) : [])])
-  return <div className="side-panel-content"><span className="side-kicker"><ShieldCheck size={15} /> 可追溯证据</span><h3>{evidence.length} 条公开引用</h3><p className="muted-copy">引用来自 C 的公开字段；点击可查看知识库事实原文，缺失证据如实显示、不生成虚构来源。</p><div className="evidence-list">{evidence.map((citation) => {
-    const result = lookupFact(factIndex, citation)
-    return <article key={`${citation.source_id}-${citation.fact_id}`} className={result.found ? "" : "is-missing"}>
-      <FileText size={16} />
-      <div><b>{citation.source_id}</b><span>{citation.fact_id}</span>
-        {result.found ? <>
-          <em>{result.entry.source_title}</em>
-          <p className="fact-original">{result.entry.content}</p>
-        </> : <p className="fact-missing-note">事实不在当前会话证据中</p>}
-      </div>
-      <ExternalLink size={14} />
-    </article>
-  })}</div></div>
+  return <div className="side-panel-content"><span className="side-kicker"><ShieldCheck size={15} /> 可追溯证据</span><h3>{evidence.length} 条公开引用</h3><p className="muted-copy">只展示 source_id / fact_id；缺失证据会如实显示，不生成虚构来源。</p><div className="evidence-list">{evidence.map((citation) => <article key={`${citation.source_id}-${citation.fact_id}`}><FileText size={16} /><div><b>{citation.source_id}</b><span>{citation.fact_id}</span></div><ExternalLink size={14} /></article>)}</div></div>
 }
 
 function AgentPanel() {
@@ -969,9 +937,7 @@ function FeedbackPage({ onContinue, masteryNotice, onMasteryDismiss }: { onConti
     { action: "reprofile", title: "重新确认画像", description: "B 需要重新确认画像，再调整后续路径" },
   ]
   const nextRoundGate = nextRoundResourceGate(activeSession)
-  const adaptation = activeSession.adaptation?.adaptation_action === "remediate" || activeSession.adaptation?.adaptation_action === "reinforce"
-    ? activeSession.adaptation
-    : null
+  const adaptation = activeAdaptationView(activeSession)
 const finalAction = finalFeedbackAction(activeSession)
   return <div className="page feedback-page">{masteryNotice && <MasteryCelebration notice={masteryNotice} onClose={onMasteryDismiss} />}<PageHeading kicker={`正式反馈 · 第 ${activeSession.round_no > 1 ? activeSession.round_no - 1 : activeSession.round_no} 轮`} title={activeSession.status === "blocked" ? "下一步暂时受阻" : decisionTitle(decision?.action)} description={feedbackSummary || activeSession.blocked_reason || "主 Agent已返回本轮正式决策。"} /> <section className="feedback-result-grid"><article className="score-card"><span>本轮正式得分</span><strong>{feedback?.round_score ? `${feedback.round_score.raw_score} / ${feedback.round_score.max_score}` : "--"}</strong><p>{feedback?.round_score ? `正确率 ${Math.round(feedback.round_score.accuracy * 100)}% · 证据分 ${Math.round(feedback.round_score.evidence_score * 100)}%${wrongCount ? ` · ${wrongCount} 题未答对` : ""}` : "已保留此前评分，等待下一轮恢复。"}</p></article><article className="decision-card"><span>主 Agent下一步</span><h2>{decision?.action ? decisionLabel(decision.action) : "等待恢复"}</h2><p>{decision?.reason_codes?.join("、") || activeSession.blocked_reason || "暂无公开原因码"}</p></article></section><section className="decision-plan-card"><header><div><small>动态规划 · 下一轮方案选择</small><h2>主 Agent基于本轮结果选择下一轮方案</h2></div><span>{decision?.action ?? "pending"}</span></header><div className="decision-plan-grid">{planOptions.map((option) => <article className={decision?.action === option.action ? "is-current" : ""} key={option.action}><b>{option.title}</b><p>{option.description}</p>{decision?.action === option.action ? <em>本轮决策</em> : <i />}</article>)}</div></section>{adaptation ? <section className="adaptation-card"><small>本轮C资源适配说明</small><h2>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</h2><p>{adaptation.adaptation_summary}</p><p>目标：{adaptation.target_objective_ids.join("、") || "主Agent未公开具体目标"}</p>{adaptation.addressed_misconception_tags.length ? <p>针对误区：{adaptation.addressed_misconception_tags.join("、")}</p> : null}</section> : null}{itemViews.length ? <section className="item-feedback-list"><h2>逐题结果{wrongCount ? ` · ${wrongCount} 题待订正` : ""}</h2>{itemViews.map((view, index) => <article className={view.correct === false ? "is-wrong" : view.correct === true ? "is-correct" : "is-blank"} key={view.item_id}><header><span>{modalityLabel(view.modality as any)}</span><b>第 {index + 1} 题</b><em>{view.raw_score} / {view.max_score} 分</em></header><p className="item-prompt">{view.prompt}</p><dl><dt>你的答案</dt><dd>{view.your_answer_text}</dd></dl><div className="item-verdict">{view.correct === true ? "回答正确" : view.correct === false ? "回答错误" : "未作答"}</div>{view.correct_answer_text ? <dl className="correct-answer"><dt>参考答案</dt><dd className={view.correct_answer_kind === "code" ? "is-code" : ""}>{view.correct_answer_text}</dd></dl> : null}{view.feedback_message ? <p className="item-message">{view.feedback_message}</p> : null}{view.next_step ? <p className="item-next">下一步：{view.next_step}</p> : null}{view.correct === false && !view.correct_answer_text ? <small className="answer-boundary">C 本轮未公开结构化参考答案，仅提供评分反馈与下一步建议。</small> : null}</article>)}</section> : feedback?.your_answers?.length ? <section className="item-feedback-list"><p className="answer-boundary">本轮题目快照由旧版会话产生未公开，此处仅显示评分汇总；下一轮重新提交后可查看逐题结果。</p></section> : null}{feedback?.objective_results?.length ? <section className="objective-feedback"><h2>学习目标反馈</h2>{feedback.objective_results.map((item: any) => <article key={item.objective_id}><div><b>{item.objective_id}</b><span>{Math.round(item.accuracy * 100)}%</span></div><div className="objective-meter"><i style={{ width: `${Math.round(item.accuracy * 100)}%` }} /></div><p>{item.misconception_tags?.length ? `需要关注：${item.misconception_tags.join("、")}` : "本轮未返回误区标签"}</p></article>)}</section> : null}<div className="page-actions">{activeSession.status === "blocked" || activeSession.status === "failed" ? (() => { const action = blockedSessionAction(activeSession); return <button className="primary-action" disabled={Boolean(busy)} type="button" onClick={action.canRetry ? () => void retry() : reset}>{busy ? "正在恢复…" : action.label}</button> })() : <button className="primary-action" disabled={!(finalAction?.ready ?? nextRoundGate.ready)} type="button" onClick={onContinue}>{finalAction?.label ?? nextRoundGate.label}</button>}</div></div>
 }
@@ -1018,28 +984,10 @@ function RedirectPage({ title, message, action, onAction }: { title: string; mes
   return <div className="page"><section className="empty-state"><ShieldCheck size={29} /><h2>{title}</h2><p>{message}</p><button className="primary-action" type="button" onClick={onAction}>{action}</button></section></div>
 }
 
-function CitationChips({ citations, index }: { citations: Citation[]; index?: FactIndex }) {
+function CitationChips({ citations }: { citations: Citation[] }) {
   const unique = uniqueCitations(citations)
   if (!unique.length) return null
-  return <div className="citation-chips">{unique.map((citation) => <FactChip key={`${citation.source_id}-${citation.fact_id}`} citation={citation} index={index} />)}</div>
-}
-
-/** 单个引用 chip：有事实索引时可点击展开「来源标题 + 事实原文」；无索引或缺失时如实显示。 */
-function FactChip({ citation, index }: { citation: Citation; index?: FactIndex }) {
-  const [open, setOpen] = useState(false)
-  const result = index ? lookupFact(index, citation) : null
-  const interactive = Boolean(index)
-  return <span
-    className={`citation-chip${result && !result.found ? " is-missing" : ""}${interactive ? " is-interactive" : ""}`}
-    role={interactive ? "button" : undefined}
-    tabIndex={interactive ? 0 : undefined}
-    onClick={() => { if (interactive) setOpen((value) => !value) }}
-    onKeyDown={(event) => { if (interactive && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setOpen((value) => !value) } }}
-  >{citation.source_id} · {citation.fact_id}
-    {open && result?.found ? <span className="citation-fact-card"><b>{result.entry.source_title}</b><span className="citation-fact-content">{result.entry.content}</span><small>{citation.source_id}/{citation.fact_id}</small></span>
-      : open && result && !result.found ? <span className="citation-fact-card is-missing"><b>事实不在当前会话证据中</b><span className="citation-fact-content">该引用无法在当前会话证据（rag_result）中查证；不生成虚构来源。</span><small>{citation.source_id}/{citation.fact_id}</small></span>
-        : null}
-  </span>
+  return <div className="citation-chips">{unique.map((citation) => <span key={`${citation.source_id}-${citation.fact_id}`}>{citation.source_id} · {citation.fact_id}</span>)}</div>
 }
 
 function blockCitations(block: LessonPayload["explanation_blocks"][number]): Citation[] {
@@ -1049,7 +997,7 @@ function blockCitations(block: LessonPayload["explanation_blocks"][number]): Cit
 }
 
 function uniqueCitations(citations: Citation[]): Citation[] {
-  return uniqueFactCitations(citations) as Citation[]
+  return [...new Map(citations.map((citation) => [`${citation.source_id}:${citation.fact_id}`, citation])).values()]
 }
 
 function lessonOutline(lesson: LessonPayload) {
@@ -1060,6 +1008,10 @@ function lessonOutline(lesson: LessonPayload) {
     { id: "misconceptions", title: "常见误区", visible: lesson.misconceptions.length > 0 },
     { id: "summary", title: "本节小结", visible: lesson.summary.length > 0 },
   ].filter((item) => item.visible)
+}
+
+function formatCitations(citations: Citation[]) {
+  return uniqueCitations(citations).map((citation) => `${citation.source_id}/${citation.fact_id}`).join("、") || "未公开引用"
 }
 
 function diagnosisGateLabel(session: PublicSessionFixture) {
