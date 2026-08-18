@@ -267,7 +267,7 @@ export function App() {
     return () => window.removeEventListener("scroll", update)
   }, [page])
 
-  const applySession = async (next: any) => {
+  const applySession = async (next: any, options: { keepPage?: boolean } = {}) => {
     const previousAssessmentId = liveSession?.assessment?.artifact_id
     const nextAssessmentId = next?.assessment?.artifact_id
     const assessmentChanged = Boolean(
@@ -287,7 +287,7 @@ export function App() {
       stage: merged.current_stage,
       knownConcepts: merged.profile?.known_concepts ?? currentPlan.knownConcepts ?? [],
     }))
-    setPage(pageForSession(merged, { feedbackDismissed }))
+    if (!options.keepPage) setPage(pageForSession(merged, { feedbackDismissed }))
     setError("")
   }
 
@@ -378,7 +378,10 @@ export function App() {
       setBusy("正在通过 Docker 检查这段代码…")
       setError("")
       try {
-        await applySession(await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code))
+        await applySession(
+          await requestAssessmentCode(liveSession.session_id, learnerId, itemId, code),
+          { keepPage: true },
+        )
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码运行失败")
       } finally { setBusy("") }
@@ -388,7 +391,10 @@ export function App() {
       setBusy("正在通过 Docker 运行代码实验…")
       setError("")
       try {
-        await applySession(await requestCodeLab(liveSession.session_id, learnerId, labId, code))
+        await applySession(
+          await requestCodeLab(liveSession.session_id, learnerId, labId, code),
+          { keepPage: true },
+        )
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码实验运行失败")
       } finally { setBusy("") }
@@ -833,8 +839,8 @@ function PythonCodeBlock({ code, className = "" }: { code: string; className?: s
   return <pre className={`python-code-block ${className}`.trim()}><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(code) }} /></pre>
 }
 
-function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Python 代码编辑器" }: { value: string; onChange: (value: string) => void; minHeight?: number; ariaLabel?: string }) {
-  return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">请提交完整函数定义（含 def 行），不要只贴函数体。</p></div>
+function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Python 代码编辑器", executionMode }: { value: string; onChange: (value: string) => void; minHeight?: number; ariaLabel?: string; executionMode?: string }) {
+  return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">{codeSubmissionHint(executionMode)}</p></div>
 }
 
 function CodeViewer({ code }: { code: string }) {
@@ -858,7 +864,29 @@ function CodeViewer({ code }: { code: string }) {
 
 function LabContent({ lab, code, setCode, busy, execution, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onRun: () => Promise<void> }) {
   if (!lab) return <EmptyState title="代码实验尚未发布" body="D 不会自造 starter code 或测试。请等待主 Agent返回 learning_resources.code_lab。" />
-  return <div className="lab-workspace"><section className="lab-instructions"><span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span><h2>{lab.title}</h2>{lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}<div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div></section><section className="editor-panel"><header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header><PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" /><footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="run-button" disabled={Boolean(busy) || !code.trim()} type="button" onClick={() => void onRun()}><Play size={15} /> {busy ? "运行中…" : "运行代码"}</button></footer>{execution ? <div className="run-result is-visible" role="status"><b>{execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b><p>{typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>{execution.feedback?.map((entry) => <small key={entry.code}>{entry.message}</small>)}</div> : null}</section></div>
+  const feedback = labFeedbackExplanations(execution?.feedback)
+  const checklist = execution && execution.status !== "passed"
+    ? publicTestChecklist(lab.public_tests)
+    : []
+  return <div className="lab-workspace">
+    <section className="lab-instructions">
+      <span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span>
+      <h2>{lab.title}</h2>
+      {lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}
+      <div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div>
+    </section>
+    <section className="editor-panel">
+      <header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header>
+      <PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" executionMode={lab.execution_contract.execution_mode} />
+      <footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="run-button" disabled={Boolean(busy) || !code.trim()} type="button" onClick={() => void onRun()}><Play size={15} /> {busy ? "运行中…" : "运行代码"}</button></footer>
+      {execution ? <div className={`run-result is-visible ${execution.status === "passed" ? "" : "is-fail"}`.trim()} role="status">
+        <b>{execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b>
+        <p>{typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>
+        {feedback.length ? <div className="failure-reasons">{feedback.map((entry) => <p key={entry.code}><b>{entry.label}</b>{entry.message}</p>)}</div> : null}
+        {checklist.length ? <details className="public-test-checklist"><summary>按公开测试自查</summary>{checklist.map((item) => <article key={item.test_id}><b>{item.description}</b><p>{item.expected_behavior}</p></article>)}</details> : null}
+      </div> : null}
+    </section>
+  </div>
 }
 
 function ChecksContent({ lesson }: { lesson: LessonPayload }) {

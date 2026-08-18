@@ -68,6 +68,17 @@ export interface RoleCWeek3CaseResult {
   all_three_artifacts_present: boolean
   target_citation_coverage: number
   review_decision: "pass" | "revise" | "reject" | "not_reached"
+  review_reason: string | null
+  fact_audit_by_artifact: Array<{
+    artifact_id: string
+    artifact_kind: RoleCWeek3ArtifactKind
+    status: "pass" | "revise" | "reject"
+    checked_claims: number
+    conflicting_claims: number
+    notes: string[]
+  }>
+  teaching_audit_summary: string | null
+  teaching_revision_hints: string[]
   checked_claims: number
   conflicting_claims: number
   hallucination_rate: number | null
@@ -83,6 +94,9 @@ export interface RoleCWeek3CaseResult {
   recovery_attempts: number
   failure_stage?: string
   failure_reason?: string
+  failure_code?: string
+  failure_issue_codes?: string[]
+  failure_next_action?: string
 }
 
 export interface RoleCWeek3Report {
@@ -393,6 +407,14 @@ function summarizeCase(
   const conflictingClaims = sum(result.audit?.factAudits.map((item) => item.conflicts) ?? [])
   const workflowFailure = result.workflow.findLast((event) => event.status === "blocked")
   const reviewDecision = result.audit?.arbitration.decision ?? "not_reached"
+  const factAuditByArtifact = result.audit?.factAudits.map((audit) => ({
+    artifact_id: audit.artifactId,
+    artifact_kind: audit.artifactKind,
+    status: audit.status,
+    checked_claims: audit.checkedClaims,
+    conflicting_claims: audit.conflicts,
+    notes: [...audit.notes],
+  })) ?? []
   const profileLevel = result.status === "ready"
     ? result.finalContext.profileSnapshot.level
     : prepared.profile.level
@@ -411,6 +433,10 @@ function summarizeCase(
     all_three_artifacts_present: artifacts.every((artifact) => artifact.present),
     target_citation_coverage: average(artifacts.map((artifact) => artifact.target_coverage)),
     review_decision: reviewDecision,
+    review_reason: result.audit?.arbitration.reason ?? null,
+    fact_audit_by_artifact: factAuditByArtifact,
+    teaching_audit_summary: result.audit?.teachingAudit.summary ?? null,
+    teaching_revision_hints: [...(result.audit?.teachingAudit.revisionHints ?? [])],
     checked_claims: checkedClaims,
     conflicting_claims: conflictingClaims,
     hallucination_rate: checkedClaims === 0 ? null : round4(conflictingClaims / checkedClaims),
@@ -436,6 +462,9 @@ function summarizeCase(
     ...(result.status === "ready" ? {} : {
       failure_stage: workflowFailure?.stage ?? "generation",
       failure_reason: result.reason,
+      failure_code: result.failure.code,
+      failure_issue_codes: [...result.failure.issueCodes],
+      failure_next_action: result.failure.nextAction,
     }),
   }
 }
@@ -470,6 +499,10 @@ function failedPreparation(
     all_three_artifacts_present: false,
     target_citation_coverage: 0,
     review_decision: "not_reached",
+    review_reason: null,
+    fact_audit_by_artifact: [],
+    teaching_audit_summary: null,
+    teaching_revision_hints: [],
     checked_claims: 0,
     conflicting_claims: 0,
     hallucination_rate: null,

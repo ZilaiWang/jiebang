@@ -338,6 +338,9 @@ export function materializeConceptSegmentAuthorPayload(
       fact_id: factId,
       relation: "supports" as const,
     }))
+    const loneFact = target.required_fact_ids.length === 1
+      ? facts.get(`${target.source_id}:${target.required_fact_ids[0]}`)?.trim()
+      : undefined
     const claims = (kind: string) => citations.map((citation, factIndex) => ({
       claim_id: stableId("CONCEPT-CLAIM", {
         ...identity,
@@ -355,18 +358,29 @@ export function materializeConceptSegmentAuthorPayload(
     explanationBlocks.push({
       block_id: explanationId,
       block_type: "paragraph",
-      text: authored.explanation.trim(),
+      text: loneFact
+        ? `本目标先准确理解一条核心事实：${loneFact}理解时保留这条事实的原意，不增加证据未说明的用途、领域或边界。`
+        : authored.explanation.trim(),
       claims: claims("explanation"),
     })
     workedExamples.push({
       block_id: workedExampleId,
       block_type: "paragraph",
-      text: authored.worked_example.trim(),
+      text: loneFact
+        ? `辨认练习：将“${loneFact}”与当前目标对应起来，并只根据这条事实判断表述是否一致。`
+        : authored.worked_example.trim(),
       claims: claims("worked-example"),
     })
     misconceptions.push({
       misconception_tag: stableId("CONCEPT-MISCONCEPTION", identity),
-      explanation: authored.misconception.trim(),
+      // A lone evidence fact has no supported comparison surface. In that
+      // case, materialize the misconception as a direct fact-level
+      // misunderstanding instead of allowing the model to invent concrete
+      // domains, APIs or mechanisms merely to make the example vivid.
+      explanation: evidenceBoundedMisconception(
+        target.required_fact_ids.map((factId) =>
+          facts.get(`${target.source_id}:${factId}`) ?? ""),
+      ),
       objective_id: target.objective_id,
       citations: structuredClone(citations),
     })
@@ -403,7 +417,7 @@ export function materializeConceptSegmentAuthorPayload(
     summary.push({
       block_id: summaryId,
       block_type: "paragraph",
-      text: authored.summary.trim(),
+      text: loneFact ?? authored.summary.trim(),
       claims: claims("summary"),
     })
     objectiveCoverage.push({
@@ -426,6 +440,15 @@ export function materializeConceptSegmentAuthorPayload(
     objective_coverage: objectiveCoverage,
     used_evidence: [],
   })
+}
+
+function evidenceBoundedMisconception(facts: string[]): string {
+  const groundedFacts = facts.map((fact) => fact.trim()).filter(Boolean)
+  return [
+    "可能误解：否认下面某条事实，或擅自把它扩大、缩小到证据没有说明的范围。",
+    `纠正：当前可确认的事实是：${groundedFacts.join("；")}`,
+    "自查：只依据这些事实判断，不添加证据未给出的条件、用途或例子。",
+  ].join("\n")
 }
 
 export function mergeConceptSegments(
@@ -1401,6 +1424,12 @@ export function validateAssessmentPublicAuthorAgainstPlan(
     } else if (item.starter_code !== null) {
       issues.push(`items[${index}] 非代码题的 starter_code 必须为 null`)
     }
+    if ((expected.cognitive_operation === "recognize_fact"
+      || expected.cognitive_operation === "explain_reasoning")
+      && (/(?:举出?|给出|列举).{0,12}(?:例子|示例|用途|应用)/u.test(item.prompt)
+        || /(?:说明|解释).{0,28}(?:体现|表现).{0,8}(?:方面|场景|用途)/u.test(item.prompt))) {
+      issues.push(`items[${index}] 事实识别/解释题不得要求补充 evidence 未提供的例子、用途或具体体现`)
+    }
   })
   return issues
 }
@@ -1778,8 +1807,10 @@ function codeLabExecutionContractIssues(
   const visibleText = learnerVisibleText.join(" ").normalize("NFKC").toLocaleLowerCase()
   const requestsFunctionWork = /(?:编写|定义|实现|提交)\s*(?:(?:一个|一个名为|名为|名叫|指定的)\s*)?(?:[A-Za-z_]\w*\s*)?(?:函数|function)/iu.test(visibleText)
   const declaresFunctionAsExternalInterface = /(?:只需|仅需|只|仅|单独)?\s*提交.{0,20}(?:函数|function)|(?:判题器|测试).{0,20}(?:调用|入口函数)|(?:函数|function).{0,20}(?:返回值|return\s+value).{0,20}(?:评分|判题|结果)/iu.test(visibleText)
+  const invokesNamedFunctionAsExternalInterface = /(?:调用|执行|测试)\s*(?:函数\s*)?[A-Za-z_]\w*\s*\([^)]*\).{0,30}(?:返回|得到|应为|结果)/iu.test(visibleText)
   const describesWholeProgramInterface = /(?:完整(?:的)?程序|标准输入|标准输出|stdin|stdout|读取.{0,12}输入|打印|print\s*\()/iu.test(visibleText)
   const explicitFunctionTask = declaresFunctionAsExternalInterface
+    || invokesNamedFunctionAsExternalInterface
     || (requestsFunctionWork && !describesWholeProgramInterface)
   const hasFunctionContract = /(?:function\s*(?:arguments?|call|return(?:\s+value)?)|函数(?:参数|调用|返回值)|入口函数|函数调用封装)/iu.test(contractText)
   const starterDefinesFunction = /^\s*(?:async\s+)?def\s+\w+\s*\(/mu.test(starterCode)

@@ -46,7 +46,7 @@ describe("concept lesson grounded materialization", () => {
       summary: lesson.summary,
     })
     expect(factualText).toContain("逐条阅读指令的助手")
-    expect(factualText).toContain("容易把‘通用’误解")
+    expect(factualText).toContain("否认下面某条事实")
     expect(factualText).toContain("‘通用编程语言’与给出的事实一致")
     expect(factualText).toContain("Python 是一种通用编程语言")
     expect(factualText).toContain("Python 程序通常由解释器执行")
@@ -55,5 +55,49 @@ describe("concept lesson grounded materialization", () => {
       expect.objectContaining({ text: "Python 是一种通用编程语言。" }),
       expect.objectContaining({ text: "Python 程序通常由解释器执行。" }),
     ])
+  })
+
+  test("keeps a single-fact misconception inside the frozen evidence boundary", () => {
+    const lesson = materializeConceptSegmentAuthorPayload({
+      generation_spec: {
+        spec_id: "SPEC-SPARSE",
+        path_node: { goal: "Python 是什么" },
+        targets: [{
+          objective_id: "OBJ-K001",
+          source_id: "K001",
+          required_fact_ids: ["F001"],
+        }],
+      },
+      evidence_pack: {
+        results: [{
+          source_id: "K001",
+          facts: [{ source_id: "K001", fact_id: "F001", content: "Python 是一种通用编程语言。" }],
+          examples: [],
+        }],
+      },
+    } as never, {
+      title: "Python 是什么",
+      objectives: [{
+        explanation: "认识 Python。",
+        worked_example: "辨认这条定义。",
+        misconception: "Python 只用于数据分析或网页开发。",
+        micro_check_prompt: "哪项符合证据？",
+        micro_check_options: ["Python 是通用编程语言", "Python 不是编程语言"],
+        micro_check_answer: "Python 是通用编程语言",
+        micro_check_explanation: "第一项与证据一致。",
+        hints: ["查看事实", "核对定义", "选择一致项"],
+        summary: "Python 是通用编程语言。",
+      }],
+    })
+
+    expect(lesson.misconceptions[0]?.explanation).toContain("Python 是一种通用编程语言")
+    expect(lesson.misconceptions[0]?.explanation).not.toContain("数据分析")
+    expect(lesson.misconceptions[0]?.explanation).not.toContain("网页开发")
+    expect(lesson.explanation_blocks[0] && "text" in lesson.explanation_blocks[0]
+      ? lesson.explanation_blocks[0].text
+      : "").not.toContain("认识 Python")
+    expect(lesson.worked_examples[0] && "text" in lesson.worked_examples[0]
+      ? lesson.worked_examples[0].text
+      : "").toContain("只根据这条事实")
   })
 })

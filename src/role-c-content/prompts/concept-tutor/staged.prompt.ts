@@ -38,6 +38,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - worked_example 必须拆成独立步骤；每步单独一行，包含输入→过程→输出。示例只能把当前事实代入新的名称、数值或明确虚构情境；不得调用 evidence 未提及的函数、运算符、语法或运行机制。若 evidence 只支持概念识别，就使用识别/分类示例，不强行写代码。
 
 【misconception 误区】
+- 误区必须只对当前 cited fact 本身做否定、范围缩小或范围扩大，不得为了让错误更具体而列举 evidence 未出现的用途、领域、API 或机制。若事实只有“Python 是通用编程语言”，可写“误以为 Python 不是通用编程语言”，不可写“误以为 Python 只用于数据分析/网页开发”。
 - 把当前事实做一次否定、范围缩小或范围扩大，说明它为何与当前事实冲突，再重述证据支持的理解
 - 从当前 evidence 中的边界、对比或易混点构造“可能误解”；没有明确频率证据时不得声称高频、最常见或统计排名
 - 只说明已给事实与误解不一致；若 evidence 只说“需要转换”，不得进一步编造具体异常、报错类型、运算结果或其他运行时行为
@@ -47,6 +48,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - 2-4个选项，每个错误选项对应一个具体的 misconception
 - micro_check_options 每个选项文本必须互不相同；不得出现重复或仅标点差异的选项
 - 题面清晰具体，与 worked_example 使用不同情境
+- 不得要求学习者给出 evidence 未提供的用途、领域、API、语法或运行机制示例
 - 正确答案必须仅由当前 evidence 判断；错误选项只改写当前事实，不引入其他 Python 知识作为干扰项
 - micro_check_answer 必须与 micro_check_options 中正确选项的文本完全一致（复制原文，不增删字符）
 - micro_check_explanation 写 1-2 句学习者能立刻看懂的解析：为什么正确、常见误解是什么

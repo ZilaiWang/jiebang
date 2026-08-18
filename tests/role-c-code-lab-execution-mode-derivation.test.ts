@@ -166,6 +166,19 @@ describe("explicitFunctionTask 门禁：教学讲解不被误杀", () => {
     expect(issues.some((i) => i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH"))).toBe(true)
   })
 
+  test("stdin/stdout 公开测试不得以调用函数返回值描述判题接口", () => {
+    const payload = payloadWith("编写完整程序，从标准输入读取数据并使用 print 输出。")
+    payload.objectives[0]!.public_test.description = "调用 main(3, 4) 应返回 7"
+    payload.objectives[0]!.public_test.expected_behavior = "main 返回 7"
+
+    const issues = validateCodeLabPublicAuthorAgainstPlan(payload, plan)
+
+    expect(issues.some((i) =>
+      i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH")
+      && i.includes("函数作为外部提交接口"),
+    )).toBe(true)
+  })
+
   test("完整 stdin/stdout 程序内定义辅助函数不触发函数接口门禁", () => {
     const issues = validateCodeLabPublicAuthorAgainstPlan(
       payloadWith("编写完整程序，从标准输入读取数据，可定义 helper 函数组织计算，并使用 print 输出结果。"),

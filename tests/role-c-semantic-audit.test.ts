@@ -70,6 +70,9 @@ describe("Role C model semantic fact audit", () => {
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("同主题不等于支持")
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不能自行推出未转换时的具体异常")
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("是学习任务的规范性要求")
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不得仅因 cited_facts 未介绍输入输出 API")
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不能自行增加 Web 开发")
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("确定唯一正确选项")
   })
 
   test("audits one complete artifact in a single structured model call", async () => {
@@ -99,7 +102,7 @@ describe("Role C model semantic fact audit", () => {
     ).rejects.toThrow("RESULT_COUNT_MISMATCH")
   })
 
-  test("requires unsupported verdicts to locate the unsupported text", async () => {
+  test("keeps an unlocated unsupported verdict blocked without failing the pipeline contract", async () => {
     const gateway = new AuditGateway({
       results: [{
         review_block_id: "assessment:assessment_item:ITEM-1",
@@ -108,8 +111,27 @@ describe("Role C model semantic fact audit", () => {
         unsupported_text: [],
       }],
     })
-    await expect(
-      new ModelContentSemanticAuditPort(gateway).auditArtifact(auditInput()),
-    ).rejects.toThrow("RESULT_INVALID")
+    const result = await new ModelContentSemanticAuditPort(gateway).auditArtifact(auditInput())
+    expect(result).toEqual([expect.objectContaining({
+      verdict: "uncertain",
+      reason: expect.stringContaining("缺少无支持文本定位"),
+      unsupported_text: [],
+    })])
+  })
+
+  test("normalizes a pass verdict that still lists unsupported text to a safe rejection", async () => {
+    const gateway = new AuditGateway({
+      results: [{
+        review_block_id: "assessment:assessment_item:ITEM-1",
+        verdict: "supported",
+        reason: "主体内容基本符合事实。",
+        unsupported_text: ["随机遍历"],
+      }],
+    })
+    const result = await new ModelContentSemanticAuditPort(gateway).auditArtifact(auditInput())
+    expect(result).toEqual([expect.objectContaining({
+      verdict: "unsupported",
+      unsupported_text: ["随机遍历"],
+    })])
   })
 })
