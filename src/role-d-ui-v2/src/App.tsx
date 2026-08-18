@@ -67,7 +67,7 @@ import {
 } from "./fact-lookup"
 import { codeSubmissionHint, labFeedbackExplanations, publicTestChecklist } from "./lab-feedback"
 import { LoopVisualizerToggle } from "./loop-visualizer"
-import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
 import type { AssessmentPayload, Citation, CodeLabPayload, LessonPayload, PublicSessionFixture } from "./types"
 import { planNavSection } from "./plan-navigation"
 import {
@@ -90,6 +90,36 @@ import {
 } from "./workspace"
 
 const WORKSPACE_STORAGE_KEY = "knowbalance-v4-workspace"
+
+/** 支持 ?session=xxx&learner=xxx 直链：自动预置一个绑定该会话的体验工作区，免去手动 F12 设置。 */
+function workspaceFromUrl(): WorkspaceState | null {
+  const params = new URLSearchParams(window.location.search)
+  const session = params.get("session")
+  const learner = params.get("learner")
+  if (!session || !learner) return null
+  const name = params.get("name") ?? "体验学习者"
+  return {
+    version: 1,
+    activeUserId: learner,
+    users: [{
+      id: learner,
+      name,
+      weeklyHours: 5,
+      pythonLevel: "new",
+      learningStyle: "balanced",
+      background: "零基础入门",
+      priorLanguages: [],
+      plans: [{
+        id: "plan-demo-1",
+        name: "学习 Python for 循环",
+        sessionId: session,
+        createdAt: "2026-08-17T12:00:00.000Z",
+        updatedAt: "2026-08-17T12:00:00.000Z",
+      }],
+      activePlanId: "plan-demo-1",
+    }],
+  }
+}
 
 /** 实时检查 Docker 是否就绪（每次创建前调用，不依赖页面加载时的缓存值）。 */
 export async function checkDockerReady(fetchImpl: typeof fetch = fetch): Promise<{ ready: boolean; error?: string }> {
@@ -153,7 +183,14 @@ const navItems: Array<{ id: Page; label: string; icon: typeof Home }> = [
 ]
 
 export function App() {
-  const [workspace, setWorkspace] = useState<WorkspaceState>(() => loadWorkspace(localStorage.getItem(WORKSPACE_STORAGE_KEY)))
+  const [workspace, setWorkspace] = useState<WorkspaceState>(() => {
+    const fromUrl = workspaceFromUrl()
+    if (fromUrl) {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(fromUrl))
+      return fromUrl
+    }
+    return loadWorkspace(localStorage.getItem(WORKSPACE_STORAGE_KEY))
+  })
   const currentUser = activeUser(workspace)
   const currentPlan = activePlan(workspace)
   const learnerId = currentUser?.id ?? ""
@@ -683,6 +720,8 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const radar = abilityRadarView(profile)
   const chain = pathChainView(pathNodes as any, ragItems, profile?.known_concepts ?? [])
   const titleForPathNode = (node: any) => pathNodeTitle(node, ragItems, formalPath?.original_goal)
+  const currentFullNode = pathNodes.find((node: any) => node?.node_id === activeSession.current_path_node?.node_id) ?? activeSession.current_path_node
+  const whyCurrent = pathNodeWhyView(currentFullNode, ragItems, profile?.known_concepts ?? [], formalPath?.original_goal)
   const hasLesson = Boolean(activeSession.learning_resources.concept_lesson?.payload)
   const hasBlockedResource = activeSession.status === "blocked" || activeSession.status === "failed"
   const recoveryAction = blockedSessionAction(activeSession)
@@ -723,7 +762,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
     </section>
 
     <section className="week2-lower-grid">
-      <article className="current-objectives-card"><header><div><small>当前节点与观察目标</small><h2>{titleForPathNode(activeSession.current_path_node)}</h2></div><span>{activeSession.current_path_node?.goal && titleForPathNode(activeSession.current_path_node) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header><div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
+      <article className="current-objectives-card"><header><div><small>当前节点与观察目标</small><h2>{titleForPathNode(activeSession.current_path_node)}</h2></div><span>{activeSession.current_path_node?.goal && titleForPathNode(activeSession.current_path_node) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header>{whyCurrent ? <p className="node-why"><b>为什么学它：</b>{whyCurrent}</p> : null}<div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
       <article className="agent-collaboration-card"><header><div><small>Agent协同过程 · 主 Agent台账</small><h2>{activeSession.worker_ledger.length} 个Worker状态</h2></div><Bot size={22} /></header><div className="agent-collaboration-list">{activeSession.worker_ledger.map((worker) => <article key={worker.worker}><span className={`agent-status status-${worker.status}`} /><div><b>{workerLabel(worker.worker)}</b><p>{worker.summary ?? "主 Agent未公开摘要"}</p></div><em>{worker.status}</em></article>)}</div></article>
       <ContentReviewCard session={activeSession} />
     </section>

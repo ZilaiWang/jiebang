@@ -1,7 +1,58 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
+  test("explains why a node is learned using B-public prerequisites and stage order", () => {
+    const ragItems = [
+      { source_id: "K007", title: "for 循环" },
+      { source_id: "K002", title: "变量与赋值" },
+      { source_id: "K003", title: "基本数据类型" },
+    ]
+    const node = {
+      node_id: "FN-K007-S1",
+      target_source_ids: ["K007"],
+      prerequisite_source_ids: ["K002", "K003"],
+      goal: "for 循环",
+      stage_order: 1,
+    }
+    const why = pathNodeWhyView(node, ragItems, ["变量与赋值"], "学习 Python for 循环")
+    expect(why).toContain("第 1 步")
+    expect(why).toContain("for 循环")
+    expect(why).toContain("基本数据类型")
+    expect(why).toContain("变量与赋值")
+  })
+
+  test("returns null when a node has no stage order and no prerequisites", () => {
+    const ragItems = [{ source_id: "K007", title: "for 循环" }]
+    const node = { node_id: "FN-K007-S1", target_source_ids: ["K007"], goal: "for 循环" }
+    expect(pathNodeWhyView(node, ragItems, [], "学习 Python for 循环")).toBeNull()
+  })
+
+  test("marks the first step as the starting point of the learning goal", () => {
+    const ragItems = [{ source_id: "K001", title: "Python 是什么" }]
+    const node = { node_id: "FN-K001-S1", target_source_ids: ["K001"], prerequisite_source_ids: [], goal: "Python 是什么", stage_order: 1 }
+    expect(pathNodeWhyView(node, ragItems, [], "学习 Python")).toBe("这是学习路径的第 1 步，是你学习目标的起点。")
+  })
+
+  test("does not steer a content-generation failure into changing the learning goal", () => {
+    const action = blockedSessionAction({
+      terminal_outcome: { kind: "content_generation_failed", generation_failure: { nextAction: "change_goal", canRetry: false } },
+    })
+    expect(action).toEqual({ canRetry: false, label: "内容生成暂时失败，请稍后重试" })
+  })
+
+  test("keeps retry labels for retryable generation failures", () => {
+    const action = blockedSessionAction({
+      terminal_outcome: { kind: "content_generation_failed", generation_failure: { nextAction: "regenerate_assessment", canRetry: true } },
+    })
+    expect(action).toEqual({ canRetry: true, label: "重新生成正式测评" })
+  })
+
+  test("keeps change-goal for genuinely unsupported goals", () => {
+    const action = blockedSessionAction({ terminal_outcome: { kind: "unsupported_goal" } })
+    expect(action).toEqual({ canRetry: false, label: "调整学习目标" })
+  })
+
   test("builds a truthful Agent timeline with attempts, public artifacts, failures, and retries", () => {
     const timeline = agentTimelineView({ worker_ledger_history: [{
       entry_id: "LEDGER-1",
