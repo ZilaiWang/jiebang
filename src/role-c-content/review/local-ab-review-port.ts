@@ -338,6 +338,14 @@ function auditPathTeaching(
   const targetSourceIds = unique(
     request.generation_spec.path_node.target_source_ids,
   )
+  // path_node.prerequisite_source_ids 表示本轮讲义会明确衔接的
+  // 先修知识，不能像“完全未覆盖”的画像缺口一样处理。
+  // B 仍然只审核 target 是否适合画像，但先修覆盖计算必须看到
+  // 同一冻结 path node 中声明并由 C 生成 prerequisite bridge 的来源。
+  const taughtSourceIds = unique([
+    ...targetSourceIds,
+    ...request.generation_spec.path_node.prerequisite_source_ids,
+  ])
   const raw = auditTeaching({
     artifactId: stableId("PATH-AUDIT", {
       run_id: request.run_id,
@@ -352,20 +360,20 @@ function auditPathTeaching(
       goal: request.generation_spec.path_node.goal,
     },
     knowledgeBase,
-    citedSourceIds: targetSourceIds,
+    citedSourceIds: taughtSourceIds,
     targetSourceIds,
   })
 
   const knownSourceIds = new Set(
     knowledgeBase.items.map((item) => item.sourceId),
   )
-  const unknownTargetSourceIds = targetSourceIds.filter(
+  const unknownPathSourceIds = taughtSourceIds.filter(
     (sourceId) => !knownSourceIds.has(sourceId),
   )
   const blockingDimensions = raw.failedDimensions.filter((dimension) =>
     dimension === "difficulty_alignment"
     || dimension === "prerequisite_coverage")
-  if (unknownTargetSourceIds.length > 0
+  if (unknownPathSourceIds.length > 0
     && !blockingDimensions.includes("prerequisite_coverage")) {
     blockingDimensions.push("prerequisite_coverage")
   }
@@ -388,7 +396,7 @@ function auditPathTeaching(
 
   const unknownReferences = unique([
     ...raw.unknownPrerequisiteRefs,
-    ...unknownTargetSourceIds,
+    ...unknownPathSourceIds,
   ])
   return {
     ...raw,

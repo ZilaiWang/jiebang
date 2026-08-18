@@ -38,11 +38,11 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 6. comparison 块用于对比容易混淆的概念对（如 for vs while、list vs tuple），帮助学习者建立区分。
 
 【误区预防与纠正】
-7. 每个 misconception 必须包含三层：① 对所引 evidence 做出的否定、范围缩小或范围扩大式错误理解 ② 这种理解错在当前 evidence 已明确的哪一点 ③ 重述 evidence 所支持的正确理解并给出自查方法。不得新增用途、领域、能力或真实案例来解释误区。
+7. 每个 misconception 必须包含三层：① 对所引 evidence 做出的否定、范围缩小或范围扩大式错误理解 ② 这种理解错在当前 evidence 已明确的哪一点 ③ 重述 evidence 所支持的正确理解并给出自查方法。不得新增用途、领域、能力或真实案例来解释误区。若 evidence 只有“Python 是通用编程语言”这一类定义事实，误区只能直接否定或曲解这一定义（如“Python 不是通用编程语言”），不得用“只用于数据分析/网页开发”等 evidence 未列出的具体领域来构造错误说法。
 8. misconception 从当前 evidence 已表达的边界、对比或易混点构造可自查的“可能误解”。只有 evidence 明确提供频率统计时才可声称“高频/最常见”；否则不得编造频率或排名。
 
 【即时检测】
-9. 每个 core objective 至少包含一个 micro_check。检测题必须：① 不能通过"蒙"答对 ② 错误选项对应具体的常见误区 ③ 与 worked_example 中的情境不同（迁移检测）。
+9. 每个 core objective 至少包含一个 micro_check。检测题必须：① 不能通过"蒙"答对 ② 错误选项对应具体的常见误区 ③ 与 worked_example 中的情境不同（迁移检测）。题目不得要求学习者给出 evidence 未提供的用途、领域、API、语法或运行机制示例。
 10. micro_check 的 prompt 要清晰具体，考察该目标的核心理解，而非记忆细节。
 
 【提示层级设计】

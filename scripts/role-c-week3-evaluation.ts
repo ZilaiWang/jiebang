@@ -18,12 +18,21 @@ const evaluationRunId = `RUN-C-WEEK3-EVAL-${Date.now().toString(36).toUpperCase(
 
 for (const [index, evaluationCase] of cases.entries()) {
   console.error(`[角色 C] ${index + 1}/${cases.length} ${evaluationCase.case_id} ${evaluationCase.target_source_ids.join("/")}`)
+  const caseDataDirectory = resolve(
+    process.cwd(),
+    args.outputDirectory,
+    "runtime",
+    evaluationCase.case_id,
+  )
   results.push(await runRoleCWeek3Case(evaluationCase, {
     executionMode: args.mode,
     runId: `${evaluationRunId}-${index + 1}-${evaluationCase.case_id}`,
     runtime: {
       providerMode: args.mode,
       env,
+      // 真实评测失败时保留分阶段诊断，便于区分模型输出、
+      // 可信执行、证据与审核问题，不得只留一条 blocked 摘要。
+      dataDirectory: caseDataDirectory,
     },
   }))
 }

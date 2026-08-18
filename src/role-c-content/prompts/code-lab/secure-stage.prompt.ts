@@ -79,6 +79,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 ══════════════════════════════════════════
 
 - 每个目标恰好一个隐藏测试，优先选择边界或反例
+- 多目标仍必须是 public_payload 中同一个连贯程序，不得把隐藏测试设计成多个不同小题。每个 hidden test 应保持相同的输入形状和输出形状，只更换数据来检查不同目标
+- stdin_stdout 模式下，reference_solution 必须始终按同一套输入协议读取数据并输出同一种结果；禁止根据输入行数切换成完全不同的任务
 - hidden_tests[].input 必须与 public_payload.public_tests 中所有 input 做 JSON 深比较；只要完全相同就无效。不要复用示例中的任何具体数字、字符串、列表或对象。至少改变输入结构和一个标量，并确保新输入不出现在 public_payload 的任何 learner-visible 字段中。
 - 常规用例 + 边界用例 + 防硬编码用例组合覆盖
 - expected 必须与 reference_solution 的实际返回值及类型一致（自己验算一遍）

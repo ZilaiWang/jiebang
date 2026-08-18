@@ -33,7 +33,12 @@ export function auditTeaching(input: TeachingAuditInput): TeachingAuditResult {
     .filter((item): item is KnowledgeItem => item != null)
 
   const difficultyCheck = checkDifficulty(input.learnerProfile.level, targetItems)
-  const prerequisiteCheck = checkPrerequisites(targetItems, input.learnerProfile, input.knowledgeBase)
+  const prerequisiteCheck = checkPrerequisites(
+    targetItems,
+    input.learnerProfile,
+    input.knowledgeBase,
+    input.citedSourceIds,
+  )
   const weakConceptCheck = checkWeakConcepts(input.learnerProfile, targetItems, input.knowledgeBase)
   const goalCheck = checkGoal(input.learnerProfile.goal, targetItems, input.contentSummary ?? null)
 
@@ -126,13 +131,17 @@ function checkPrerequisites(
   targetItems: KnowledgeItem[],
   learnerProfile: { known_concepts: string[]; weak_concepts: string[] },
   knowledgeBase: KnowledgeBase,
+  taughtOrCitedSourceIds: string[] = targetItems.map((item) => item.sourceId),
 ): PrerequisiteCheck {
   const checkedConcepts: PrerequisiteCheck["checkedConcepts"] = []
   let hasBlocking = false
   const prereqItemsBySourceId = new Map(
     knowledgeBase.items.map((kbItem) => [kbItem.sourceId, kbItem] as const),
   )
-  const taughtSourceIds = new Set(targetItems.map((item) => item.sourceId))
+  // targetSourceIds are the learning goals; citedSourceIds may additionally
+  // contain prerequisite bridges explicitly taught in the same frozen path.
+  // Those bridges satisfy same-round coverage without turning them into goals.
+  const taughtSourceIds = new Set(taughtOrCitedSourceIds)
   const knownCanonicals = new Set(
     learnerProfile.known_concepts.flatMap((raw) =>
       canonicalizeConcept(raw, knowledgeBase).sourceIds),

@@ -427,8 +427,12 @@ export async function generateRoleCForRoleDWithRuntime(
     const pipelineReason = pipeline.blocked_reason
       ? [
           pipeline.blocked_reason.message,
+          // The machine-readable details only contain issue codes. Keep the
+          // concrete review messages as well so the orchestrator and D can
+          // distinguish a real content defect from an over-strict audit.
+          reviewReason,
           ...(pipeline.blocked_reason.details ?? []).slice(0, 3),
-        ].join("；")
+        ].filter(Boolean).join("；")
       : pipeline.failure_reason?.message
     return {
       status: pipeline.status === "failed" ? "failed" : "blocked",
@@ -1500,13 +1504,23 @@ function reviewAuditSummary(
     const artifact = artifactById.get(result.artifact_id)
     const factFindings = result.findings.filter((finding) =>
       finding.source === "fact_audit")
+    // A single review block can yield more than one diagnostic, while the
+    // legacy Role D summary exposes only aggregate counts. Count distinct
+    // reviewed units for conflicts and keep the denominator at least as large
+    // so the public ratio remains a valid [0, 1] quantity.
+    const conflictingUnits = new Set(factFindings.map((finding) => {
+      const locator = finding.locator
+      if (locator) return `${locator.field}:${locator.parent_block_id ?? ""}:${locator.ref_id}`
+      return finding.evidence_refs[0] ?? `${finding.code}:${finding.message}`
+    })).size
+    const checkedUnits = Math.max(artifact?.citations.length ?? 0, conflictingUnits)
     return {
       artifactId: result.artifact_id,
       artifactTitle: artifact?.title ?? result.artifact_id,
       artifactKind: result.artifact_kind === "concept" ? "lesson" as const : result.artifact_kind === "code_lab" ? "lab" as const : "assessment" as const,
       status: result.fact_status,
-      checkedClaims: artifact?.citations.length ?? 0,
-      conflicts: factFindings.length,
+      checkedClaims: checkedUnits,
+      conflicts: conflictingUnits,
       notes: factFindings.map((finding) => finding.message).slice(0, 3),
     }
   })

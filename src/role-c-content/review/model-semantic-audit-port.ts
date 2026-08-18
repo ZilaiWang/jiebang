@@ -5,7 +5,7 @@ import type {
   SemanticReviewBlockResult,
 } from "./types"
 
-export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v3"
+export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v5"
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -49,8 +49,10 @@ export const ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT = `你是教学内容事实审�
 3. 允许把一般事实直接实例化为新名称、数值或明确虚构对象，例如“使用 = 赋值”可支持 age = 18 是赋值示例；实例不得额外引入运算符、API、返回类型、运行顺序或底层机制。
 4. 同主题不等于支持。例如“对象可重新赋值”不能支持关于内存回收、常量、运算顺序或输出函数的结论；“支持某种操作”不能支持其返回类型、边界行为或其他操作符语义。
    同样，“进行数值计算前需要转换”只能支持转换要求，不能自行推出未转换时的具体异常、错误类型、字符串运算结果或任一表达式的运行结果。
-5. 代码实验中的“应当/需要/请实现/预期行为”是学习任务的规范性要求，不是对语言或现实世界的事实断言，可判为 non_factual；其中若解释为什么语言必然如此运行，仍必须有证据。
-6. 测评选项是供学习者判断的候选命题，不作为系统发布的事实断言；审核重点是题干能否仅依据 cited_facts 作答，以及选项是否引入题干之外必须掌握的专业前提。
+4a. 泛化类别不能支持未列出的具体用途、领域或技术能力。例如 cited_facts 只说“Python 是通用编程语言”，不能自行增加 Web 开发、人工智能、科学计算、游戏或自动化等任一具体领域；这些说法即使作为“常见误解”、否定句、类比或举例出现，仍是需要证据的具体专业内容。
+4b. 文本中出现“例如/包括/可用于/应用在”后的专业用途清单时，必须逐项在 cited_facts 中找到直接支持；否则整个 block 判为 unsupported，并在 unsupported_text 列出具体越界短语。
+5. 代码实验中的“应当/需要/请实现/预期行为”是学习任务的规范性要求，不是对语言或现实世界的事实断言，可判为 non_factual；其中若解释为什么语言必然如此运行，仍必须有证据。例如“从标准输入读取一个名字，输出带前缀的问候语”是在规定程序接口和验收结果，不是在宣称 input()/print() 的语言语义，不得仅因 cited_facts 未介绍输入输出 API 而判为 unsupported。
+6. 测评选项是供学习者判断的候选命题，不作为系统发布的事实断言；审核重点是题干能否仅依据 cited_facts 作答，以及选项是否引入题干之外必须掌握的专业前提。选择题还必须能仅依据 cited_facts 确定唯一正确选项；若两个选项是都能满足题意的等价实现（例如先 input 再 int 与直接 int(input())），或正确性依赖 cited_facts 未提供的知识，整个 block 必须判为 unsupported，并列出造成歧义的选项文本。
 7. 不要因教学语气、虚构情境、通用操作要求或代码变量名而判为越界；但情境中的专业运行结果、语言行为和因果解释仍是事实命题，必须有证据。
 8. 题目和选项需要检查其专业前提及正误语义；干扰项可以是错误陈述，但错误必须能基于 cited_facts 识别，不能依赖外部知识。
 9. unsupported_text 只列出实际无支持的最小文本片段；supported 和 non_factual 必须返回空数组。
@@ -95,22 +97,43 @@ function validateResults(
   }
   const expected = new Set(expectedIds)
   const seen = new Set<string>()
-  for (const result of results) {
+  const normalized = results.map((result): SemanticReviewBlockResult => {
     if (!expected.has(result.review_block_id) || seen.has(result.review_block_id)) {
       throw new Error("ROLE_C_SEMANTIC_AUDIT_RESULT_ID_MISMATCH")
     }
     seen.add(result.review_block_id)
     if (!["supported", "non_factual", "unsupported", "uncertain"].includes(result.verdict)
-      || !result.reason?.trim()
       || !Array.isArray(result.unsupported_text)
-      || result.unsupported_text.some((entry) => !entry.trim())
-      || ((result.verdict === "supported" || result.verdict === "non_factual")
-        && result.unsupported_text.length > 0)
-      || (result.verdict === "unsupported" && result.unsupported_text.length === 0)) {
+      || result.unsupported_text.some((entry) => typeof entry !== "string")) {
       throw new Error("ROLE_C_SEMANTIC_AUDIT_RESULT_INVALID")
     }
-  }
+    const unsupportedText = result.unsupported_text.map((entry) => entry.trim()).filter(Boolean)
+    const reason = (typeof result.reason === "string" ? result.reason.trim() : "")
+      || "语义审核未提供可核验原因"
+    if ((result.verdict === "supported" || result.verdict === "non_factual")
+      && unsupportedText.length > 0) {
+      return {
+        review_block_id: result.review_block_id,
+        verdict: "unsupported",
+        reason: `审核结论与其列出的无支持文本不一致：${reason}`,
+        unsupported_text: unsupportedText,
+      }
+    }
+    if (result.verdict === "unsupported" && unsupportedText.length === 0) {
+      return {
+        review_block_id: result.review_block_id,
+        verdict: "uncertain",
+        reason: `审核判定缺少无支持文本定位：${reason}`,
+        unsupported_text: [],
+      }
+    }
+    return {
+      ...result,
+      reason,
+      unsupported_text: unsupportedText,
+    }
+  })
   return expectedIds.map((id) => structuredClone(
-    results.find((result) => result.review_block_id === id)!,
+    normalized.find((result) => result.review_block_id === id)!,
   ))
 }

@@ -69,10 +69,12 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - code 题给出明确的任务边界、输入输出约束和示例；只把当前 objective/facts 对应的行为留给学习者完成
 - code 题统一使用函数模式：public 必须提供明确函数签名和输入输出合同；starter_code 只保留函数签名、参数以及显式 TODO / pass / raise NotImplementedError 待完成区域，不得包含能直接满足题意的完整实现，也不得把任务改成 stdin_stdout
 - observable_behavior 为 recognize 或 explain 时，优先使用选择、判断或短答直接测量事实；若冻结 item_plan 要求 code，旁支语法必须由 starter 提供，只把当前事实对应的最小部分留给学习者
+- 定义事实只能考识别、判断或原意复述。若 evidence 只说“X 是 Y”，不得继续追问 Y 体现在哪些方面、具体用途、应用场景、原因、优点或例子，除非这些内容本身也在 cited facts 中
 - 若场景需要 input()、文件解析、格式转换、排序、循环等当前 objective 未要求的旁支技能，必须在 starter_code 中预先提供这些胶水代码；题干明确“只补全当前目标部分”，隐藏测试不得因旁支实现方式不同扣分
 
 【选项设计（选择题）】
 - 2-4个选项，错误选项模拟该知识点最常见的误解
+- 输出前逐项代入题干与 evidence.facts 检查，必须恰好一个选项成立。不同写法只要都能满足题意就都属于正确答案，不能同时放入单选题。例如“先 age=input() 再 int(age)”与“直接 int(input())”都完成字符串到数字的转换，二者不得同时作为单选项；保留一种写法后，其他干扰项必须明确违反某条 cited fact。
 - 不要用"以上都对/都错"这类模糊选项
 - 选项文本简洁，长度相近，避免正确选项明显长于或短于其他选项
 
@@ -112,7 +114,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 
 要求：
 1. items 必须按 public_payload.items 顺序一一返回且每项固定包含 answer_spec、correct_option_id、misconception_by_option；不返回 item_id、objective_id、tier、modality、max_score 或 evidence_weight。
-2. 选择/判断题把 answer_spec 设为 null，用稳定 option_id 指定 correct_option_id，并为每个错误选项给出具体 misconception。
+2. 选择/判断题把 answer_spec 设为 null，用稳定 option_id 指定 correct_option_id，并为每个错误选项给出具体 misconception。必须再次逐项验证：correct_option_id 是唯一成立的选项，其他选项各自明确违反 evidence 中的事实；不得在两个等价正确实现中任意挑一个当唯一答案。
 3. trace/short_answer 使用可确定验证的 exact、numeric 或 concept_rubric；rubric 权重合计为 1。
 4. 非选择题的 correct_option_id 为 null、misconception_by_option 为空对象；代码题的 answer_spec 也为 null，并按公开代码题顺序在 code_test_suites 中返回 execution_contract、reference_solution 和至少一个只含 input/expected/comparison 的 hidden test。
 5. code 题一律使用 function execution_mode，不得使用 stdin_stdout；entry_point、参数形态与 learner-owned 区域必须严格来自 public starter_code 的函数签名。reference 与隐藏测试遵守该冻结任务合同；hidden_tests.input 统一使用 {"args": [...], "kwargs": {...}}；每个隐藏输入必须与公开题干、示例和 starter 中出现的输入值不同，并同步计算 expected。评分只能覆盖 item_plan 对应 objective/facts；starter 已提供的旁支输入/转换胶水不得被改成评分要求。

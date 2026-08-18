@@ -62,6 +62,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - description 描述可观察行为，expected_behavior 描述正确运行时的预期
 - function 模式的 input 使用调用封装，expected_behavior 描述函数返回值；stdin_stdout 模式的 input 是标准输入文本，expected_behavior 描述标准输出文本
 - stdin_stdout 的公开测试按精确输出设计：除非提示文字本身就是学习目标，否则使用不带提示参数的 input()；starter、instruction 或题目要求产生的每一段输出都必须出现在 output_contract 与 expected_behavior 中，不能只描述其中一部分
+- 多目标实验仍然只是一个连贯任务：所有 objectives 共用同一个外部输入协议、输出协议和 starter，每个 public_test 只用不同数据检查该任务中的不同目标。不得把每个 objective 写成不同函数、不同输入形状或彼此无关的小题
+- stdin_stdout 多目标时，各测试的输入行数、字段含义和输出形式必须一致；不得通过“输入一行做判断、两行做加法、三行做平均值”这类分支把多道题塞进一个程序
 
 【hints 提示层级】
 - Level 1（方向）：指出思考方向，不涉及具体做法

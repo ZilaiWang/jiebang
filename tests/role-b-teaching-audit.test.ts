@@ -134,6 +134,20 @@ describe("teaching audit", () => {
     expect(result.checks.prerequisite.verdict).toBe("aligned")
   })
 
+  test("prerequisite: a cited prerequisite bridge satisfies coverage without becoming a target", async () => {
+    const kb = await getKB()
+    const result = auditTeaching({
+      artifactId: "prerequisite-bridge",
+      learnerProfile: makeProfile({ known_concepts: [], weak_concepts: [] }),
+      knowledgeBase: kb,
+      targetSourceIds: ["K004", "K005", "K006"],
+      citedSourceIds: ["K001", "K002", "K003", "K004", "K005", "K006"],
+    })
+
+    expect(result.checks.prerequisite.verdict).toBe("aligned")
+    expect(result.missingPrerequisiteSourceIds).toEqual([])
+  })
+
   test("weak_concept: content covers learner's weak point 循环", async () => {
     const kb = await getKB()
     const result = auditTeaching({
