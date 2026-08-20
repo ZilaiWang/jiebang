@@ -209,7 +209,11 @@ export async function prepareRoleCWeek3Input(
         source_id: item.sourceId,
       }),
       source_id: item.sourceId,
-      required_fact_ids: [item.facts[0]!.factId],
+      // The case evaluates the requested observable behavior, so its frozen
+      // evidence must include the complete selected source rather than only
+      // the first introductory fact.  Otherwise a trace/apply/create case is
+      // structurally unsatisfiable before the model is called.
+      required_fact_ids: item.facts.map((fact) => fact.factId),
       observable_behavior: behaviorFor(
         evaluationCase.resource_kind,
         index,

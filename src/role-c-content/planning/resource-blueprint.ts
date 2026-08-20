@@ -30,6 +30,8 @@ export interface ResourceBlueprintObjective {
   concept: {
     /** Stable objective order. Provider-specific batching is intentionally separate. */
     sequence_index: number
+    /** Evidence-density mode constrains how much semantic expansion is safe. */
+    mode: "normal" | "sparse_safe"
     required_parts: Array<"explanation" | "worked_example" | "misconception" | "micro_check" | "hints" | "summary">
     prerequisite_source_ids: string[]
   }
@@ -62,6 +64,9 @@ export interface ResourceBlueprintObjective {
  */
 export interface CodeLabTaskContract {
   task_kind: "callable_function" | "stdin_stdout_program"
+  /** 学习者实际承担的工作；低证据能力目标不被迫完成证据外的编程任务。 */
+  learner_action: "recall_fact" | "implement_program" | "implement_function"
+  learner_owned_region: "fact_literal" | "program_logic" | "function_body"
   primary_objective_id: string
   execution_mode: "function" | "stdin_stdout"
   /** 程序入口：function = "入口函数（def 定义，函数名由 instruction 指定）"；stdin_stdout = "stdin→stdout"。 */
@@ -193,6 +198,16 @@ export function buildResourceBlueprint(
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
       entry.objective_id === target.objective_id)!
+    const targetFactTexts = (evidence.results.find((item) =>
+      item.source_id === target.source_id)?.facts ?? [])
+      .filter((fact) => target.required_fact_ids.includes(fact.fact_id))
+      .map((fact) => fact.content.trim())
+      .filter(Boolean)
+    const conceptMode: ResourceBlueprintObjective["concept"]["mode"] =
+      targetFactTexts.length <= 3
+        || targetFactTexts.join("\n").length < 280
+        ? "sparse_safe"
+        : "normal"
     return {
       objective_id: target.objective_id,
       source_id: target.source_id,
@@ -206,6 +221,7 @@ export function buildResourceBlueprint(
       })),
       concept: {
         sequence_index: index,
+        mode: conceptMode,
         required_parts: [
           "explanation" as const,
           "worked_example" as const,
@@ -450,8 +466,9 @@ function deepFreeze<T>(value: T): T {
 /**
  * Planning 层决定 CodeLab 外部执行契约（"先设计题，再确定判题接口"）。
  *
- * 判定基于 primary objective 的教学语义，而不是 evidence 的代码语法：
- * - 函数专题（函数定义/参数与返回值/函数调用）→ callable_function：判题器调用入口函数，execution_mode=function
+ * 判定基于 primary objective 的教学语义与其冻结事实能力：
+ * - 参数/返回值专题 → callable_function：判题器调用入口函数，execution_mode=function
+ * - 只有函数定义/调用、尚无返回值事实 → stdin_stdout_program；允许在完整程序中定义并调用辅助函数
  * - 其余知识点 → stdin_stdout_program：判题器喂 stdin、比较 stdout，产出可运行程序
  *
  * primary objective 决定契约；supporting objectives（如综合项目里的函数先修）只提供证据，
@@ -462,7 +479,7 @@ function deepFreeze<T>(value: T): T {
  *   primary 是本轮主修知识的权威描述（显式 is_primary 标记），信号以它为锚；
  *   goal 是整轮意图的补充。输出型语义（综合项目/完整程序/读取输入输出/统计）
  *   → 设计"产出可运行程序"任务 → stdin_stdout；
- *   函数专题语义（函数定义/调用/参数与返回值）→ 设计"实现可调用函数"任务 → callable_function。
+ *   具备参数/返回值语义 → 设计"实现可调用函数"任务 → callable_function。
  * - primary 的 title/goal 均无信号时，看 primary 证据的 facts 兜底。
  * 不再用知识库标题关键词猜执行方式；相同 primary 标记下改变目标顺序不改变契约。
  */
@@ -494,10 +511,10 @@ function decideCodeLabTaskContract(
   // 的先修函数），因此 goal 只在 primary title 无信号时兜底，绝不让 goal 覆盖
   // primary 决定的任务形态。
   const primaryOutputSignal = /(?:综合项目|完整程序|读取用户输入|读取输入|标准输出|输出结果|统计|计算.*输出|输入.*输出)/u.test(primaryTitle)
-  const primaryFunctionSignal = /(?:函数定义|函数调用|参数与返回值|定义函数|封装成函数)/u.test(primaryTitle)
+  const primaryFunctionSignal = /(?:参数与返回值|函数参数|函数返回值|返回值)/u.test(primaryTitle)
   const goalOutputSignal = /(?:综合项目|完整程序|读取用户输入|读取输入|标准输出|输出结果|统计|计算.*输出|输入.*输出)/u.test(goal)
-  const goalFunctionSignal = /(?:函数定义|函数调用|参数与返回值|定义函数|封装成函数)/u.test(goal)
-  const functionFactSignal = /(?:定义函数|def|参数|返回值|函数调用|封装成函数)/u.test(facts)
+  const goalFunctionSignal = /(?:参数与返回值|函数参数|函数返回值|返回值)/u.test(goal)
+  const functionFactSignal = /(?:参数|返回值|\breturn\b)/u.test(facts)
   const outputFactSignal = /(?:输入输出|stdin|stdout|读取|print|输出)/u.test(facts)
   const taskKind: CodeLabTaskContract["task_kind"] = primaryOutputSignal
     ? "stdin_stdout_program"
@@ -511,20 +528,44 @@ function decideCodeLabTaskContract(
             ? "callable_function"
             : "stdin_stdout_program"
   const callable = taskKind === "callable_function"
+  const implementationFactSignal = /(?:输入|输出|返回值|\breturn\b|循环|遍历|条件|赋值|计算|索引|读写|调用.*参数|文件)/u.test(facts)
+  const learnerAction: CodeLabTaskContract["learner_action"] = callable
+    ? "implement_function"
+    : primary.observable_behavior === "recognize"
+        || primary.observable_behavior === "explain"
+        || !implementationFactSignal
+      ? "recall_fact"
+      : "implement_program"
+  const learnerOwnedRegion: CodeLabTaskContract["learner_owned_region"] =
+    learnerAction === "recall_fact"
+      ? "fact_literal"
+      : learnerAction === "implement_function"
+        ? "function_body"
+        : "program_logic"
   return {
     task_kind: taskKind,
+    learner_action: learnerAction,
+    learner_owned_region: learnerOwnedRegion,
     primary_objective_id: primary.objective_id,
     execution_mode: callable ? "function" : "stdin_stdout",
     program_entry: callable
       ? "入口函数（def 定义，函数名由 instruction 指定）"
-      : "stdin→stdout（整个程序读取 stdin 并打印结果）",
-    input_form: callable ? "function_arguments" : "stdin_lines",
+      : learnerAction === "recall_fact"
+        ? "stdout（程序胶水已给出，学习者只填写事实文本）"
+        : "stdin→stdout（整个程序读取 stdin 并打印结果）",
+    input_form: callable
+      ? "function_arguments"
+      : learnerAction === "recall_fact"
+        ? "none"
+        : "stdin_lines",
     output_form: callable ? "return_value" : "stdout_lines",
     grading_invocation: callable
       ? "call_entry_function"
       : "feed_stdin_compare_stdout",
     output_constraint: callable
       ? "判题器调用入口函数并比较返回值；不得要求 print 输出作为评分结果"
-      : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
+      : learnerAction === "recall_fact"
+        ? "判题器使用空 stdin 并比较 stdout；学习者只替换一个事实文本占位，输出调用由 starter_code 完整提供"
+        : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
   }
 }

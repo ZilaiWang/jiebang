@@ -45,8 +45,15 @@ export interface AssessmentCapacityPlan {
   adjusted_blueprint?: AssessmentBlueprint
 }
 
-/** 单个 measurement 目标最多支撑的结构数（operation × representation 组合空间）。 */
-export const STRUCTURE_BUDGET_PER_OBJECTIVE = 6
+/**
+ * 单个 measurement 目标的保守结构空间。必须至少容纳“最近 5 题去重
+ * 窗口 + 一份新的 5 题卷”；否则完成第一轮后容量规划会确定性地把
+ * 同目标续轮判为不可行。12 仍是保守上限，真实题面还要通过结构去重。
+ */
+export const STRUCTURE_BUDGET_PER_OBJECTIVE = 12
+
+/** 同一份测评中，同一事实最多承担两个不同测量视角，避免靠换题型堆出重复题。 */
+const MAX_ITEMS_PER_FACT_PER_FORM = 2
 
 /** 每个 objective 默认最少请求题数（core 至少 1，supporting 可 0）。 */
 function capacityForObjective(
@@ -56,7 +63,7 @@ function capacityForObjective(
   // 同一事实可以通过不同、且与 observable behavior 相容的题型进行复测，
   // 因此事实数不是题数的一比一上限。容量取“事实 × 可测题型”与剩余结构空间的交集。
   const evidenceCapacity = Math.max(0, objective.available_facts)
-    * measuringModalityCount(objective.observable_behavior)
+    * Math.min(MAX_ITEMS_PER_FACT_PER_FORM, measuringModalityCount(objective.observable_behavior))
   const structureCapacity = Math.max(0,
     STRUCTURE_BUDGET_PER_OBJECTIVE - Math.max(0, objective.used_structures))
   if (evidenceCapacity < STRUCTURE_BUDGET_PER_OBJECTIVE) {

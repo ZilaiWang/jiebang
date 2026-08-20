@@ -191,6 +191,28 @@ interface CodeLabPublicSafetyRepairPatch {
   reflection_questions: string[]
 }
 
+function normalizeAssessmentAuthorFields(
+  authored: AssessmentPublicAuthorPayload,
+  plan: AssessmentItemPlan[],
+): void {
+  if (!Array.isArray(authored.items)) return
+  for (let index = 0; index < authored.items.length; index += 1) {
+    const item = authored.items[index]
+    const expected = plan[index]
+    if (!item || !expected) continue
+    const isChoice = expected.modality === "mcq"
+      || expected.modality === "true_false"
+    if (!isChoice) item.options = null
+    if (expected.modality !== "code") item.starter_code = null
+    else if (!assessmentStarterIsIncomplete(item.starter_code)) {
+      item.starter_code = deterministicAssessmentStarterRepair(
+        item.starter_code,
+        item.prompt,
+      )
+    }
+  }
+}
+
 /** Model-backed Provider. Stages are internal; public Role C contracts remain unchanged. */
 export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
   private readonly generationStrategy: "staged" | "monolithic"
@@ -340,6 +362,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             ? {
                 task_contract: {
                   task_kind: taskContract.task_kind,
+                  learner_action: taskContract.learner_action,
+                  learner_owned_region: taskContract.learner_owned_region,
                   primary_objective_id: taskContract.primary_objective_id,
                   program_entry: taskContract.program_entry,
                   input_form: taskContract.input_form,
@@ -374,6 +398,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         normalizedAuthor.execution_contract = freezeCodeLabExecutionContract(
           normalizedAuthor.execution_contract,
           executionMode,
+          taskContract,
         )
         const schema = validateRoleCSchemaFragment(
           "code_lab_draft.schema.json",
@@ -384,6 +409,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         const planIssues = validateCodeLabPublicAuthorAgainstPlan(
           normalizedAuthor,
           objectivePlan,
+          taskContract,
         )
         if (planIssues.length > 0) return planIssues
         const normalized = materializeCodeLabPublicAuthorPayload(
@@ -401,6 +427,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     normalizedPublicAuthor.execution_contract = freezeCodeLabExecutionContract(
       normalizedPublicAuthor.execution_contract,
       executionMode,
+      taskContract,
     )
     let normalizedPublic = materializeCodeLabPublicAuthorPayload(
       request,
@@ -725,84 +752,207 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       ?? buildAssessmentItemPlan(request.generation_spec)
     const formId = buildAssessmentFormId(request.generation_spec)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
-    const publicAuthorPayload = await this.generateStage<AssessmentPublicAuthorPayload>({
-      task: "role-c.tiered-evaluator.public",
-      system_prompt: ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
-      input: {
-        ...modelInput,
-        staged_contract: {
-          form_id: formId,
-          objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
-          item_plan: plan,
-          novelty_design_brief: buildAssessmentNoveltyDesignBrief(
-            plan,
-            request.prior_assessment_items ?? [],
+    const noveltyBrief = buildAssessmentNoveltyDesignBrief(
+      plan,
+      request.prior_assessment_items ?? [],
+    )
+    // Author each public item against only its own frozen citations.  A
+    // monolithic form prompt exposed every target fact to every question and
+    // repeatedly produced hidden cross-objective dependencies (for example a
+    // K004 trace item quietly requiring K005 arithmetic).  Item-isolated
+    // authoring preserves AI-generated questions while making the evidence
+    // boundary constructive instead of relying on a late audit to disentangle
+    // an already-written form.
+    const publicItemAuthors = await mapWithConcurrency(
+      plan,
+      Math.min(3, this.conceptConcurrency),
+      async (itemPlan, itemIndex) => {
+        const factKeys = new Set(itemPlan.citations.map((citation) =>
+          `${citation.source_id}:${citation.fact_id}`))
+        const itemEvidence = modelInput.evidence.flatMap((source) => {
+          const facts = source.facts.filter((fact) =>
+            factKeys.has(`${source.source_id}:${fact.fact_id}`))
+          return facts.length > 0 ? [{ ...source, facts }] : []
+        })
+        const itemTarget = modelInput.contract.targets.find((target) =>
+          target.objective_id === itemPlan.objective_id)
+        const itemUpstream = {
+          ...modelInput.upstream,
+          objective_summaries: modelInput.upstream.objective_summaries.filter(
+            (entry) => entry.objective_id === itemPlan.objective_id,
           ),
-        },
-      },
-      output_schema_id: "role_c_assessment_public_author_payload_v1",
-      output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
-      // 变式轮次（有 prior_assessment_items，即 remediate/reinforce/advance 的下一轮）
-      // 需要随机性来生成"同知识点不同题面"，否则温度 0 会让模型复制上一轮题面、触发 novelty 重复门禁。
-      // 首轮保持低温以保证格式稳定。
-      temperature: (request.prior_assessment_items?.length ?? 0) > 0
-        ? Math.max(this.assessmentTemperature, 0.6)
-        : this.assessmentTemperature,
-      max_tokens: this.assessmentPublicMaxTokens,
-      idempotency_identity: {
-        spec_id: request.generation_spec.spec_id,
-        concept_artifact_id: request.concept_artifact.artifact_id,
-        stage: "public",
-        prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
-      },
-      max_repairs: maxRepairs,
-      diagnostic_sink: this.stageFailureDiagnosticSink,
-      validate: (payload) => {
-        const authored = projectAssessmentPublicAuthorPayload(payload)
-        // item_plan 已冻结题型，因此先把模型容易写错的空值和代码骨架
-        // 规范为该题型的唯一合法形态；题干、选项语义与任务仍由模型生成。
-        if (Array.isArray((authored as any).items)) {
-          for (let i = 0; i < (authored as any).items.length; i++) {
-            const item = (authored as any).items[i]
-            const expected = plan[i]
-            if (!expected) continue
-            const isChoice = expected.modality === "mcq"
-              || expected.modality === "true_false"
-            if (!isChoice) item.options = null
-            if (expected.modality !== "code") item.starter_code = null
-            else if (!assessmentStarterIsIncomplete(item?.starter_code)) {
-              item.starter_code = deterministicAssessmentStarterRepair(
-                item?.starter_code,
-                item?.prompt,
-              )
-            }
-          }
+          misconceptions: modelInput.upstream.misconceptions.filter(
+            (entry) => entry.objective_id === itemPlan.objective_id,
+          ),
+          // The shared semantic plan may legitimately coordinate the whole
+          // form, but it must not inject another objective's facts into one
+          // item's authoring surface.
+          round_semantic_plan: undefined,
+          resource_blueprint: modelInput.upstream.resource_blueprint
+            ? {
+                ...modelInput.upstream.resource_blueprint,
+                objectives: modelInput.upstream.resource_blueprint.objectives.filter(
+                  (entry) => entry.objective_id === itemPlan.objective_id,
+                ),
+                assessment: {
+                  ...modelInput.upstream.resource_blueprint.assessment,
+                  item_plan: [structuredClone(itemPlan)],
+                  total_items: 1,
+                  total_score: itemPlan.max_score,
+                },
+              }
+            : undefined,
         }
-        const schema = validateRoleCSchemaFragment("assessment_draft.schema.json", "/$defs/public_author_payload", authored)
-        if (!schema.ok) return validationIssues(schema)
-        const planIssues = validateAssessmentPublicAuthorAgainstPlan(authored, plan)
-        if (planIssues.length > 0) return planIssues
-        const normalized = materializeAssessmentPublicAuthorPayload(
-          request.generation_spec,
-          authored,
-          plan,
-          formId,
-        )
-        return [
-          ...validationIssues(validateAssessmentPublicStage(request, normalized)),
-          ...validateAssessmentNovelty(
-            normalized,
-            request.prior_assessment_items ?? [],
-          ),
-        ]
+        return this.generateStage<AssessmentPublicAuthorPayload>({
+          task: "role-c.tiered-evaluator.public-item",
+          system_prompt: ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
+          input: {
+            contract: {
+              ...modelInput.contract,
+              targets: itemTarget ? [structuredClone(itemTarget)] : [],
+            },
+            evidence: itemEvidence,
+            upstream: itemUpstream,
+            staged_contract: {
+              form_id: formId,
+              objective_ids: [itemPlan.objective_id],
+              item_plan: [itemPlan],
+              novelty_design_brief: {
+                history_count: noveltyBrief.history_count,
+                items: [noveltyBrief.items[itemIndex]!],
+              },
+            },
+          },
+          output_schema_id: "role_c_assessment_public_author_payload_v1",
+          output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
+          temperature: (request.prior_assessment_items?.length ?? 0) > 0
+            ? Math.max(this.assessmentTemperature, 0.6)
+            : this.assessmentTemperature,
+          max_tokens: Math.min(this.assessmentPublicMaxTokens, 2_400),
+          idempotency_identity: {
+            spec_id: request.generation_spec.spec_id,
+            concept_artifact_id: request.concept_artifact.artifact_id,
+            stage: "public-item",
+            item_id: itemPlan.item_id,
+            prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+          },
+          max_repairs: maxRepairs,
+          diagnostic_sink: this.stageFailureDiagnosticSink,
+          validate: (payload) => {
+            const authored = projectAssessmentPublicAuthorPayload(payload)
+            normalizeAssessmentAuthorFields(authored, [itemPlan])
+            const schema = validateRoleCSchemaFragment(
+              "assessment_draft.schema.json",
+              "/$defs/public_author_payload",
+              authored,
+            )
+            if (!schema.ok) return validationIssues(schema)
+            const planIssues = validateAssessmentPublicAuthorAgainstPlan(
+              authored,
+              [itemPlan],
+            )
+            if (planIssues.length > 0) return planIssues
+            const materialized = materializeAssessmentPublicAuthorPayload(
+              request.generation_spec,
+              authored,
+              [itemPlan],
+              formId,
+            )
+            return validateAssessmentNovelty(
+              materialized,
+              request.prior_assessment_items ?? [],
+            )
+          },
+        })
       },
-    })
-    const normalizedPublic = materializeAssessmentPublicAuthorPayload(
+    )
+    let publicAuthorPayload: AssessmentPublicAuthorPayload = {
+      title: publicItemAuthors[0]?.title?.trim() || "本轮学习测评",
+      items: publicItemAuthors.map((author) =>
+        projectAssessmentPublicAuthorPayload(author).items[0]!),
+    }
+    normalizeAssessmentAuthorFields(publicAuthorPayload, plan)
+    let normalizedPublic = materializeAssessmentPublicAuthorPayload(
       request.generation_spec,
       projectAssessmentPublicAuthorPayload(publicAuthorPayload),
       plan,
       formId,
     )
+    let composedPublicIssues = [
+      ...validationIssues(validateAssessmentPublicStage(request, normalizedPublic)),
+      ...validateAssessmentNovelty(
+        normalizedPublic,
+        request.prior_assessment_items ?? [],
+      ),
+    ]
+    // Single-item authoring is parallel, so an item cannot observe the prose
+    // independently authored for its siblings. Perform one form-level
+    // comparison afterwards and rewrite only the colliding item(s); accepted
+    // items keep their identity and text, and secure answers are authored only
+    // after the public form is stable.
+    for (let repairAttempt = 1;
+      composedPublicIssues.length > 0 && repairAttempt <= maxRepairs;
+      repairAttempt += 1) {
+      const repairStage: StructuredStage<AssessmentPublicAuthorPayload> = {
+        task: "role-c.tiered-evaluator.public",
+        system_prompt: ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
+        input: {
+          ...modelInput,
+          staged_contract: {
+            form_id: formId,
+            objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
+            item_plan: plan,
+            novelty_design_brief: noveltyBrief,
+          },
+        },
+        output_schema_id: "role_c_assessment_public_author_payload_v1",
+        output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
+        temperature: Math.max(this.assessmentTemperature, 0.4),
+        max_tokens: this.assessmentPublicMaxTokens,
+        idempotency_identity: {
+          spec_id: request.generation_spec.spec_id,
+          concept_artifact_id: request.concept_artifact.artifact_id,
+          form_id: formId,
+          stage: "public-compose-repair",
+          prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+        },
+        max_repairs: 0,
+        validate: () => [],
+      }
+      const directive = stageRepairDirective(
+        repairStage.task,
+        composedPublicIssues,
+        repairAttempt,
+        repairStage.idempotency_identity,
+      )
+      if (directive.required_change_indices.length === 0) break
+      publicAuthorPayload = await this.generateAssessmentNoveltyRepair(
+        repairStage,
+        publicAuthorPayload,
+        composedPublicIssues,
+        directive,
+      )
+      normalizeAssessmentAuthorFields(publicAuthorPayload, plan)
+      normalizedPublic = materializeAssessmentPublicAuthorPayload(
+        request.generation_spec,
+        projectAssessmentPublicAuthorPayload(publicAuthorPayload),
+        plan,
+        formId,
+      )
+      composedPublicIssues = [
+        ...validationIssues(validateAssessmentPublicStage(request, normalizedPublic)),
+        ...validateAssessmentNovelty(
+          normalizedPublic,
+          request.prior_assessment_items ?? [],
+        ),
+      ]
+    }
+    if (composedPublicIssues.length > 0) {
+      throw new ModelOutputValidationError(
+        "role-c.tiered-evaluator.public.compose",
+        composedPublicIssues,
+      )
+    }
     const secureAuthorPayload = await this.generateStage<AssessmentSecureAuthorPayload>({
       task: "role-c.tiered-evaluator.secure",
       system_prompt: ASSESSMENT_SECURE_STAGE_SYSTEM_PROMPT,
@@ -1301,10 +1451,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         throw error
       }
       const priorOutput = previousOutput
+      const priorIssues = issues
       previousOutput = structuredClone(value)
       issues = stage.validate(value)
       if (issues.length === 0) return value
-      const progressIssues = validateStageRepairProgress(priorOutput, value)
+      const progressIssues = validateStageRepairProgress(priorOutput, value, priorIssues, issues)
       if (progressIssues.length > 0) {
         issues = [...issues, ...progressIssues]
         await stage.diagnostic_sink?.(sanitizeStageFailureDiagnostic({
@@ -1514,6 +1665,7 @@ export interface AssessmentNoveltyDesignBrief {
     planned_cognitive_operation: AssessmentItemPlan["cognitive_operation"]
     variation_axis: "operation" | "reasoning_pattern" | "representation" | "context_family"
     in_form_role: "direct_foundation" | "guided_application" | "integrated_transfer"
+    planned_task_shape: string
     forbidden_history: Array<{
       prompt: string
       structure_meta?: AssessmentStructureMeta
@@ -1552,6 +1704,7 @@ export function buildAssessmentNoveltyDesignBrief(
         : item.tier === 2
           ? "guided_application"
           : "integrated_transfer",
+      planned_task_shape: assessmentTaskShape(item.modality, index),
       forbidden_history: history
         .filter((prior) => prior.objective_id === item.objective_id
           && prior.modality === item.modality)
@@ -1564,6 +1717,26 @@ export function buildAssessmentNoveltyDesignBrief(
         })),
     })),
   }
+}
+
+function assessmentTaskShape(
+  modality: AssessmentItemPlan["modality"],
+  index: number,
+): string {
+  const shapes: Record<AssessmentItemPlan["modality"], string[]> = {
+    mcq: [
+      "select_one_supported_statement",
+      "identify_one_direct_contradiction",
+      "choose_best_fact_summary",
+      "match_fact_to_description",
+    ],
+    true_false: ["verify_one_atomic_claim", "detect_one_scope_distortion"],
+    short_answer: ["restate_supported_fact", "compare_given_facts", "explain_given_relation"],
+    trace: ["trace_given_state", "complete_given_trace", "locate_trace_divergence"],
+    code: ["complete_missing_branch", "complete_missing_expression", "complete_missing_transformation"],
+  }
+  const choices = shapes[modality]
+  return choices[index % choices.length]!
 }
 
 export interface AssessmentNoveltyReplacement {
@@ -2362,11 +2535,31 @@ export function validationIssueStrings(report: { issues: Array<{ code?: string; 
   return report.issues.map((entry) => `${entry.code ? `[${entry.code}] ` : ""}${entry.path}: ${entry.message}`)
 }
 
-export function validateStageRepairProgress<T>(previous: T | undefined, current: T): string[] {
+export function validateStageRepairProgress<T>(
+  previous: T | undefined,
+  current: T,
+  previousIssues?: string[],
+  currentIssues?: string[],
+): string[] {
   if (previous === undefined) return []
-  return contentHash(previous) === contentHash(current)
-    ? ["[NO_REPAIR_PROGRESS] staged repair output is identical to the previous attempt"]
-    : []
+  const identical = contentHash(previous) === contentHash(current)
+  if (identical) {
+    return ["[NO_REPAIR_PROGRESS] staged repair output is identical to the previous attempt"]
+  }
+  // 内容变了但问题集未单调减少 → 同样视为无进展（换汤不换药）。
+  if (previousIssues && currentIssues) {
+    const prevSet = new Set(previousIssues)
+    const currSet = new Set(currentIssues)
+    const resolved = [...prevSet].filter((issue) => !currSet.has(issue))
+    const introduced = [...currSet].filter((issue) => !prevSet.has(issue))
+    if (resolved.length === 0 && introduced.length === 0) {
+      return ["[NO_REPAIR_PROGRESS] staged repair changed output but did not reduce any validation issue"]
+    }
+    if (resolved.length === 0 && introduced.length > 0) {
+      return ["[NO_REPAIR_PROGRESS] staged repair resolved nothing and introduced new validation issues"]
+    }
+  }
+  return []
 }
 function validationIssues(report: { issues: Array<{ code?: string; path: string; message: string }> }): string[] {
   return validationIssueStrings(report)

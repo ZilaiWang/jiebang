@@ -107,7 +107,7 @@ const SYSTEM_PROMPT = `你是 KnowBalance 的跨产物语义规划器。你只�
 
 权威边界：
 1. GenerationSpec 和 ResourceBlueprint 是冻结合同，不得改变目标、source/fact、题型题量、分值、代码 ABI、公开/私有边界或评分规则。
-2. evidence 是唯一专业事实来源；计划只能安排这些事实的教学顺序，不得增加新事实。
+2. evidence 是唯一专业事实来源；计划只能安排这些事实的教学顺序，不得增加新事实。不得把抽象事实具体化为未被命名的 API、语法、错误结果、执行步骤或边界行为。
 3. cross_artifact_contract 是三类产物的分工合同，必须遵守。
 4. 输出是内部质量计划，不得包含隐藏答案、隐藏测试、学习者身份或内部推理过程。
 5. 仅输出指定 JSON。`
@@ -121,6 +121,12 @@ export class ModelRoundSemanticPlanner implements RoundSemanticPlanner {
     blueprint: ResourceBlueprint
   }): Promise<RoundSemanticPlan | undefined> {
     if (input.blueprint.quality_requirement.profile !== "quality") return undefined
+    const requiredFactsBySource = new Map<string, Set<string>>()
+    for (const target of input.spec.targets) {
+      const ids = requiredFactsBySource.get(target.source_id) ?? new Set<string>()
+      target.required_fact_ids.forEach((factId) => ids.add(factId))
+      requiredFactsBySource.set(target.source_id, ids)
+    }
     try {
       const draft = await this.gateway.generateStructured<Omit<RoundSemanticPlan,
         "plan_id" | "spec_id" | "blueprint_id" | "policy_version" | "policy_decision_hash">>({
@@ -136,11 +142,14 @@ export class ModelRoundSemanticPlanner implements RoundSemanticPlanner {
             assessment_blueprint: input.spec.assessment_blueprint,
           },
           resource_blueprint: input.blueprint,
-          evidence: input.evidence.results.map((item) => ({
-            source_id: item.source_id,
-            title: item.title,
-            facts: item.facts,
-          })),
+          evidence: input.evidence.results
+            .filter((item) => requiredFactsBySource.has(item.source_id))
+            .map((item) => ({
+              source_id: item.source_id,
+              title: item.title,
+              facts: item.facts.filter((fact) =>
+                requiredFactsBySource.get(item.source_id)!.has(fact.fact_id)),
+            })),
         },
         output_schema_id: "role_c_round_semantic_plan_v1",
         output_schema: PLAN_SCHEMA,

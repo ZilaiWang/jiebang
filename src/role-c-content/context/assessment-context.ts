@@ -63,6 +63,12 @@ export function buildAssessmentAuthorModelInput(
     request.generation_spec.targets.map((target) => target.objective_id),
   )
   const sourceIds = new Set(request.generation_spec.path_node.target_source_ids)
+  const requiredFactsBySource = new Map(
+    request.generation_spec.targets.map((target) => [
+      target.source_id,
+      new Set(target.required_fact_ids),
+    ] as const),
+  )
   const payload = request.concept_artifact.payload
   const blocks = payload
     ? [...payload.explanation_blocks, ...payload.worked_examples, ...payload.summary]
@@ -111,7 +117,9 @@ export function buildAssessmentAuthorModelInput(
       .map((item) => ({
         source_id: item.source_id,
         title: item.title,
-        facts: item.facts.map((fact) => ({ ...fact })),
+        facts: item.facts
+          .filter((fact) => requiredFactsBySource.get(item.source_id)?.has(fact.fact_id))
+          .map((fact) => ({ ...fact })),
       })),
     upstream: {
       concept_artifact_id: request.concept_artifact.artifact_id,

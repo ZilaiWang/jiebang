@@ -38,7 +38,10 @@ const evidencePack = {
     source_id: "K003",
     title: "基本数据类型",
     difficulty: "beginner",
-    facts: [{ source_id: "K003", fact_id: "F001", content: "int 表示整数，float 表示小数。" }],
+    facts: [
+      { source_id: "K003", fact_id: "F001", content: "int 表示整数，float 表示小数。" },
+      { source_id: "K003", fact_id: "F002", content: "本轮未冻结的附加事实。" },
+    ],
     examples: [{ title: "未绑定示例", code: "type(7)", explanation: "type 可查看类型" }],
     practice_tasks: ["使用 type 判断类型"],
   }],
@@ -68,6 +71,7 @@ describe("Role C citable authoring context", () => {
       }))
       expect(input.evidence[0]).not.toHaveProperty("examples")
       expect(input.evidence[0]).not.toHaveProperty("practice_tasks")
+      expect(input.evidence[0]?.facts.map((fact) => fact.fact_id)).toEqual(["F001"])
     }
   })
 

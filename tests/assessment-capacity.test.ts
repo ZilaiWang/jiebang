@@ -47,6 +47,17 @@ describe("assessment capacity planning：事实/结构不足时少出题而非 r
     expect(plan.limiting_factors).toContain("HISTORY_STRUCTURE_SATURATION")
   })
 
+  test("一份 5 题历史卷不会确定性挤死同目标的下一轮", () => {
+    const plan = planAssessmentCapacity({
+      requested: { tier_1_count: 2, tier_2_count: 2, tier_3_count: 1, required_modalities: ["mcq", "true_false"] },
+      objectives: [
+        { objective_id: "O1", observable_behavior: "recognize", importance: "core", available_facts: 3, used_structures: 5 },
+      ],
+    })
+    expect(plan.decision).toBe("FULL")
+    expect(plan.feasible_items).toBe(5)
+  })
+
   test("连 core objective 都无法覆盖 → REPLAN", () => {
     const plan = planAssessmentCapacity({
       requested: { tier_1_count: 3, tier_2_count: 0, tier_3_count: 0, required_modalities: ["mcq"] },

@@ -15,6 +15,7 @@ import { stableId } from "../contracts/common"
 import { normalizeGroundedClaimText } from "../validators/claim-grounding"
 import { extractReviewBlocks } from "./extract-review-blocks"
 import { agentForReviewArtifact } from "./revision-mapper"
+import { resolveFindingDisposition } from "./disposition-resolver"
 import type {
   ArtifactReviewResult,
   ContentSemanticAuditPort,
@@ -224,14 +225,34 @@ async function reviewArtifact(
     ...evidenceAnchorAudit.findings,
     ...semanticAudit.findings,
     ...(includePathFindings ? teachingFindings(target, teachingAudit) : []),
-  ].map((finding): ContentReviewFinding => ({
-    ...finding,
-    source_decision: finding.source === "teaching_audit"
-      ? blockingReviewDecision(teachingAudit.status)
-      : finding.source === "fact_audit"
-        ? blockingReviewDecision(factStatus)
-        : blockingReviewDecision(decision),
-  }))
+  ].map((finding): ContentReviewFinding => {
+    const evidenceRefs = unique(finding.evidence_refs
+      .map((reference) => reference.trim())
+      .filter(Boolean))
+    const locator = finding.locator
+      ? {
+          ...finding.locator,
+          ...(finding.locator.parent_block_id?.trim()
+            ? { parent_block_id: finding.locator.parent_block_id.trim() }
+            : { parent_block_id: undefined }),
+          ...(finding.locator.objective_id?.trim()
+            ? { objective_id: finding.locator.objective_id.trim() }
+            : { objective_id: undefined }),
+        }
+      : undefined
+    return {
+      ...finding,
+      ...(locator ? { locator } : {}),
+      evidence_refs: evidenceRefs.length > 0
+        ? evidenceRefs
+        : [target.artifact.artifact_id],
+      source_decision: finding.source === "teaching_audit"
+        ? blockingReviewDecision(teachingAudit.status)
+        : finding.source === "fact_audit"
+          ? blockingReviewDecision(factStatus)
+          : blockingReviewDecision(decision),
+    }
+  })
   const objectiveIds = request.generation_spec.targets.map((target) => target.objective_id)
   const instructions = findings.flatMap((finding) =>
     toInstructions(
@@ -269,8 +290,20 @@ async function auditSemanticBlocks(
   // Missing or unknown references are already reported deterministically. Do
   // not ask the model to infer support from an incomplete evidence surface.
   const eligible = blocks.flatMap((block) => {
-    if (block.citations.length === 0) return []
-    const citedFacts = block.citations.flatMap((citation) => {
+    // Proposition-level claims have already gone through A's deterministic
+    // fact audit. Re-sending the exact same surface to a probabilistic judge
+    // adds latency and can produce contradictory verdicts without new signal.
+    if (block.surface_kind === "exact_claim") return []
+    const sharedTaskCitations = target.kind === "code_lab"
+      && ["normative_task", "starter_skeleton", "direct_instance"].includes(block.surface_kind ?? "")
+      ? target.artifact.payload?.used_evidence ?? []
+      : []
+    const semanticCitations = uniqueCitations([
+      ...block.citations,
+      ...sharedTaskCitations,
+    ])
+    if (semanticCitations.length === 0) return []
+    const citedFacts = semanticCitations.flatMap((citation) => {
       const fact = facts.get(`${citation.source_id}:${citation.fact_id}`)
       return fact ? [{
         source_id: fact.source_id,
@@ -278,8 +311,8 @@ async function auditSemanticBlocks(
         content: fact.content,
       }] : []
     })
-    return citedFacts.length === block.citations.length
-      ? [{ ...block, cited_facts: citedFacts }]
+    return citedFacts.length === semanticCitations.length
+      ? [{ ...block, citations: semanticCitations, cited_facts: citedFacts }]
       : []
   })
   const results = await port.auditArtifact({
@@ -290,11 +323,21 @@ async function auditSemanticBlocks(
     blocks: eligible,
   })
   const blocksById = new Map(eligible.map((block) => [block.review_block_id, block]))
+  const objectiveBehavior = (objectiveId: string | undefined) => request.generation_spec.targets.find(
+    (target) => target.objective_id === objectiveId,
+  )?.observable_behavior
   const findings = results.flatMap((result): ContentReviewFinding[] => {
     if (result.verdict === "supported" || result.verdict === "non_factual") return []
     const block = blocksById.get(result.review_block_id)
     if (!block) throw new Error("ROLE_C_SEMANTIC_AUDIT_UNKNOWN_BLOCK")
     const uncertain = result.verdict === "uncertain"
+    const disposition = resolveFindingDisposition({
+      code: uncertain ? "semantic_uncertain" : "semantic_unsupported",
+      locator: block.locator,
+      support_gap: result.support_gap,
+      objective_behavior: objectiveBehavior(block.locator.objective_id),
+      suggested_scope: result.suggested_scope,
+    })
     return [{
       source: "fact_audit",
       code: uncertain ? "semantic_uncertain" : "semantic_unsupported",
@@ -303,10 +346,8 @@ async function auditSemanticBlocks(
       message: uncertain
         ? `引用事实不足以确定该内容的语义支持：${result.reason}`
         : `内容中存在引用事实不支持的陈述：${result.reason}`,
-      proposed_action: uncertain
-        ? "删除含混陈述，或仅使用当前引用事实改写为可核验内容"
-        : "删除无支持片段，或仅根据当前引用事实重写定位内容",
-      fix_scope: "artifact",
+      proposed_action: disposition.action,
+      fix_scope: disposition.fix_scope === "provider" ? "artifact" : disposition.fix_scope,
       locator: block.locator,
       evidence_refs: unique([
         result.review_block_id,
@@ -319,6 +360,15 @@ async function auditSemanticBlocks(
     status: findings.length > 0 ? "revise" : "pass",
     findings,
   }
+}
+
+function uniqueCitations<T extends { source_id: string; fact_id: string; relation?: string }>(
+  citations: T[],
+): T[] {
+  return [...new Map(citations.map((citation) => [
+    `${citation.source_id}:${citation.fact_id}:${citation.relation ?? ""}`,
+    citation,
+  ])).values()]
 }
 
 function blockingReviewDecision(status: "pass" | "revise" | "reject"): "revise" | "reject" {

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { validateAssessmentNovelty } from "../src/role-c-content/providers/staged-generation"
+import {
+  assessmentFactIdsForItem,
+  validateAssessmentNovelty,
+} from "../src/role-c-content/providers/staged-generation"
 
 const history = [{
   form_id: "FORM-OLD",
@@ -27,6 +30,14 @@ function assessmentItem(prompt: string, options: string[]) {
 }
 
 describe("AI assessment novelty", () => {
+  test("按题层级分配最小事实面，不让每题都复述全部事实", () => {
+    const facts = ["F001", "F002", "F003"]
+    expect(assessmentFactIdsForItem(facts, 1, 0)).toEqual(["F001"])
+    expect(assessmentFactIdsForItem(facts, 1, 1)).toEqual(["F002"])
+    expect(assessmentFactIdsForItem(facts, 2, 2)).toEqual(["F003", "F001"])
+    expect(assessmentFactIdsForItem(facts, 3, 4)).toEqual(facts)
+  })
+
   test("rejects an already published question even after cosmetic reformatting", () => {
     const issues = validateAssessmentNovelty({
       items: [assessmentItem("FOR 循环会按什么顺序遍历列表?", ["随机顺序", "按索引顺序"])],
@@ -171,5 +182,32 @@ describe("novelty 结构级去重：observation_key 分组 + 最近窗口", () =
       ],
     }, [])
     expect(issues.some((issue) => issue.includes("本卷") && issue.includes("任务结构重复"))).toBe(true)
+  })
+
+  test("不信任模型自报的不同 structure_meta，拦截同卷仅改写措辞的题", () => {
+    const first = itemWithMeta(
+      "O1",
+      "阅读以下关于 Python 的描述：①Python 是一种通用编程语言；②Python 程序通常由解释器执行；③Python 适合编写脚本、数据处理和教学示例。以上描述中，有几条与已知事实相符？",
+      {
+        operation: "recognize_fact", reasoning_pattern: "multi_statement_validation",
+        representation: "enumerated_claims", context_family: "neutral_context", answer_form: "count_selection",
+      },
+      "OBS-K001",
+    )
+    const second = {
+      ...itemWithMeta(
+        "O1",
+        "阅读以下关于 Python 的三条描述：① Python 是一种通用编程语言。② Python 程序通常由解释器执行。③ Python 适合编写脚本、数据处理和教学示例。请问以上描述中有几条与事实相符？",
+        {
+          operation: "recognize_fact", reasoning_pattern: "multi_statement_validation",
+          representation: "enumerated_statements", context_family: "neutral_language_description", answer_form: "single_choice_count",
+        },
+        "OBS-K001",
+      ),
+      item_id: "ITEM-SECOND",
+      display_no: 2,
+    }
+    const issues = validateAssessmentNovelty({ items: [first, second] }, [])
+    expect(issues.some((issue) => issue.includes("items[1]") && issue.includes("语义结构近乎重复"))).toBe(true)
   })
 })

@@ -585,6 +585,10 @@ export function deriveCodeLabExecutionMode(
 export function freezeCodeLabExecutionContract(
   contract: ExecutionContract,
   mode: CodeLabExecutionMode,
+  taskContract?: {
+    learner_action: "recall_fact" | "implement_program" | "implement_function"
+    input_form: "function_arguments" | "stdin_lines" | "none"
+  },
 ): ExecutionContract {
   const frozen: ExecutionContract = structuredClone(contract)
   const platformImports = new Set<string>(PLATFORM_PYTHON_IMPORT_ALLOWLIST)
@@ -603,6 +607,12 @@ export function freezeCodeLabExecutionContract(
     // stdin_stdout 的输出就是标准输出文本，程序确定 kind=string，
     // 避免模型把"输出平均分"等写成数值语义，导致 hidden_tests[].expected 类型与输出合同错配。
     frozen.output_contract.kind = "string"
+    if (taskContract?.input_form === "none") {
+      frozen.input_contract = {
+        type: "none",
+        constraints: ["不读取标准输入；学习者只填写当前证据支持的事实文本"],
+      }
+    }
   }
   frozen.resource_limits = {
     timeout_ms: clampInt(frozen.resource_limits.timeout_ms, 100, 5000, 1000),
@@ -655,6 +665,11 @@ export function buildCodeLabObjectivePlan(
 export function validateCodeLabPublicAuthorAgainstPlan(
   payload: CodeLabPublicAuthorPayload,
   plan: CodeLabObjectivePlan[],
+  taskContract?: {
+    learner_action: "recall_fact" | "implement_program" | "implement_function"
+    learner_owned_region: "fact_literal" | "program_logic" | "function_body"
+    input_form: "function_arguments" | "stdin_lines" | "none"
+  },
 ): string[] {
   const issues: string[] = []
   if (payload.objectives.length !== plan.length) {
@@ -670,7 +685,25 @@ export function validateCodeLabPublicAuthorAgainstPlan(
         `objectives[${index}].public_test.input 必须使用 {"args": [...], "kwargs"?: {...}} 调用封装`,
       )
     }
+    if (taskContract?.learner_action === "recall_fact"
+      && !isEmptyProgramInput(entry.public_test.input)) {
+      issues.push(`objectives[${index}].public_test.input recall_fact 任务必须为空输入`)
+    }
   })
+  if (taskContract?.learner_action === "recall_fact") {
+    const executable = payload.starter_code
+      .split(/\r?\n/u)
+      .map((line) => line.replace(/#.*$/u, "").trim())
+      .filter(Boolean)
+      .join("\n")
+    if (taskContract.input_form !== "none"
+      || /\binput\s*\(|^(?:if|elif|else|for|while|match|case)\b/mu.test(executable)) {
+      issues.push("starter_code recall_fact 任务不得把输入解析、条件或循环留给学习者")
+    }
+    if (!/TODO|待填|补全/u.test(payload.starter_code)) {
+      issues.push("starter_code recall_fact 任务必须明确标出事实文本待填区")
+    }
+  }
   issues.push(...codeLabExecutionContractIssues(
     payload.execution_contract,
     "execution_contract",
@@ -683,6 +716,10 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     payload.starter_code,
   ))
   return issues
+}
+
+function isEmptyProgramInput(value: unknown): boolean {
+  return value === "" || value == null
 }
 
 export function materializeCodeLabPublicAuthorPayload(
@@ -1311,6 +1348,15 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
   return tiers.map((tier, index) => {
     const objective = assignments[index]
     const modality = modalities[index]
+    const objectiveOccurrence = assignments
+      .slice(0, index)
+      .filter((entry) => entry.objective_id === objective.objective_id)
+      .length
+    const plannedFactIds = assessmentFactIdsForItem(
+      objective.required_fact_ids,
+      tier,
+      objectiveOccurrence,
+    )
     const identity = { spec_id: spec.spec_id, index, objective_id: objective.objective_id, tier, modality }
     return {
       item_id: stableId("ITEM", identity),
@@ -1332,13 +1378,31 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
             value: spec.learner_adaptation.preferred_contexts[0],
           }
         : { kind: "neutral_context" as const },
-      citations: objective.required_fact_ids.map((factId) => ({
+      citations: plannedFactIds.map((factId) => ({
         source_id: objective.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
       })),
     }
   })
+}
+
+/**
+ * Give each item the smallest evidence surface that can support its tier.
+ * Tier 1 rotates one fact, Tier 2 may combine two, and Tier 3 may synthesize
+ * the whole target. This prevents parallel authors from all writing the same
+ * all-facts question while preserving AI-authored task content.
+ */
+export function assessmentFactIdsForItem(
+  factIds: string[],
+  tier: 1 | 2 | 3,
+  objectiveOccurrence: number,
+): string[] {
+  if (factIds.length <= 1 || tier === 3) return [...factIds]
+  const start = objectiveOccurrence % factIds.length
+  const count = tier === 1 ? 1 : Math.min(2, factIds.length)
+  return Array.from({ length: count }, (_, offset) =>
+    factIds[(start + offset) % factIds.length]!)
 }
 
 /** 同一知识来源上的同一可观察行为在路径/轮次变化后仍保持同一测量语义。 */
@@ -1532,6 +1596,12 @@ export function validateAssessmentNovelty(
   const current = new Map<string, number>()
   const currentStructures = new Map<string, number>()
   const currentMetaStructures = new Map<string, number>()
+  const currentPromptsByObservation: Array<{
+    index: number
+    modality: string
+    observationKey: string
+    surface: string
+  }> = []
   payload.items.forEach((item, index) => {
     const promptSignature = assessmentPromptSignature(item)
     const signature = assessmentItemSignature({
@@ -1584,8 +1654,67 @@ export function validateAssessmentNovelty(
         currentMetaStructures.set(localMetaSignature, index)
       }
     }
+    const observationKey = item.observation_key ?? item.objective_id
+    const nearDuplicate = currentPromptsByObservation.find((prior) =>
+      prior.modality === item.modality
+      && prior.observationKey === observationKey
+      && assessmentPromptNearDuplicate(
+        prior.surface,
+        assessmentItemSimilaritySurface(item),
+      ))
+    if (nearDuplicate
+      && samePromptIndex === undefined
+      && sameFormIndex === undefined
+      && sameStructureIndex === undefined) {
+      issues.push(
+        `items[${index}] 与本卷 items[${nearDuplicate.index}] 题干语义结构近乎重复，不能仅改写措辞或 structure_meta`,
+      )
+    }
+    currentPromptsByObservation.push({
+      index,
+      modality: item.modality,
+      observationKey,
+      surface: assessmentItemSimilaritySurface(item),
+    })
   })
   return issues
+}
+
+function assessmentItemSimilaritySurface(item: {
+  prompt: string
+  options?: Array<{ text: string }>
+  starter_code?: string
+}): string {
+  return [
+    item.prompt,
+    ...(item.options?.map((option) => option.text) ?? []),
+    item.starter_code ?? "",
+  ].join("\n")
+}
+
+/**
+ * structure_meta 是模型描述，不能单独作为去重事实。这里用实际题干
+ * 的字符二元组覆盖度识别“大段相同、只换问法”的同卷近重复。
+ * 仅在同 observation + 同题型内使用，避免跨目标误伤。
+ */
+export function assessmentPromptNearDuplicate(left: string, right: string): boolean {
+  const a = normalizeAssessmentSurface(left)
+  const b = normalizeAssessmentSurface(right)
+  if (a.length < 24 || b.length < 24) return false
+  const aGrams = characterNgrams(a, 2)
+  const bGrams = characterNgrams(b, 2)
+  if (aGrams.size === 0 || bGrams.size === 0) return false
+  let shared = 0
+  for (const gram of aGrams) if (bGrams.has(gram)) shared += 1
+  return shared / Math.min(aGrams.size, bGrams.size) >= 0.84
+}
+
+function characterNgrams(value: string, size: number): Set<string> {
+  const grams = new Set<string>()
+  for (let index = 0; index <= value.length - size; index += 1) {
+    grams.add(value.slice(index, index + size))
+  }
+  return grams
 }
 
 /**

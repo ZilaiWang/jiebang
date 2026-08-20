@@ -57,12 +57,20 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
     request.generation_spec.targets.map((target) => target.objective_id),
   )
   const targetSources = new Set(request.generation_spec.path_node.target_source_ids)
+  const requiredFactsBySource = new Map(
+    request.generation_spec.targets.map((target) => [
+      target.source_id,
+      new Set(target.required_fact_ids),
+    ] as const),
+  )
   const evidence = request.evidence_pack.results
     .filter((item) => targetSources.has(item.source_id))
     .map((item) => ({
       source_id: item.source_id,
       title: item.title,
-      facts: item.facts.map((fact) => ({ ...fact })),
+      facts: item.facts
+        .filter((fact) => requiredFactsBySource.get(item.source_id)?.has(fact.fact_id))
+        .map((fact) => ({ ...fact })),
     }))
 
   const payload = request.concept_artifact.payload
