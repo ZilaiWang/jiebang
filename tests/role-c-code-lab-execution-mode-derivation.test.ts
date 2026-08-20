@@ -124,6 +124,14 @@ describe("freezeCodeLabExecutionContract（确定性字段冻结）", () => {
     expect(frozen.input_contract.constraints).toEqual(["输入一行文本"])
     expect(frozen.output_contract.constraints).toEqual(["输出一行文本"])
   })
+
+  test("平台在 schema 校验前移除非法和重复的导入能力", () => {
+    const frozen = freezeCodeLabExecutionContract({
+      ...modelContract,
+      allowed_imports: ["sys", "math", "math.sqrt", "os", "statistics"],
+    }, "stdin_stdout")
+    expect(frozen.allowed_imports).toEqual(["math", "statistics"])
+  })
 })
 
 describe("explicitFunctionTask 门禁：教学讲解不被误杀", () => {

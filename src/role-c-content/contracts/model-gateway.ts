@@ -7,6 +7,7 @@ import {
   modelCallPolicy,
   ModelExecutionBudget,
   ModelExecutionBudgetExceededError,
+  ROLE_C_CONTENT_MODEL_CALL_BUDGET,
   classifyProviderFailure,
   retryDelayMs,
   sharedModelCircuitBreaker,
@@ -394,7 +395,7 @@ export class OpenAICompatibleModelGateway implements ModelGateway {
       finish_reason: detail.finishReason,
       response_format: policy.response_format,
       json_parse_ok: detail.jsonParseOk,
-      provider_error_code: detail.error?.provider_code,
+      provider_error_code: detail.error?.provider_code ?? detail.error?.code,
       provider_request_id: detail.providerRequestId,
       ...(attempt > 0 ? { retry_kind: "transport" as const } : {}),
     }
@@ -500,7 +501,10 @@ export function createRoleCModelGatewayFromEnv(
     execution_budget: overrides.execution_budget ?? new ModelExecutionBudget({
       soft_deadline_ms: optionalPositiveInteger(resolvedEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS, 180_000),
       hard_deadline_ms: optionalPositiveInteger(resolvedEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS, 360_000),
-      max_model_calls: optionalPositiveCount(resolvedEnv.MODEL_RUNTIME_MAX_MODEL_CALLS, 14),
+      max_model_calls: optionalPositiveCount(
+        resolvedEnv.MODEL_RUNTIME_MAX_MODEL_CALLS,
+        ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+      ),
       max_transport_retries_total: optionalNonNegativeInteger(resolvedEnv.MODEL_RUNTIME_TRANSPORT_RETRY_BUDGET, 3),
     }),
     ...overrides,

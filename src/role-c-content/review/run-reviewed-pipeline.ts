@@ -664,6 +664,9 @@ function blockedCandidate(
 
 function reviewFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : ""
+  if (/MODEL_EXECUTION_BUDGET_EXCEEDED|模型执行预算/u.test(message)) {
+    return "REVIEW_EXECUTION_BUDGET_EXCEEDED"
+  }
   if (/EVIDENCE_MUTATED|EVIDENCE_MISMATCH/u.test(message)) return "REVIEW_EVIDENCE_MISMATCH"
   if (/RUN_MISMATCH|INPUT_HASH_MISMATCH|SPEC_HASH_MISMATCH|POLICY_MISMATCH|ROUND_MISMATCH/u.test(message)) return "REVIEW_IDENTITY_MISMATCH"
   const invalidResult = /ROLE_C_REVIEW_(RESULT_[A-Z_]+|INVALID_ARBITRATION|PASS_WITH_FINDINGS|INSTRUCTION_[A-Z_]+)/u.exec(message)

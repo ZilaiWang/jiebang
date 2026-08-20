@@ -1,7 +1,15 @@
 import type { AssessmentItemPublic } from "../contracts/artifacts"
 import { contentHash, stableId, type CitationRef } from "../contracts/common"
 import type { RagEvidencePack } from "../contracts/evidence-pack"
-import type { GenerationSpec } from "../contracts/generation-spec"
+import { adaptationDefaults, type GenerationSpec } from "../contracts/generation-spec"
+import type { AssessmentBlueprint } from "../contracts/profile-adapter"
+import type { AssessmentCapacityPlan } from "./assessment-capacity"
+import {
+  splitDifficultyVector,
+  type ChallengeVector,
+  type SupportProfile,
+  type ResourceFitKind,
+} from "../contracts/resource-fit"
 import {
   buildAssessmentItemPlan,
   buildCodeLabObjectivePlan,
@@ -80,6 +88,12 @@ export interface ResourceBlueprint {
   evidence_ref: string
   evidence_content_hash: string
   objectives: ResourceBlueprintObjective[]
+  /**
+   * 三类资源各自的目标难度（Target Resource Difficulty）：讲义/代码实验/测评
+   * 分别冻结 challenge（越大越难）与 support（越大支持越强）目标。
+   * 不再由三类资源共用同一份 DifficultyVector——测评应低支架、讲义应高支架。
+   */
+  difficulty_plan: ResourceDifficultyPlan
   code_lab: {
     lab_id: string
     test_suite_id: string
@@ -91,6 +105,11 @@ export interface ResourceBlueprint {
     item_plan: AssessmentItemPlan[]
     total_items: number
     total_score: number
+    /** 生成前容量规划的显式结果；REDUCE 时说明为何实际题量少于上游请求。 */
+    capacity: Pick<
+      AssessmentCapacityPlan,
+      "decision" | "requested_items" | "feasible_items" | "limiting_factors"
+    >
   }
   /** Deterministic division of labor prepared before any artifact is authored. */
   cross_artifact_contract: {
@@ -108,9 +127,39 @@ export interface ResourceBlueprint {
   }
 }
 
+export interface ResourceDifficultyPlanEntry {
+  challenge_target: ChallengeVector
+  support_target: SupportProfile
+}
+
+export type ResourceDifficultyPlan = Record<ResourceFitKind, ResourceDifficultyPlanEntry>
+
+export interface ResourceBlueprintOptions {
+  assessment_blueprint?: AssessmentBlueprint
+  assessment_capacity?: AssessmentCapacityPlan
+}
+
+/**
+ * ResourceBlueprint 是容量规划后的测评执行合同。存在 blueprint 时，题量必须以
+ * item_plan 为准；required modalities 仍来自上游教学意图，并已由 item planner 安置。
+ */
+export function effectiveAssessmentBlueprint(
+  spec: GenerationSpec,
+  blueprint?: ResourceBlueprint,
+): AssessmentBlueprint {
+  if (!blueprint) return structuredClone(spec.assessment_blueprint)
+  return {
+    tier_1_count: blueprint.assessment.item_plan.filter((item) => item.tier === 1).length,
+    tier_2_count: blueprint.assessment.item_plan.filter((item) => item.tier === 2).length,
+    tier_3_count: blueprint.assessment.item_plan.filter((item) => item.tier === 3).length,
+    required_modalities: [...spec.assessment_blueprint.required_modalities],
+  }
+}
+
 export function buildResourceBlueprint(
   spec: GenerationSpec,
   evidence: RagEvidencePack,
+  options: ResourceBlueprintOptions = {},
 ): ResourceBlueprint {
   const evidenceHash = contentHash(evidence)
   if (evidence.retrieval_id !== spec.evidence_ref
@@ -120,10 +169,27 @@ export function buildResourceBlueprint(
   const identity = buildLabIdentity(spec)
   const codeObjectivePlan = buildCodeLabObjectivePlan(spec)
   const codeSecurePlan = buildCodeLabSecurePlan(spec, identity.test_suite_id)
-  const assessmentPlan = buildAssessmentItemPlan(spec)
+  const assessmentSpec = options.assessment_blueprint
+    ? { ...spec, assessment_blueprint: options.assessment_blueprint }
+    : spec
+  const assessmentPlan = buildAssessmentItemPlan(assessmentSpec)
+  const assessmentCapacity = options.assessment_capacity
+    ? {
+        decision: options.assessment_capacity.decision,
+        requested_items: options.assessment_capacity.requested_items,
+        feasible_items: options.assessment_capacity.feasible_items,
+        limiting_factors: [...options.assessment_capacity.limiting_factors],
+      }
+    : {
+        decision: "FULL" as const,
+        requested_items: assessmentPlan.length,
+        feasible_items: assessmentPlan.length,
+        limiting_factors: [],
+      }
   const taskContract = decideCodeLabTaskContract(spec, evidence)
   const crossArtifactContract = buildCrossArtifactContract()
-  const qualityRequirement = decideQualityRequirement(spec, codeObjectivePlan.length)
+  const qualityRequirement = decideQualityRequirement(assessmentSpec, codeObjectivePlan.length)
+  const difficultyPlan = buildDifficultyPlan(spec)
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
       entry.objective_id === target.objective_id)!
@@ -176,6 +242,7 @@ export function buildResourceBlueprint(
     evidence_ref: evidence.retrieval_id,
     evidence_content_hash: evidenceHash,
     objectives,
+    difficulty_plan: difficultyPlan,
     code_lab: {
       lab_id: identity.lab_id,
       test_suite_id: identity.test_suite_id,
@@ -183,7 +250,7 @@ export function buildResourceBlueprint(
       secure_plan: codeSecurePlan,
       task_contract: taskContract,
     },
-    assessment: assessmentPlan,
+    assessment: { item_plan: assessmentPlan, capacity: assessmentCapacity },
     cross_artifact_contract: crossArtifactContract,
     quality_requirement: qualityRequirement,
   }
@@ -194,6 +261,7 @@ export function buildResourceBlueprint(
     evidence_ref: evidence.retrieval_id,
     evidence_content_hash: evidenceHash,
     objectives,
+    difficulty_plan: difficultyPlan,
     code_lab: {
       lab_id: identity.lab_id,
       test_suite_id: identity.test_suite_id,
@@ -205,10 +273,104 @@ export function buildResourceBlueprint(
       item_plan: assessmentPlan,
       total_items: assessmentPlan.length,
       total_score: assessmentPlan.reduce((sum, item) => sum + item.max_score, 0),
+      capacity: assessmentCapacity,
     },
     cross_artifact_contract: crossArtifactContract,
     quality_requirement: qualityRequirement,
   })
+}
+
+/**
+ * 为三类资源分别规划目标难度（Target Resource Difficulty）。
+ *
+ * 从 GenerationSpec.difficulty（目标教学负荷）拆分 challenge/support 后，
+ * 按资源形态做差异化：
+ *   - 讲义：认知/推理坡度更缓，支架最强，低阅读密度；
+ *   - 代码实验：过程推理稍高，支架中等，starter/hint 充分；
+ *   - 测评：支架最低（不提示，真正测"独立完成能力"），挑战与目标一致。
+ *
+ * 这是"三种资源不再共用同一份 DifficultyVector"的落地。
+ */
+export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPlan {
+  const difficulty = spec.difficulty
+    ?? adaptationDefaults(spec.learner_adaptation?.level ?? "basic").difficulty
+  const { challenge, support } = splitDifficultyVector(difficulty)
+  const assessmentBlueprint = spec.assessment_blueprint
+  const plannedPrerequisiteLoad = spec.path_node?.prerequisite_source_ids?.length ?? 0
+  const tier2Count = assessmentBlueprint?.tier_2_count ?? 0
+  const tier3Count = assessmentBlueprint?.tier_3_count ?? 0
+  const assessmentTransfer = tier3Count > 0
+    ? 2
+    : tier2Count > 0
+      ? 1
+      : 0
+  const assessmentCognitive = tier3Count > 0
+    ? 3
+    : tier2Count > 0
+      ? 2
+      : 1
+
+  const concept: ResourceDifficultyPlanEntry = {
+    challenge_target: {
+      ...challenge,
+      cognitive_demand: clamp5(challenge.cognitive_demand - 1),
+      reasoning_steps: clamp5(challenge.reasoning_steps - 1),
+      code_complexity: clamp5(challenge.code_complexity - 1),
+      prerequisite_load: clamp5(Math.max(
+        challenge.prerequisite_load,
+        plannedPrerequisiteLoad,
+      )),
+      ...(challenge.transfer_distance !== undefined
+        ? { transfer_distance: clamp5(challenge.transfer_distance - 1) }
+        : {}),
+    },
+    support_target: {
+      scaffold_strength: clamp5(support.scaffold_strength + 1),
+      reading_density: "low",
+      hint_strength: clamp5(support.hint_strength + 1),
+      starter_support: 0,
+    },
+  }
+
+  const codeLab: ResourceDifficultyPlanEntry = {
+    challenge_target: {
+      ...challenge,
+      reasoning_steps: clamp5(challenge.reasoning_steps + 0.5),
+      code_complexity: clamp5(Math.max(challenge.code_complexity, 1)),
+    },
+    support_target: {
+      scaffold_strength: clamp5(support.scaffold_strength),
+      reading_density: support.reading_density,
+      hint_strength: clamp5(Math.max(support.hint_strength, 3)),
+      starter_support: clamp5(Math.max(support.starter_support, 3)),
+    },
+  }
+
+  const assessment: ResourceDifficultyPlanEntry = {
+    challenge_target: {
+      ...challenge,
+      cognitive_demand: clamp5(Math.max(
+        challenge.cognitive_demand,
+        assessmentCognitive,
+      )),
+      transfer_distance: clamp5(Math.max(
+        challenge.transfer_distance ?? 0,
+        assessmentTransfer,
+      )),
+    },
+    support_target: {
+      scaffold_strength: 0,
+      reading_density: "high",
+      hint_strength: 0,
+      starter_support: 0,
+    },
+  }
+
+  return { concept_lesson: concept, code_lab: codeLab, assessment }
+}
+
+function clamp5(value: number): number {
+  return Math.max(0, Math.min(5, Math.round(value * 10) / 10))
 }
 
 function buildCrossArtifactContract(): ResourceBlueprint["cross_artifact_contract"] {

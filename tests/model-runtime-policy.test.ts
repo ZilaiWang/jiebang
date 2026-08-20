@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   ModelExecutionBudget,
   ModelExecutionBudgetExceededError,
+  ROLE_C_CONTENT_MODEL_CALL_BUDGET,
   classifyProviderFailure,
   modelCallPolicy,
 } from "../src/model-runtime"
@@ -54,5 +55,12 @@ describe("project model runtime", () => {
     })
     budget.consumeModelCall()
     expect(() => budget.consumeModelCall()).toThrow(ModelExecutionBudgetExceededError)
+  })
+
+  test("default content budget covers three reviewed candidates", () => {
+    expect(new ModelExecutionBudget().snapshot().max_model_calls).toBe(
+      ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+    )
+    expect(ROLE_C_CONTENT_MODEL_CALL_BUDGET).toBe(60)
   })
 })

@@ -55,6 +55,7 @@ export interface AgentTraceEvent {
     | "c.pipeline.blocked"
     | "c.pipeline.failed"
     | "c.pipeline.ready"
+    | "c.capacity.reduced"
   run_id: string
   agent?: "concept-tutor" | "code-lab" | "tiered-evaluator"
   status: "started" | "success" | "blocked" | "failed"

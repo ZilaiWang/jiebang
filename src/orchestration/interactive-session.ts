@@ -16,6 +16,7 @@ import type { BackgroundEvidence, DiagnosisItem, ObjectiveDiagnosisEvidence, Sel
 import type { SubmissionAnswer } from "../role-c-content/contracts/artifacts"
 import type { GenerationRecoveryContext, NextRoundGenerationContext, PriorAssessmentItem } from "../role-c-content/agents/types"
 import type { RoleCAdaptationInfo } from "../role-c-content/contracts/external-api"
+import type { ResourceFitReport } from "../role-c-content/contracts/resource-fit"
 import type { DynamicFeedbackResult, ObjectiveRoundResult } from "../role-c-content/contracts/dynamic-feedback"
 import { DEFAULT_ROUND_ACTION_POLICY } from "../role-c-content/contracts/dynamic-feedback"
 import type { RagResult } from "../rag/retriever"
@@ -46,6 +47,7 @@ import {
 import {
   AtomicFileDurableJobStore,
   DurableJobRunner,
+  ROLE_C_CONTENT_MODEL_CALL_BUDGET,
   createModelWorkflowJob,
   type ModelWorkflowJobKind,
 } from "../model-runtime"
@@ -190,6 +192,8 @@ export interface InteractiveSessionRecord {
   assessment: unknown | null
   /** 本轮生成相对上一轮的适配信息（remediate/reinforce 时存在）。 */
   adaptation: unknown | null
+  /** 三类资源各自 target/observed 难度与 fit 结论（Resource Fit Report）。 */
+  resource_fit: ResourceFitReport | null
   /** Day4 多轮决策公开状态：测评后明确告诉 D/前端下一步动作，而不是让 UI 从 feedback 猜。 */
   next_round_action: Day4NextRoundActionState | null
   /** 最近一次代码实验或正式测评代码运行的公开摘要；不含隐藏测试、参考答案或私有套件。 */
@@ -339,7 +343,10 @@ export class InteractiveSessionStore {
       // durable job itself is replayed only after a crashed/expired lease.
       max_attempts: 1,
       policy_snapshot: { policy_version: "glm52-policy-v1", profile: "mixed" },
-      budget_snapshot: { max_model_calls: 14, max_transport_retries: 3 },
+      budget_snapshot: {
+        max_model_calls: ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+        max_transport_retries: 3,
+      },
       checkpoint_refs: [join(this.data_root, "role-c", "generation-checkpoints")],
     }))
   }
@@ -452,6 +459,7 @@ export class InteractiveSessionStore {
       learning_resources: { concept_lesson: null, code_lab: null },
       assessment: null,
       adaptation: null,
+      resource_fit: null,
       next_round_action: null,
       feedback: null,
       blocked_reason: null,
@@ -1096,6 +1104,7 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
     revision: Number.isSafeInteger(record.revision) && record.revision >= 0 ? record.revision : 0,
     code_execution: record.code_execution ?? null,
     adaptation: record.adaptation ?? null,
+    resource_fit: record.resource_fit ?? null,
     terminal_outcome: record.terminal_outcome ?? null,
     worker_ledger_history: record.worker_ledger_history ?? [],
     content_review: record.content_review ?? null,
@@ -1588,6 +1597,8 @@ interface FormalRoleCRound {
   rag_result: RagResult
   /** 本轮相对上一轮的适配信息（remediate/reinforce 时存在），随会话公开给 D。 */
   adaptation?: RoleCAdaptationInfo
+  /** 三类资源 target/observed 难度与 fit 结论。 */
+  resource_fit?: ResourceFitReport
 }
 
 type FormalRoleCRoundResult = FormalRoleCRound | { ok: false; reason: string; failure?: RoleCGenerationFailure }
@@ -1899,6 +1910,7 @@ async function generateFormalRoleCRound(
       assessment,
       rag_result: currentRagResult,
       adaptation: result.reviewedRelease.adaptation,
+      resource_fit: result.reviewedRelease.resource_fit,
     }
   }
   console.warn(`[orchestrator] Role C round ${record.round_no} ${result.failure.stage} blocked: ${result.reason}`)
@@ -2026,7 +2038,7 @@ async function applyFormalRoleCRound(
   record.assessment = round.assessment
   record.private.assessment_history = mergeAssessmentHistory(
     record.private.assessment_history,
-    publicAssessmentHistory(round.assessment),
+    publicAssessmentHistory(round.assessment, record.current_path_node),
   )
   // A public form is part of the novelty ledger as soon as it is published.
   // Waiting until submission would allow an abandoned form to reappear in a
@@ -2043,6 +2055,7 @@ async function applyFormalRoleCRound(
     updated_at: new Date().toISOString(),
   })
   record.adaptation = round.adaptation ?? null
+  record.resource_fit = round.resource_fit ?? null
   record.code_execution = null
   record.private.role_c = {
     data_directory: "role-c",
@@ -2062,11 +2075,20 @@ async function applyFormalRoleCRound(
   }
 }
 
-function publicAssessmentHistory(assessment: unknown): PriorAssessmentItem[] {
+function publicAssessmentHistory(
+  assessment: unknown,
+  pathNode: unknown,
+): PriorAssessmentItem[] {
   if (!isRecord(assessment) || !isRecord(assessment.payload)) return []
   const payload = assessment.payload
   const formId = typeof payload.form_id === "string" ? payload.form_id : ""
   const items = Array.isArray(payload.items) ? payload.items : []
+  const taskId = isRecord(pathNode) && typeof pathNode.node_id === "string"
+    ? pathNode.node_id
+    : undefined
+  const objectives = isRecord(pathNode) && Array.isArray(pathNode.objectives)
+    ? pathNode.objectives.filter(isRecord)
+    : []
   if (!formId) return []
   return items.flatMap((value) => {
     if (!isRecord(value)
@@ -2078,10 +2100,18 @@ function publicAssessmentHistory(assessment: unknown): PriorAssessmentItem[] {
     const options = Array.isArray(value.options)
       ? value.options.flatMap((option) => isRecord(option) && typeof option.text === "string" ? [option.text] : [])
       : []
+    const objective = objectives.find((entry) => entry.objective_id === value.objective_id)
+    const sourceId = typeof objective?.source_id === "string" ? objective.source_id : undefined
     return [{
       form_id: formId,
       item_id: value.item_id,
       objective_id: value.objective_id,
+      purpose: "formal_assessment" as const,
+      ...(taskId ? { task_id: taskId } : {}),
+      ...(sourceId ? { source_id: sourceId } : {}),
+      observation_key: typeof value.observation_key === "string"
+        ? value.observation_key
+        : value.objective_id,
       modality: value.modality as PriorAssessmentItem["modality"],
       prompt: value.prompt,
       options,
@@ -2133,6 +2163,9 @@ async function authorDiagnosisForm(
       form_id: formId,
       item_id: items[index]!.item_id,
       objective_id: `DIAG-${item.source_id}`,
+      purpose: "diagnosis" as const,
+      task_id: formId,
+      source_id: item.source_id,
       modality: "mcq" as const,
       prompt: item.question,
       options: [...item.options],
@@ -2305,6 +2338,7 @@ async function resetToDiagnosisPhase(
     learning_resources: { concept_lesson: null, code_lab: null },
     assessment: null,
     adaptation: null,
+    resource_fit: null,
     feedback: null,
     blocked_reason: null,
     terminal_outcome: null,

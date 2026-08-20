@@ -87,6 +87,6 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 6. 教学文字只使用 evidence.facts；输入中不存在事实身份的示例和练习不会作为可发表知识提供。编排器会把冻结事实作为 Claim 附加到 instruction。
 7. starter 不得直接完成任务，不得使用网络、宿主文件、shell、包安装或环境变量。
 8. starter 不得动态访问双下划线属性，不得调用 eval/exec/compile/open/breakpoint/__import__/globals/locals/vars/getattr/setattr/delattr；普通类的 __init__ 定义可用；import 只能来自 execution_contract.allowed_imports。
-9. execution_contract.allowed_imports 必须覆盖参考实现与隐藏测试会用到的平台白名单模块（如 json、math、collections、itertools、statistics、re 等）；只声明确实需要的模块，不得声明不允许的模块。secure 阶段不会也无法修改 allowed_imports，声明不足会导致私有参考实现被安全门禁退回。
+9. execution_contract.allowed_imports 只可从平台白名单 bisect、collections、datetime、decimal、enum、fractions、functools、heapq、itertools、io、json、math、operator、random、re、statistics、string 中选择，并须覆盖 starter、参考实现与隐藏测试实际使用的模块；基础任务优先使用内置语法并返回空数组。不得使用 sys、os、pathlib、subprocess 等平台外模块。secure 阶段不会也无法扩大 allowed_imports。
 10. evidence 涉及文件读写时，公开实验须明确采用安全等价环境：把文件文本作为函数参数，或使用 io.StringIO 这类内存文件对象；不得调用 open、访问宿主路径或声称已改写真实文件。
 11. ${JSON_ONLY}`

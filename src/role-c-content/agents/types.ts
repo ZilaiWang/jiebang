@@ -32,12 +32,24 @@ export interface PriorAssessmentItem {
   form_id: string
   item_id: string
   objective_id: string
+  /** 题目的教学用途；诊断与正式测评共享 exposure ledger，但不混淆用途语义。 */
+  purpose?: "diagnosis" | "formal_assessment"
+  /** 发布题目所属的稳定任务/路径节点。全局 exact 去重不依赖它，审计与统计可使用。 */
+  task_id?: string
+  /** 目标知识来源；与 observation_key 一起支持跨重规划的能力追踪。 */
+  source_id?: string
   modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
   prompt: string
   options: string[]
   starter_code?: string
   /** 题目结构元数据（发布时随公开题保存），novelty 校验用它做结构级去重。 */
   structure_meta?: AssessmentStructureMeta
+  /**
+   * 测量目标稳定语义键（Observation Key）。结构级去重只在同一 observation_key
+   * 内生效；跨不同 observation_key 允许结构复用（纵向复测同一能力是合理的）。
+   * 缺省回退为 objective_id（旧历史兼容）。
+   */
+  observation_key?: string
 }
 
 export interface GenerationRecoveryContext {

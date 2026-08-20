@@ -55,7 +55,6 @@ import {
 import { isTrustedExpectedDerivationIssue, validateCodeLabDraftStructure, validateCodeLabPublicStage } from "../validators/code-lab-validator"
 import { validateAssessmentDraftStructure, validateAssessmentPublicStage } from "../validators/assessment-validator"
 import { validateConceptLesson } from "../validators/concept-validator"
-import { analyzePythonSource } from "../security/python-static-analyzer"
 import {
   getRoleCModelOutputSchema,
   getRoleCModelOutputSchemaFragment,
@@ -368,17 +367,20 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       max_repairs: maxRepairs,
       diagnostic_sink: this.stageFailureDiagnosticSink,
       validate: (payload) => {
-        const schema = validateRoleCSchemaFragment(
-          "code_lab_draft.schema.json",
-          "/$defs/public_author_payload",
-          payload,
-        )
-        if (!schema.ok) return validationIssues(schema)
+        // Freeze platform-owned execution fields before strict schema
+        // validation. Otherwise a model-proposed unsupported import is
+        // rejected before the trusted planning projection can remove it.
         const normalizedAuthor = normalizeCodeLabPublicAuthorPayload(payload)
         normalizedAuthor.execution_contract = freezeCodeLabExecutionContract(
           normalizedAuthor.execution_contract,
           executionMode,
         )
+        const schema = validateRoleCSchemaFragment(
+          "code_lab_draft.schema.json",
+          "/$defs/public_author_payload",
+          normalizedAuthor,
+        )
+        if (!schema.ok) return validationIssues(schema)
         const planIssues = validateCodeLabPublicAuthorAgainstPlan(
           normalizedAuthor,
           objectivePlan,
@@ -417,6 +419,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
         concept: modelInput.concept,
+        upstream: modelInput.upstream,
         public_payload: normalizedPublic,
         staged_contract: {
           lab_id: identity.lab_id,
@@ -424,8 +427,6 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           execution_contract: normalizedPublic.execution_contract,
           objective_plan: securePlan,
         },
-        revision_objections: modelInput.revision_objections,
-        external_revision_round: modelInput.external_revision_round,
         private_input_rules: secureInputRules,
       },
       output_schema_id: "role_c_code_lab_secure_author_payload_v1",
@@ -602,6 +603,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
         concept: modelInput.concept,
+        upstream: modelInput.upstream,
         public_payload: publicPayload,
         prior_secure_payload: draft.secure_draft.payload,
         trusted_execution_report: {
@@ -623,8 +625,6 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           execution_contract: publicPayload.execution_contract,
           objective_plan: objectivePlan,
         },
-        revision_objections: modelInput.revision_objections,
-        external_revision_round: modelInput.external_revision_round,
       },
       output_schema_id: "role_c_code_lab_execution_repair_patch_v1",
       output_schema: codeLabExecutionRepairSchema(
@@ -816,8 +816,6 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           option_order_seed: request.generation_spec.policies.seed,
           item_plan: plan,
         },
-        revision_objections: modelInput.revision_objections,
-        external_revision_round: modelInput.external_revision_round,
       },
       output_schema_id: "role_c_assessment_secure_author_payload_v1",
       output_schema: fragment("assessment_draft.schema.json", "/$defs/secure_author_payload"),
@@ -937,8 +935,6 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           option_order_seed: request.generation_spec.policies.seed,
           item_plan: plan,
         },
-        revision_objections: modelInput.revision_objections,
-        external_revision_round: modelInput.external_revision_round,
       },
       output_schema_id: "role_c_assessment_secure_author_payload_v1",
       output_schema: fragment(
@@ -1863,17 +1859,10 @@ export function conservativeCodeLabPublicSafetyPatch(
 export function normalizeCodeLabPublicAuthorPayload(
   payload: CodeLabPublicAuthorPayload,
 ): CodeLabPublicAuthorPayload {
-  const normalized = structuredClone(payload)
-  if (analyzePythonSource(
-    normalized.starter_code,
-    normalized.execution_contract,
-  ).length > 0) {
-    normalized.starter_code = minimalSafeStarter(
-      normalized.starter_code,
-      normalized.execution_contract,
-    )
-  }
-  return normalized
+  // Authoring validation must see unsafe or undeclared imports so the model can
+  // rewrite the actual starter. Silently replacing it with a one-line TODO
+  // produces a schema-valid but instructionally unusable lab.
+  return structuredClone(payload)
 }
 
 function minimalSafeStarter(

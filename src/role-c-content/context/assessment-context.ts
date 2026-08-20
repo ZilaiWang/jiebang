@@ -2,6 +2,7 @@ import type { TieredEvaluatorRequest } from "../agents/types"
 import type { CitationRef } from "../contracts/common"
 import type { EvidenceFact } from "../contracts/evidence-pack"
 import { projectNextRoundContext } from "./next-round-context"
+import { effectiveAssessmentBlueprint } from "../planning/resource-blueprint"
 
 export interface AssessmentAuthorModelInput {
   contract: {
@@ -35,22 +36,22 @@ export interface AssessmentAuthorModelInput {
       variant_id: string
       required_design_moves: string[]
     }
+    revision_objections?: TieredEvaluatorRequest["revision_objections"]
+    external_revision_round?: TieredEvaluatorRequest["external_revision_round"]
+    resource_blueprint?: {
+      blueprint_id: string
+      spec_id: string
+      cross_artifact_contract: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["cross_artifact_contract"]
+      quality_requirement: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["quality_requirement"]
+      assessment: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["assessment"]
+      objectives: Array<Pick<
+        NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["objectives"][number],
+        "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "assessment"
+      >>
+    }
+    round_semantic_plan?: TieredEvaluatorRequest["round_semantic_plan"]
+    generation_recovery?: TieredEvaluatorRequest["generation_recovery"]
   }
-  revision_objections?: TieredEvaluatorRequest["revision_objections"]
-  external_revision_round?: TieredEvaluatorRequest["external_revision_round"]
-  resource_blueprint?: {
-    blueprint_id: string
-    spec_id: string
-    cross_artifact_contract: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["cross_artifact_contract"]
-    quality_requirement: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["quality_requirement"]
-    assessment: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["assessment"]
-    objectives: Array<Pick<
-      NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["objectives"][number],
-      "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "assessment"
-    >>
-  }
-  round_semantic_plan?: TieredEvaluatorRequest["round_semantic_plan"]
-  generation_recovery?: TieredEvaluatorRequest["generation_recovery"]
 }
 
 /** Keeps authoring context high-signal and excludes learner identity and quiz answers. */
@@ -99,7 +100,10 @@ export function buildAssessmentAuthorModelInput(
       targets: structuredClone(request.generation_spec.targets),
       learner_adaptation: structuredClone(request.generation_spec.learner_adaptation),
       difficulty: structuredClone(request.generation_spec.difficulty),
-      assessment_blueprint: structuredClone(request.generation_spec.assessment_blueprint),
+      assessment_blueprint: effectiveAssessmentBlueprint(
+        request.generation_spec,
+        request.resource_blueprint,
+      ),
       policies: structuredClone(request.generation_spec.policies),
     },
     evidence: request.evidence_pack.results
@@ -132,13 +136,12 @@ export function buildAssessmentAuthorModelInput(
             ],
           }
         : undefined,
-    },
-    revision_objections: request.revision_objections
-      ? structuredClone(request.revision_objections)
-      : undefined,
-    external_revision_round: request.external_revision_round,
-    resource_blueprint: request.resource_blueprint
-      ? {
+      revision_objections: request.revision_objections
+        ? structuredClone(request.revision_objections)
+        : undefined,
+      external_revision_round: request.external_revision_round,
+      resource_blueprint: request.resource_blueprint
+        ? {
           blueprint_id: request.resource_blueprint.blueprint_id,
           spec_id: request.resource_blueprint.spec_id,
           cross_artifact_contract: structuredClone(request.resource_blueprint.cross_artifact_contract),
@@ -151,14 +154,15 @@ export function buildAssessmentAuthorModelInput(
             required_fact_ids: [...objective.required_fact_ids],
             assessment: structuredClone(objective.assessment),
           })),
-        }
-      : undefined,
-    round_semantic_plan: request.round_semantic_plan
-      ? structuredClone(request.round_semantic_plan)
-      : undefined,
-    generation_recovery: request.generation_recovery
-      ? structuredClone(request.generation_recovery)
-      : undefined,
+          }
+        : undefined,
+      round_semantic_plan: request.round_semantic_plan
+        ? structuredClone(request.round_semantic_plan)
+        : undefined,
+      generation_recovery: request.generation_recovery
+        ? structuredClone(request.generation_recovery)
+        : undefined,
+    },
   }
 }
 

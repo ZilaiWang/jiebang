@@ -104,6 +104,7 @@
         "variant_id": { "type": "string", "minLength": 1 },
         "display_no": { "type": "integer", "minimum": 1 },
         "objective_id": { "type": "string", "minLength": 1 },
+        "observation_key": { "type": "string", "minLength": 1 },
         "tier": { "type": "integer", "minimum": 1, "maximum": 3 },
         "modality": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] },
         "prompt": { "type": "string", "minLength": 1, "maxLength": 3000 },

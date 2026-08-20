@@ -12,6 +12,7 @@ const plan: AssessmentItemPlan[] = [{
   variant_id: "VARIANT-1",
   display_no: 1,
   objective_id: "OBJ-K001",
+  observation_key: "OBS-K001-RECOGNIZE",
   tier: 1,
   modality: "mcq",
   max_score: 1,

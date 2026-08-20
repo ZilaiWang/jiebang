@@ -2392,16 +2392,14 @@ function readyAssessment(run: LearningRunRecord): AssessmentPublicArtifact {
   return artifact
 }
 
-/** 历史题目账本上限：5 题/轮 × 6 轮，防无限增长。 */
-const PRIOR_ASSESSMENT_LEDGER_LIMIT = 30
-
 /**
  * 从上一轮 run 的 assessment_public 提取正式测评公开题（PriorAssessmentItem[]），
  * 传给下一轮用于变式命制与 novelty 校验。没有已发布测评时返回空数组。
  *
  * 必须合并 run.pipeline_input.prior_assessment_items（前几轮已累计的历史）：
  * 只传"上一轮"会导致第 3 轮只避开第 2 轮、第 1 轮题目重新出现。累计账本按
- * form_id:item_id 去重并设数量上限。
+ * form_id:item_id 去重。完整公开题面账本用于永久 exact 去重；结构去重窗口由
+ * novelty validator 按 observation_key 单独控制，不能通过裁掉旧题混为一谈。
  */
 function priorAssessmentItemsFromRun(run: LearningRunRecord): PriorAssessmentItem[] {
   const artifact = run.pipeline_result.public_artifacts.assessment
@@ -2412,6 +2410,14 @@ function priorAssessmentItemsFromRun(run: LearningRunRecord): PriorAssessmentIte
         form_id: payload.form_id,
         item_id: item.item_id,
         objective_id: item.objective_id,
+        purpose: "formal_assessment" as const,
+        task_id: run.pipeline_input.generation_spec.path_node.node_id,
+        ...(run.pipeline_input.generation_spec.targets.find((target) =>
+          target.objective_id === item.objective_id)?.source_id
+          ? { source_id: run.pipeline_input.generation_spec.targets.find((target) =>
+              target.objective_id === item.objective_id)!.source_id }
+          : {}),
+        ...(item.observation_key ? { observation_key: item.observation_key } : {}),
         modality: item.modality,
         prompt: item.prompt,
         options: item.options?.map((option) => option.text) ?? [],
@@ -2421,7 +2427,7 @@ function priorAssessmentItemsFromRun(run: LearningRunRecord): PriorAssessmentIte
   return mergePriorAssessmentLedger(
     run.pipeline_input.prior_assessment_items ?? [],
     currentItems,
-  ).slice(-PRIOR_ASSESSMENT_LEDGER_LIMIT)
+  )
 }
 
 function mergePriorAssessmentLedger(

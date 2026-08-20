@@ -34,7 +34,12 @@ import type { CPipelineCheckpoint, CPipelineCheckpointStore } from "../reliabili
 import type { AgentTraceStore } from "../reliability/trace-store"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
 import { validatePublicArtifactNoSecrets } from "../validators/public-secure-leak-validator"
-import { buildResourceBlueprint } from "../planning/resource-blueprint"
+import { buildResourceBlueprint, type ResourceBlueprint } from "../planning/resource-blueprint"
+import { planAssessmentCapacity, type AssessmentCapacityPlan } from "../planning/assessment-capacity"
+import {
+  assessmentObservationKey,
+  STRUCTURAL_NOVELTY_WINDOW,
+} from "../providers/staged-generation"
 import type { RoundSemanticPlan, RoundSemanticPlanner } from "../planning/round-semantic-plan"
 
 export interface CPipelineInput {
@@ -307,6 +312,55 @@ function validateGenerationRecovery(
   return []
 }
 
+/**
+ * 从 pipeline input 估算测评容量。available_facts 取该 objective 绑定的事实数
+ * （required_fact_ids）；used_structures 取历史里同 observation_key 的
+ * 去重结构数（operation + reasoning + representation + context + answer form）。
+ */
+function planAssessmentCapacityForPipeline(input: CPipelineInput): AssessmentCapacityPlan {
+  const spec = input.generation_spec
+  const history = input.prior_assessment_items ?? []
+  const usedStructures = new Map<string, Set<string>>()
+  const seenByObservation = new Map<string, number>()
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index]!
+    const key = item.observation_key ?? item.objective_id
+    const seen = seenByObservation.get(key) ?? 0
+    if (seen >= STRUCTURAL_NOVELTY_WINDOW) continue
+    seenByObservation.set(key, seen + 1)
+    if (!item.structure_meta) continue
+    const structureSignature = [
+      item.structure_meta.operation,
+      item.structure_meta.reasoning_pattern,
+      item.structure_meta.representation,
+      item.structure_meta.context_family,
+      item.structure_meta.answer_form,
+    ].join("\u0000")
+    const set = usedStructures.get(key) ?? new Set<string>()
+    set.add(structureSignature)
+    usedStructures.set(key, set)
+  }
+  return planAssessmentCapacity({
+    requested: {
+      tier_1_count: spec.assessment_blueprint.tier_1_count,
+      tier_2_count: spec.assessment_blueprint.tier_2_count,
+      tier_3_count: spec.assessment_blueprint.tier_3_count,
+      required_modalities: [...spec.assessment_blueprint.required_modalities],
+    },
+    objectives: spec.targets.map((target) => {
+      const observationKey = assessmentObservationKey(target)
+      return {
+        objective_id: target.objective_id,
+        observable_behavior: target.observable_behavior,
+        importance: target.importance,
+        available_facts: target.required_fact_ids.length,
+        used_structures: (usedStructures.get(observationKey)
+          ?? usedStructures.get(target.objective_id))?.size ?? 0,
+      }
+    }),
+  })
+}
+
 async function runCPipelineCore(
   input: CPipelineInput,
   agents: RoleCAgents,
@@ -429,15 +483,55 @@ async function runCPipelineCore(
     validator_results: [{ validator: "spec-evidence", ok: true, issue_count: 0 }],
   })
   state = transitionCState(state, "GENERATING")
+
+  // 测评容量规划：生成前先算"证据 + novelty 约束能支撑多少道题"。
+  // 连 core objective 都覆盖不了 → 直接 blocked（要求 B replan），而不是让生成模型 retry 到死；
+  // 可行题量不足但能覆盖 core → 缩减蓝图，避免 CONTENT_NOT_NOVEL 死循环。
+  const capacityPlan = planAssessmentCapacityForPipeline(input)
+  if (capacityPlan.decision === "REPLAN") {
+    const blockedReason: BlockedReason = {
+      code: "BLOCKED_MISSING_EVIDENCE",
+      message: "测评容量不足：当前证据与历史约束无法覆盖 core objective，需要 B 重新规划路径或补证据",
+      details: [
+        `requested=${capacityPlan.requested_items}`,
+        `feasible=${capacityPlan.feasible_items}`,
+        `limiting=${capacityPlan.limiting_factors.join(",") || "none"}`,
+      ],
+    }
+    pushTrace({
+      event_type: "c.pipeline.blocked",
+      run_id: input.generation_spec.run_id,
+      status: "blocked",
+      input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id],
+      summary: blockedReason.message,
+      validator_results: [{ validator: "assessment-capacity", ok: false, issue_count: 1 }],
+    })
+    return blockedResult(input.generation_spec, state, trace, blockedReason)
+  }
+  if (capacityPlan.decision === "REDUCE" && capacityPlan.adjusted_blueprint) {
+    pushTrace({
+      event_type: "c.capacity.reduced",
+      run_id: input.generation_spec.run_id,
+      status: "success",
+      input_refs: [input.generation_spec.spec_id],
+      summary: `测评容量不足，蓝图题量 ${capacityPlan.requested_items} → ${capacityPlan.feasible_items}（${capacityPlan.limiting_factors.join(",")}）`,
+    })
+  }
+
   const resourceBlueprint = buildResourceBlueprint(
     input.generation_spec,
     input.evidence_pack,
+    {
+      assessment_blueprint: capacityPlan.adjusted_blueprint
+        ?? input.generation_spec.assessment_blueprint,
+      assessment_capacity: capacityPlan,
+    },
   )
 
   let checkpoint: CPipelineCheckpoint | undefined
   try {
     const loaded = await options.checkpoint_store?.load(inputHash)
-    checkpoint = loaded && checkpointIssues(loaded, input, inputHash).length === 0 ? loaded : undefined
+    checkpoint = loaded && checkpointIssues(loaded, input, inputHash, resourceBlueprint).length === 0 ? loaded : undefined
   } catch { checkpoint = undefined }
 
   let roundSemanticPlan: RoundSemanticPlan | undefined = checkpoint?.round_semantic_plan
@@ -1090,11 +1184,13 @@ function checkpointIssues(
   checkpoint: CPipelineCheckpoint,
   input: CPipelineInput,
   inputHash: string,
+  expectedBlueprint?: ResourceBlueprint,
 ): string[] {
   const issues: string[] = []
   if (checkpoint.input_hash !== inputHash) issues.push("checkpoint input_hash 不一致")
   if (checkpoint.metadata) {
-    const blueprint = buildResourceBlueprint(input.generation_spec, input.evidence_pack)
+    const blueprint = expectedBlueprint
+      ?? buildResourceBlueprint(input.generation_spec, input.evidence_pack)
     if (checkpoint.metadata.spec_id !== input.generation_spec.spec_id
       || checkpoint.metadata.blueprint_id !== blueprint.blueprint_id
       || checkpoint.metadata.model_id !== input.generation_spec.versions.model_config_hash
@@ -1107,7 +1203,8 @@ function checkpointIssues(
   }
   if (checkpoint.round_semantic_plan
     && (checkpoint.round_semantic_plan.spec_id !== input.generation_spec.spec_id
-      || checkpoint.round_semantic_plan.blueprint_id !== buildResourceBlueprint(input.generation_spec, input.evidence_pack).blueprint_id)) {
+      || checkpoint.round_semantic_plan.blueprint_id !== (expectedBlueprint
+        ?? buildResourceBlueprint(input.generation_spec, input.evidence_pack)).blueprint_id)) {
     issues.push("checkpoint 语义规划依赖已失效")
   }
   if (checkpoint.stage === "semantic_plan_ready" && !checkpoint.round_semantic_plan) {

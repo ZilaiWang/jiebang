@@ -70,4 +70,41 @@ describe("Role C citable authoring context", () => {
       expect(input.evidence[0]).not.toHaveProperty("practice_tasks")
     }
   })
+
+  test("places external review instructions at the common upstream contract path", () => {
+    const revisionObjections = [{
+      objection_id: "OBJ-REV-1",
+      from_agent: "cross-artifact-gate" as const,
+      review_instruction_id: "REV-1",
+      review_source: "fact_audit" as const,
+      review_code: "semantic_unsupported",
+      review_message: "删除无证据支持的索引起始规则",
+      target_agent: "tiered-evaluator" as const,
+      target_artifact_id: "ART-ASSESSMENT",
+      objective_id: "OBJ-K003",
+      issue_type: "unsupported_claim" as const,
+      locator: { field: "items[0].prompt", ref_id: "ITEM-1" },
+      fix_scope: "artifact" as const,
+      severity: "critical" as const,
+      evidence: [],
+      proposed_action: "仅依据 F001 重写题面",
+    }]
+    const request = {
+      generation_spec: spec,
+      evidence_pack: evidencePack,
+      concept_artifact: conceptArtifact,
+      revision_objections: revisionObjections,
+      external_revision_round: 2,
+    }
+    const concept = buildConceptTutorModelInput(request as never)
+    const lab = buildCodeLabModelInput(request as never)
+    const assessment = buildAssessmentAuthorModelInput(request as never)
+
+    for (const input of [concept, lab, assessment]) {
+      expect(input.upstream.revision_objections).toEqual(revisionObjections)
+      expect(input.upstream.external_revision_round).toBe(2)
+      expect(input).not.toHaveProperty("revision_objections")
+      expect(input).not.toHaveProperty("external_revision_round")
+    }
+  })
 })
