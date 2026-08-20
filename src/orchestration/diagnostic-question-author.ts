@@ -3,6 +3,7 @@ import type { ModelGateway } from "../role-c-content/contracts/model-gateway"
 import type { PriorAssessmentItem } from "../role-c-content/agents/types"
 import { validateAssessmentNovelty } from "../role-c-content/providers/staged-generation"
 import type { DiagnosticEvidenceTarget } from "../knowledge/diagnostic-selector"
+import { fastModelPolicy } from "../model-runtime"
 
 export interface AuthoredDiagnosticItem {
   source_id: string
@@ -101,6 +102,10 @@ export class ModelDiagnosticQuestionAuthor implements DiagnosticQuestionAuthorPo
         output_schema: OUTPUT_SCHEMA,
         temperature: 0.45,
         max_tokens: 2600,
+        policy: fastModelPolicy("DIAGNOSTIC_QUESTION_AUTHOR", 4_000, {
+          max_transport_retries: attempt === 0 ? 1 : 0,
+          do_sample: attempt > 0,
+        }),
         idempotency_key: contentHash({
           contract: "diagnostic-question-author-v1",
           prompt_version: DIAGNOSTIC_QUESTION_PROMPT_VERSION,

@@ -179,7 +179,7 @@ export interface ContentReviewPort {
 
 export type ReviewedBasePipelineOptions = Pick<
   CPipelineOptions,
-  "critic" | "fact_audit_port" | "trace_seq_start" | "checkpoint_store"
+  "critic" | "fact_audit_port" | "trace_seq_start" | "checkpoint_store" | "semantic_planner"
 >
 
 export interface RunReviewedCPipelineOptions extends ReviewedBasePipelineOptions {

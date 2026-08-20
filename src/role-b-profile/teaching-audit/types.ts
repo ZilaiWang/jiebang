@@ -46,6 +46,11 @@ export interface TeachingAuditInput {
   targetSourceIds?: string[]
   // 可选：教学内容的文本摘要，用于目标对齐判断
   contentSummary?: string
+  /**
+   * C 冻结 GenerationSpec 后实际采用的呈现难度。提供时，B 审核实际教学
+   * 负荷；未提供时保留原有知识点静态难度检查，兼容独立路径审核调用。
+   */
+  contentDifficulty?: KnowledgeDifficulty
 }
 
 // ── 审核维度结果 ──

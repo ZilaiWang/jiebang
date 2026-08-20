@@ -1,5 +1,6 @@
 import { contentHash } from "../contracts/common"
 import type { ModelGateway } from "../contracts/model-gateway"
+import { fastModelPolicy } from "../../model-runtime"
 import { EVALUATOR_GRADER_PROMPT_VERSION, EVALUATOR_GRADER_SYSTEM_PROMPT } from "../prompts"
 import { getRoleCModelOutputSchema, validateRoleCSchema } from "../validators/runtime-schema-validator"
 import type { BlindRubricJudge, BlindRubricJudgeRequest, BlindRubricJudgeResult } from "./grade-submission"
@@ -20,6 +21,7 @@ export class ModelBackedBlindRubricJudge implements BlindRubricJudge {
       output_schema: getRoleCModelOutputSchema("rubric_judgment.schema.json"),
       temperature: 0,
       max_tokens: 1_500,
+      policy: fastModelPolicy("BLIND_RUBRIC_JUDGMENT", 1_500),
       idempotency_key: `IDEMP-${contentHash({
         request,
         prompt_version: EVALUATOR_GRADER_PROMPT_VERSION,

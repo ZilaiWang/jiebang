@@ -1,5 +1,6 @@
 import { stableId, contentHash } from "../contracts/common"
 import type { ModelGateway } from "../contracts/model-gateway"
+import { fastModelPolicy } from "../../model-runtime"
 import {
   CROSS_ARTIFACT_CRITIC_PROMPT_VERSION,
   CROSS_ARTIFACT_CRITIC_SYSTEM_PROMPT,
@@ -37,6 +38,11 @@ export class ModelBackedCrossArtifactCritic implements CrossArtifactCritic {
       output_schema: getRoleCModelOutputSchema("alignment_critic_judgment.schema.json"),
       temperature: 0,
       max_tokens: 3_000,
+      policy: fastModelPolicy("CROSS_ARTIFACT_CRITIC", 3_000, {
+        timeout_ms: 90_000,
+        priority: "review",
+        concurrency_group: "audit",
+      }),
       idempotency_key: `IDEMP-${contentHash({
         safeInput,
         prompt_version: CROSS_ARTIFACT_CRITIC_PROMPT_VERSION,

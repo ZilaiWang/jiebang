@@ -35,6 +35,7 @@ import type { AgentTraceStore } from "../reliability/trace-store"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
 import { validatePublicArtifactNoSecrets } from "../validators/public-secure-leak-validator"
 import { buildResourceBlueprint } from "../planning/resource-blueprint"
+import type { RoundSemanticPlan, RoundSemanticPlanner } from "../planning/round-semantic-plan"
 
 export interface CPipelineInput {
   generation_spec: GenerationSpec
@@ -71,6 +72,8 @@ export interface CPipelineOptions {
   cache?: ContentCache<CPipelineResult>
   checkpoint_store?: CPipelineCheckpointStore
   trace_store?: AgentTraceStore
+  /** Optional one-shot semantic planner used only when the deterministic blueprint requests QUALITY. */
+  semantic_planner?: RoundSemanticPlanner
   /** Internal continuation offset; callers normally leave this unset. */
   trace_seq_start?: number
 }
@@ -99,6 +102,7 @@ export async function runCPipeline(
       cache: localDependencyId(options.cache),
       checkpoint_store: localDependencyId(options.checkpoint_store),
       trace_store: localDependencyId(options.trace_store),
+      semantic_planner: localDependencyId(options.semantic_planner),
       trace_seq_start: options.trace_seq_start ?? null,
     },
   })
@@ -436,6 +440,41 @@ async function runCPipelineCore(
     checkpoint = loaded && checkpointIssues(loaded, input, inputHash).length === 0 ? loaded : undefined
   } catch { checkpoint = undefined }
 
+  let roundSemanticPlan: RoundSemanticPlan | undefined = checkpoint?.round_semantic_plan
+  if (!roundSemanticPlan && options.semantic_planner) {
+    roundSemanticPlan = await options.semantic_planner.plan({
+      spec: input.generation_spec,
+      evidence: input.evidence_pack,
+      blueprint: resourceBlueprint,
+    })
+  }
+  const checkpointMetadata: NonNullable<CPipelineCheckpoint["metadata"]> = {
+    spec_id: input.generation_spec.spec_id,
+    blueprint_id: resourceBlueprint.blueprint_id,
+    model_id: input.generation_spec.versions.model_config_hash,
+    prompt_version: input.generation_spec.versions.prompt_version,
+    policy_version: resourceBlueprint.quality_requirement.policy_version,
+    policy_decision_hash: resourceBlueprint.quality_requirement.decision_hash,
+    evidence_hash: input.generation_spec.evidence_content_hash,
+    created_at: new Date().toISOString(),
+  }
+  if (roundSemanticPlan && !checkpoint?.round_semantic_plan) {
+    try {
+      await options.checkpoint_store?.save({
+        input_hash: inputHash,
+        stage: "semantic_plan_ready",
+        round_semantic_plan: roundSemanticPlan,
+        metadata: checkpointMetadata,
+      })
+      checkpoint = {
+        input_hash: inputHash,
+        stage: "semantic_plan_ready",
+        round_semantic_plan: roundSemanticPlan,
+        metadata: checkpointMetadata,
+      }
+    } catch { /* checkpoint is non-authoritative */ }
+  }
+
   pushTrace({
     event_type: "c.agent.started",
     run_id: input.generation_spec.run_id,
@@ -443,7 +482,7 @@ async function runCPipelineCore(
     status: "started",
     input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id],
     summary: "concept-tutor 开始生成讲义",
-    ...(checkpoint ? { retry_kind: "resume" as const } : {}),
+    ...(checkpoint?.concept ? { retry_kind: "resume" as const } : {}),
   })
   let concept: ConceptLessonArtifact
   try {
@@ -452,10 +491,19 @@ async function runCPipelineCore(
       evidence_pack: input.evidence_pack,
       next_round_context: input.next_round_context,
       resource_blueprint: resourceBlueprint,
+      round_semantic_plan: roundSemanticPlan,
       generation_recovery: recoveryForAgent(input, "concept"),
     })
-    if (!checkpoint && concept.status === "ready") {
-      try { await options.checkpoint_store?.save({ input_hash: inputHash, stage: "concept_ready", concept }) } catch { /* checkpoint is non-authoritative */ }
+    if (!checkpoint?.concept && concept.status === "ready") {
+      try {
+        await options.checkpoint_store?.save({
+          input_hash: inputHash,
+          stage: "concept_ready",
+          concept,
+          metadata: checkpointMetadata,
+          ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+        })
+      } catch { /* checkpoint is non-authoritative */ }
     }
   } catch (error) {
     state = transitionCState(state, "FAILED")
@@ -507,6 +555,8 @@ async function runCPipelineCore(
     && checkpoint.assessment !== undefined
   const resumedCodeLab = checkpoint?.code_lab !== undefined
     && (checkpoint.stage === "code_lab_ready" || resumedBranches)
+  const resumedAssessment = checkpoint?.assessment !== undefined
+    && (checkpoint.stage === "assessment_ready" || resumedBranches)
   if (resumedBranches) {
     labPair = checkpoint!.code_lab!
     assessmentPair = checkpoint!.assessment!
@@ -522,140 +572,148 @@ async function runCPipelineCore(
       })
     }
   } else {
-    pushTrace({
-      event_type: "c.agent.started",
-      run_id: input.generation_spec.run_id,
-      agent: "code-lab",
-      status: "started",
-      input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
-      summary: resumedCodeLab
-        ? "code-lab 从已验证检查点恢复"
-        : "code-lab 开始生成",
-      ...(resumedCodeLab ? { retry_kind: "resume" as const } : {}),
-    })
-    if (resumedCodeLab) {
-      labPair = checkpoint!.code_lab!
-    } else {
-      try {
-        labPair = await agents.code_lab.generate({
-          generation_spec: input.generation_spec,
-          evidence_pack: input.evidence_pack,
-          concept_artifact: concept,
-          next_round_context: input.next_round_context,
-          resource_blueprint: resourceBlueprint,
-          generation_recovery: recoveryForAgent(input, "code_lab"),
-        })
-      } catch (error) {
-        state = transitionCState(state, "FAILED")
-        const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
-        pushTrace({
-          event_type: "c.pipeline.failed",
-          run_id: input.generation_spec.run_id,
-          agent: "code-lab",
-          status: "failed",
-          input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
-          summary: failure.message,
-        })
-        return failedResult(input.generation_spec, state, trace, failure, {
-          concept_lesson: concept,
-        })
-      }
-      const blockedLab = [labPair.public_artifact, labPair.secure_artifact]
-        .find((artifact) => artifact.status !== "ready")
-      if (blockedLab) {
-        state = transitionCState(state, "BLOCKED")
-        pushTrace({
-          event_type: "c.pipeline.blocked",
-          run_id: input.generation_spec.run_id,
-          agent: "code-lab",
-          status: "blocked",
-          input_refs: blockedLab.input_refs,
-          output_ref: blockedLab.artifact_id,
-          summary: blockedLab.blocked_reason?.message ?? "code-lab 产物未就绪",
-        })
-        return blockedResult(
-          input.generation_spec,
-          state,
-          trace,
-          blockedLab.blocked_reason
-            ?? { code: "BLOCKED_PROVIDER_UNAVAILABLE", message: "code-lab 产物未就绪" },
-          { concept_lesson: concept, code_lab: labPair.public_artifact },
-        )
-      }
-      try {
-        await options.checkpoint_store?.save({
-          input_hash: inputHash,
-          stage: "code_lab_ready",
-          concept,
-          code_lab: labPair,
-        })
-      } catch { /* checkpoint is non-authoritative */ }
-    }
-    pushTrace({
-      event_type: "c.agent.ready",
-      run_id: input.generation_spec.run_id,
-      agent: "code-lab",
-      status: "success",
-      input_refs: labPair.public_artifact.input_refs,
-      output_ref: labPair.public_artifact.artifact_id,
-      summary: resumedCodeLab
-        ? "code-lab public/secure 产物已从检查点恢复"
-        : "code-lab public/secure 产物已通过发布前检查",
-      validator_results: [{ validator: "code-lab-structure-execution", ok: true, issue_count: 0 }],
-    })
-
-    pushTrace({
-      event_type: "c.agent.started",
-      run_id: input.generation_spec.run_id,
-      agent: "tiered-evaluator",
-      status: "started",
-      input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id, labPair.public_artifact.artifact_id],
-      summary: "tiered-evaluator 开始生成",
-    })
-    try {
-      assessmentPair = await agents.tiered_evaluator.generate({
-        generation_spec: input.generation_spec,
-        evidence_pack: input.evidence_pack,
-        concept_artifact: concept,
-        ...(labPair.public_artifact.payload
-          ? {
-              code_lab_summary: {
-                lab_id: labPair.public_artifact.payload.lab_id,
-                objective_ids: [
-                  ...labPair.public_artifact.payload.objective_ids,
-                ],
-                execution_verified:
-                  labPair.public_artifact.quality.execution_verified
-                    === true,
-              },
-            }
-          : {}),
-        next_round_context: input.next_round_context,
-        prior_assessment_items: input.prior_assessment_items,
-        resource_blueprint: resourceBlueprint,
-        generation_recovery: recoveryForAgent(input, "assessment"),
+    for (const [agent, resumed] of [
+      ["code-lab", resumedCodeLab],
+      ["tiered-evaluator", resumedAssessment],
+    ] as const) {
+      pushTrace({
+        event_type: "c.agent.started",
+        run_id: input.generation_spec.run_id,
+        agent,
+        status: "started",
+        input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
+        summary: resumed ? `${agent} 从已验证检查点恢复` : `${agent} 开始并行生成`,
+        ...(resumed ? { retry_kind: "resume" as const } : {}),
       })
-    } catch (error) {
+    }
+    const [labOutcome, assessmentOutcome] = await Promise.allSettled([
+      resumedCodeLab
+        ? Promise.resolve(checkpoint!.code_lab!)
+        : agents.code_lab.generate({
+            generation_spec: input.generation_spec,
+            evidence_pack: input.evidence_pack,
+            concept_artifact: concept,
+            next_round_context: input.next_round_context,
+            resource_blueprint: resourceBlueprint,
+            round_semantic_plan: roundSemanticPlan,
+            generation_recovery: recoveryForAgent(input, "code_lab"),
+          }),
+      resumedAssessment
+        ? Promise.resolve(checkpoint!.assessment!)
+        : agents.tiered_evaluator.generate({
+            generation_spec: input.generation_spec,
+            evidence_pack: input.evidence_pack,
+            concept_artifact: concept,
+            next_round_context: input.next_round_context,
+            prior_assessment_items: input.prior_assessment_items,
+            resource_blueprint: resourceBlueprint,
+            round_semantic_plan: roundSemanticPlan,
+            generation_recovery: recoveryForAgent(input, "assessment"),
+          }),
+    ])
+    if (labOutcome.status === "rejected" || assessmentOutcome.status === "rejected") {
+      const failedAgent = labOutcome.status === "rejected" ? "code-lab" : "tiered-evaluator"
+      const error = labOutcome.status === "rejected"
+        ? labOutcome.reason
+        : assessmentOutcome.status === "rejected"
+          ? assessmentOutcome.reason
+          : new Error("C 并行分支失败")
+      if (labOutcome.status === "fulfilled" && codeLabPairReady(labOutcome.value) && !resumedCodeLab) {
+        try {
+          await options.checkpoint_store?.save({
+            input_hash: inputHash,
+            stage: "code_lab_ready",
+            concept,
+            code_lab: labOutcome.value,
+            metadata: checkpointMetadata,
+            ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+          })
+        } catch { /* checkpoint is non-authoritative */ }
+      } else if (assessmentOutcome.status === "fulfilled" && assessmentPairReady(assessmentOutcome.value) && !resumedAssessment) {
+        try {
+          await options.checkpoint_store?.save({
+            input_hash: inputHash,
+            stage: "assessment_ready",
+            concept,
+            assessment: assessmentOutcome.value,
+            metadata: checkpointMetadata,
+            ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+          })
+        } catch { /* checkpoint is non-authoritative */ }
+      }
       state = transitionCState(state, "FAILED")
       const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
       pushTrace({
         event_type: "c.pipeline.failed",
         run_id: input.generation_spec.run_id,
-        agent: "tiered-evaluator",
+        agent: failedAgent,
         status: "failed",
-        input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id, labPair.public_artifact.artifact_id],
+        input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id, concept.artifact_id],
         summary: failure.message,
       })
       return failedResult(input.generation_spec, state, trace, failure, {
         concept_lesson: concept,
-        code_lab: labPair.public_artifact,
+        ...(labOutcome.status === "fulfilled"
+          ? { code_lab: labOutcome.value.public_artifact }
+          : {}),
+        ...(assessmentOutcome.status === "fulfilled"
+          ? { assessment: assessmentOutcome.value.public_artifact }
+          : {}),
       })
+    }
+    labPair = labOutcome.value
+    assessmentPair = assessmentOutcome.value
+    const blockedLab = [labPair.public_artifact, labPair.secure_artifact]
+      .find((artifact) => artifact.status !== "ready")
+    if (blockedLab) {
+      if (!resumedAssessment && assessmentPairReady(assessmentPair)) {
+        try {
+          await options.checkpoint_store?.save({
+            input_hash: inputHash,
+            stage: "assessment_ready",
+            concept,
+            assessment: assessmentPair,
+            metadata: checkpointMetadata,
+            ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+          })
+        } catch { /* checkpoint is non-authoritative */ }
+      }
+      state = transitionCState(state, "BLOCKED")
+      pushTrace({
+        event_type: "c.pipeline.blocked",
+        run_id: input.generation_spec.run_id,
+        agent: "code-lab",
+        status: "blocked",
+        input_refs: blockedLab.input_refs,
+        output_ref: blockedLab.artifact_id,
+        summary: blockedLab.blocked_reason?.message ?? "code-lab 产物未就绪",
+      })
+      return blockedResult(
+        input.generation_spec,
+        state,
+        trace,
+        blockedLab.blocked_reason
+          ?? { code: "BLOCKED_PROVIDER_UNAVAILABLE", message: "code-lab 产物未就绪" },
+        { concept_lesson: concept, code_lab: labPair.public_artifact },
+      )
     }
     const blockedAssessment = [
       assessmentPair.public_artifact,
       assessmentPair.secure_artifact,
     ].find((artifact) => artifact.status !== "ready")
     if (blockedAssessment) {
+      if (!resumedCodeLab && codeLabPairReady(labPair)) {
+        try {
+          await options.checkpoint_store?.save({
+            input_hash: inputHash,
+            stage: "code_lab_ready",
+            concept,
+            code_lab: labPair,
+            metadata: checkpointMetadata,
+            ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+          })
+        } catch { /* checkpoint is non-authoritative */ }
+      }
       state = transitionCState(state, "BLOCKED")
       pushTrace({
         event_type: "c.pipeline.blocked",
@@ -680,16 +738,23 @@ async function runCPipelineCore(
         },
       )
     }
-    pushTrace({
-      event_type: "c.agent.ready",
-      run_id: input.generation_spec.run_id,
-      agent: "tiered-evaluator",
-      status: "success",
-      input_refs: assessmentPair.public_artifact.input_refs,
-      output_ref: assessmentPair.public_artifact.artifact_id,
-      summary: "tiered-evaluator public/secure 产物已通过发布前门禁",
-      validator_results: [{ validator: "assessment-structure-answer", ok: true, issue_count: 0 }],
-    })
+    for (const [agent, artifact, validator, resumed] of [
+      ["code-lab", labPair.public_artifact, "code-lab-structure-execution", resumedCodeLab],
+      ["tiered-evaluator", assessmentPair.public_artifact, "assessment-structure-answer", resumedAssessment],
+    ] as const) {
+      pushTrace({
+        event_type: "c.agent.ready",
+        run_id: input.generation_spec.run_id,
+        agent,
+        status: "success",
+        input_refs: artifact.input_refs,
+        output_ref: artifact.artifact_id,
+        summary: resumed
+          ? `${agent} public/secure 产物已从检查点恢复`
+          : `${agent} public/secure 产物已通过发布前检查`,
+        validator_results: [{ validator, ok: true, issue_count: 0 }],
+      })
+    }
     try {
       await options.checkpoint_store?.save({
         input_hash: inputHash,
@@ -697,6 +762,8 @@ async function runCPipelineCore(
         concept,
         code_lab: labPair,
         assessment: assessmentPair,
+        metadata: checkpointMetadata,
+        ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
       })
     } catch { /* checkpoint is non-authoritative */ }
   }
@@ -803,6 +870,7 @@ async function runCPipelineCore(
           next_round_context: input.next_round_context,
           revision_objections: blockingObjections.filter((entry) => entry.target_artifact_id === concept.artifact_id),
           resource_blueprint: resourceBlueprint,
+          round_semantic_plan: roundSemanticPlan,
           generation_recovery: recoveryForAgent(input, "concept"),
         })
       }
@@ -816,6 +884,7 @@ async function runCPipelineCore(
             entry.target_artifact_id === labPair.public_artifact.artifact_id
               || entry.target_artifact_id === labPair.secure_artifact.artifact_id),
           resource_blueprint: resourceBlueprint,
+          round_semantic_plan: roundSemanticPlan,
           generation_recovery: recoveryForAgent(input, "code_lab"),
         })
       }
@@ -831,6 +900,7 @@ async function runCPipelineCore(
             entry.target_artifact_id === assessmentPair.public_artifact.artifact_id
               || entry.target_artifact_id === assessmentPair.secure_artifact.artifact_id),
           resource_blueprint: resourceBlueprint,
+          round_semantic_plan: roundSemanticPlan,
           generation_recovery: recoveryForAgent(input, "assessment"),
         })
       }
@@ -970,6 +1040,14 @@ function toCodeLabSummary(
   }
 }
 
+function codeLabPairReady(pair: CodeLabArtifactPair): boolean {
+  return pair.public_artifact.status === "ready" && pair.secure_artifact.status === "ready"
+}
+
+function assessmentPairReady(pair: AssessmentArtifactPair): boolean {
+  return pair.public_artifact.status === "ready" && pair.secure_artifact.status === "ready"
+}
+
 function cachedResultIssues(
   cached: CPipelineResult,
   input: CPipelineInput,
@@ -1015,9 +1093,31 @@ function checkpointIssues(
 ): string[] {
   const issues: string[] = []
   if (checkpoint.input_hash !== inputHash) issues.push("checkpoint input_hash 不一致")
-  const artifacts: Array<[unknown, "concept_artifact.schema.json" | "code_lab_public.schema.json" | "code_lab_secure.schema.json" | "assessment_public.schema.json" | "assessment_secure.schema.json"]> = [
-    [checkpoint.concept, "concept_artifact.schema.json"],
-  ]
+  if (checkpoint.metadata) {
+    const blueprint = buildResourceBlueprint(input.generation_spec, input.evidence_pack)
+    if (checkpoint.metadata.spec_id !== input.generation_spec.spec_id
+      || checkpoint.metadata.blueprint_id !== blueprint.blueprint_id
+      || checkpoint.metadata.model_id !== input.generation_spec.versions.model_config_hash
+      || checkpoint.metadata.prompt_version !== input.generation_spec.versions.prompt_version
+      || checkpoint.metadata.policy_version !== blueprint.quality_requirement.policy_version
+      || checkpoint.metadata.policy_decision_hash !== blueprint.quality_requirement.decision_hash
+      || checkpoint.metadata.evidence_hash !== input.generation_spec.evidence_content_hash) {
+      issues.push("checkpoint 依赖元数据已失效")
+    }
+  }
+  if (checkpoint.round_semantic_plan
+    && (checkpoint.round_semantic_plan.spec_id !== input.generation_spec.spec_id
+      || checkpoint.round_semantic_plan.blueprint_id !== buildResourceBlueprint(input.generation_spec, input.evidence_pack).blueprint_id)) {
+    issues.push("checkpoint 语义规划依赖已失效")
+  }
+  if (checkpoint.stage === "semantic_plan_ready" && !checkpoint.round_semantic_plan) {
+    issues.push("semantic_plan_ready checkpoint 缺少语义规划")
+  }
+  const artifacts: Array<[unknown, "concept_artifact.schema.json" | "code_lab_public.schema.json" | "code_lab_secure.schema.json" | "assessment_public.schema.json" | "assessment_secure.schema.json"]> = []
+  if (checkpoint.stage !== "semantic_plan_ready") {
+    if (!checkpoint.concept) issues.push(`${checkpoint.stage} checkpoint 缺少讲义产物`)
+    else artifacts.push([checkpoint.concept, "concept_artifact.schema.json"])
+  }
   if (checkpoint.stage === "code_lab_ready" || checkpoint.stage === "branches_ready") {
     if (!checkpoint.code_lab) issues.push(`${checkpoint.stage} checkpoint 缺少代码实验分支`)
     else artifacts.push(
@@ -1025,8 +1125,8 @@ function checkpointIssues(
       [checkpoint.code_lab.secure_artifact, "code_lab_secure.schema.json"],
     )
   }
-  if (checkpoint.stage === "branches_ready") {
-    if (!checkpoint.assessment) issues.push("branches_ready checkpoint 缺少测评分支")
+  if (checkpoint.stage === "assessment_ready" || checkpoint.stage === "branches_ready") {
+    if (!checkpoint.assessment) issues.push(`${checkpoint.stage} checkpoint 缺少测评分支`)
     else artifacts.push(
       [checkpoint.assessment.public_artifact, "assessment_public.schema.json"],
       [checkpoint.assessment.secure_artifact, "assessment_secure.schema.json"],

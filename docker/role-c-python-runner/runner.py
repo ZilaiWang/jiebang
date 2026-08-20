@@ -107,7 +107,16 @@ def compile_submission(code, contract, platform_allowed_imports):
 
 def run_test(compiled, contract, test_input, output_budget):
     writer = LimitedWriter(output_budget)
-    namespace = {"__name__": "__submission__"}
+    # stdin/stdout submissions are complete Python programs and must observe
+    # normal script semantics. Function submissions stay import-like so a
+    # learner's main guard cannot run unrelated top-level I/O before grading.
+    namespace = {
+        "__name__": (
+            "__submission__"
+            if contract["execution_mode"] == "function"
+            else "__main__"
+        )
+    }
     with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
         if contract["execution_mode"] == "function":
             exec(compiled, namespace, namespace)

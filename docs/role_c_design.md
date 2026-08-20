@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 |---|---|
-| 设计版本 | 4.2 |
+| 设计版本 | 5.0 |
 | Schema 版本 | 1.0 |
-| Prompt manifest | `c-prompts-1.23.4` |
+| Prompt manifest | `c-prompts-1.26.0` |
 | 实现目录 | `src/role-c-content/` |
 | Schema 目录 | `schemas/role-c-content/` |
 | 自动检查 | `bun run check` |
@@ -46,9 +46,11 @@ Role C 将版本化画像、学习路径和 RAG 证据转换为相互对齐的�
 flowchart TD
     I["画像 + 路径节点 + RAG 证据"] --> S["冻结 GenerationSpec"]
     S --> BP["ResourceBlueprint：共享讲练测决策"]
-    BP --> C1["概念讲解 Agent"]
-    C1 --> C2["代码实验 Agent"]
-    C2 --> C3["分层测评 Agent"]
+    BP --> SP["复杂轮次：一次 QUALITY 语义规划"]
+    BP --> C1["概念讲解 Agent：FAST"]
+    SP --> C1
+    C1 --> C2["代码实验 Agent：FAST"]
+    C1 --> C3["分层测评 Agent：FAST"]
     C1 --> V["Schema、证据、安全、执行与跨产物门禁"]
     C2 --> V
     C3 --> V
@@ -95,15 +97,19 @@ Locked Core 包含事实、目标、先修、代码语义、答案和评分规�
 
 程序先从同一份 `GenerationSpec` 和证据包生成递归冻结的 `ResourceBlueprint`。蓝图逐目标声明必要事实、讲义结构、代码实验练习行为、测评认知操作、题型与分值。三个 Agent 只读取属于自己的蓝图投影，因此讲、练、测在生成前已对齐，不依赖后置门禁推测意图。模型生成互动题、提示、练习任务和正式测评等开放内容；程序生成稳定 ID、引用、覆盖索引、题型和分值。
 
+蓝图同时冻结 `cross_artifact_contract` 和 `quality_requirement`。标准轮次直接进入 FAST 结构化生成；复杂轮次先用一次 `QUALITY / reasoning_effort=high` 生成紧凑 `RoundSemanticPlan`，只规划教学叙事、实验意图和考查角度。完整讲义、实验、测评、私有答案、审核和修复始终使用 FAST。语义规划失败时仍可由确定性蓝图完成有效生成，不改变目标、证据、代码 ABI 或评分合同。
+
 ### 4.1 分阶段生成
 
 | Agent | 调用阶段 |
 |---|---|
-| concept-tutor | 按目标组生成片段，再按目标顺序确定性聚合 |
+| concept-tutor | 按目标组生成片段（并发 2），再按目标顺序确定性聚合 |
 | code-lab | 先冻结 public，再生成 secure |
 | tiered-evaluator | 先冻结 item plan，再生成 public 和 secure |
 
-每个阶段执行局部 Schema 与语义校验，聚合后执行完整检查。该结构控制单次输出规模，并支持有界并发和定向修复。讲义和代码实验通过后立即写入后端私有检查点；后续阶段失败时，保持同一 Spec 和证据身份，只重新调用失败 Agent。检查点使用原子文件、完整性哈希和仅所有者可读权限，其中的 secure 产物不进入会话公开数据。
+每个阶段执行局部 Schema 与语义校验，聚合后执行完整检查。讲义完成后，代码实验与测评依据共享蓝图并行生成，最终再汇合执行跨产物一致性检查。检查点覆盖语义规划、讲义、任一独立分支和双分支就绪状态，并记录 Spec、Blueprint、模型、Prompt、策略决策和证据哈希；依赖变化时旧检查点失效。检查点使用原子文件、完整性哈希和仅所有者可读权限，其中的 secure 产物不进入会话公开数据。
+
+结构化输出若以 `finish_reason=length` 截断，只重试当前阶段：保留语义规划和上游检查点，继续使用 FAST，并将该阶段 token 上限增加 50% 后重新执行本地 Schema 与业务校验。
 
 公开测评与历史题面重复时，程序冻结合格题并给出重复题下标，模型只重新命制对应题目。局部补丁合并后重新执行题目计划、证据、目标覆盖和防重校验；题目内容始终由模型生成。
 
@@ -131,7 +137,7 @@ C 内部门禁依次检查：
 5. 测评题面、AnswerSpec、rubric 与代码测试；
 6. 讲义、实验、测评之间的目标、难度和答案对齐。
 
-确定性跨产物检查只处理目标映射、可执行性和答案一致性等结构问题，关键问题最多执行一次定向修订。可选模型 Critic 只输出诊断信息。随后，A 检查事实和引用，B 检查目标、先修、难度和教学适配。外部审核最多修订两轮，并始终使用同一份冻结输入。
+确定性跨产物检查只处理目标映射、可执行性和答案一致性等结构问题，关键问题最多执行一次定向修订。可选模型 Critic 只输出诊断信息。随后，A 检查事实和引用，B 检查目标、先修、难度和教学适配。B 对当前产物的难度判断读取冻结 `GenerationSpec.difficulty`，知识库目标标签只用于路径规划，不替代本轮实际教学负荷。外部审核最多修订两轮，并始终使用同一份冻结输入。
 
 审核请求和结果绑定 `pipeline_input_hash`、`generation_spec_hash`、`GenerationSpec.evidence_content_hash`、三份公开产物哈希、审核策略版本和修订序号。B 的结构化结果包含失败维度、缺失先修、未知先修引用、恢复动作、修复范围、建议难度和可恢复状态。
 
@@ -166,9 +172,20 @@ Agent 内部仅修复本阶段失败项。公开题目重复时冻结其余题�
 
 未能在本阶段恢复的结果使用 `RoleCGenerationFailure` 返回：`code`、`stage`、`issueCodes`、`repairScope`、`nextAction`、`canRetry` 和 `fingerprint`。会话将其转为私有 `generation_recovery`，保持原 `run_id/spec_id` 并用新恢复身份改变失败阶段的模型请求；已通过阶段从检查点恢复。私有校验值不会进入公开合同，只公开稳定问题码。同一轮连续两次内容生成失败后停止重试并要求调整目标。
 
-首次和续轮 C 生成均先持久化 `running` 检查点，再在后台执行。成功进入 `waiting_for_user`；失败进入带结构化终局的 `blocked` / `failed`。前端轮询状态，不以长连接是否完成判断生成结果。
+诊断、首次 C 生成、续轮和产物重生均作为持久任务执行。每个任务原子落盘，包含 deadline、调用预算、检查点引用、lease 和 heartbeat；服务启动时恢复 queued、retry_wait 和 lease 已过期的 running 任务。成功进入 `waiting_for_user`；失败进入带结构化终局的 `blocked` / `failed`。D 优先通过 SSE 接收阶段事件，断线时按事件序号续接，轮询只作为兼容方式。
 
-### 5.3 公开内容语义事实审核
+### 5.3 项目级模型运行时
+
+所有 GLM 调用统一经过 `src/model-runtime/`：
+
+- `FAST`：关闭思考，处理诊断、完整资源、私有内容、审核和修复；
+- `QUALITY`：开启思考并使用 `reasoning_effort=high`，只处理复杂轮次紧凑规划；
+- `OFFLINE_MAX`：开启思考并使用 `reasoning_effort=max`，仅供离线评测；
+- 全局模型并发 3，QUALITY 并发 1，OFFLINE_MAX 并发 1，审核与交互请求优先；
+- 每个工作流共享总时限、模型调用数和传输重试预算；认证、余额、权限和参数错误不重试，瞬时网络或服务拥堵只做一次带抖动重试；
+- 连续瞬时故障触发短时熔断，调用遥测只保存策略、耗时、排队、token、finish reason 和安全错误码，不保存 reasoning 内容。
+
+### 5.4 公开内容语义事实审核
 
 发布审核以当前冻结的 evidence pack 为唯一事实边界。程序先检查每个公开块的引用是否存在；随后语义审核一次读取同一产物内的可见内容和各块所引事实，逐块区分：
 
@@ -206,6 +223,7 @@ Python 代码统一使用 `DockerPythonCodeRunner`：
 - 关闭网络，使用只读 root、非 root 用户和受限 tmpfs；
 - 限制 CPU、内存、PIDs、执行时间和输出大小；
 - 容器只接收学习者代码、测试输入和执行合同；
+- `stdin_stdout` 按完整脚本执行并提供正常的 `__main__` 语义；`function` 按可调用函数合同执行，不触发主程序守卫；
 - 期望答案、测试权重、比较规则和计分保留在后端。
 
 评分支持 exact-set、numeric、code 和 concept-rubric。主观题逐 criterion 盲审；存在 `uncertain` 或加权置信度低于 `0.65` 时返回 `NEEDS_REVIEW`。

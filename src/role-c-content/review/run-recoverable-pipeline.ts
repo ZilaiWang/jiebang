@@ -1272,6 +1272,9 @@ function baseReviewOptions(
     ...(options.checkpoint_store
       ? { checkpoint_store: options.checkpoint_store }
       : {}),
+    ...(options.semantic_planner
+      ? { semantic_planner: options.semantic_planner }
+      : {}),
   }
 }
 

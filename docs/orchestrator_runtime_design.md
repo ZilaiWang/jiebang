@@ -84,6 +84,8 @@ A 的首轮检索结果由画像和学习目标构造。C 生成前按当前路�
 
 三类资源必须覆盖同一组目标，并通过 Schema、事实引用、目标覆盖、public/secure 隔离、Docker 执行和跨产物一致性检查。随后由 A 审核事实和引用、B 审核路径目标、先修、难度与教学适配。
 
+生成前先冻结 `ResourceBlueprint`。标准轮次直接使用 FAST 模型；复杂轮次只额外调用一次 QUALITY 模型，生成不含正文和答案的紧凑 `RoundSemanticPlan`。概念讲义完成后，代码实验与正式测评基于同一蓝图和语义计划并行生成，汇合后再检查讲、练、测一致性。
+
 审核修复按问题归属执行：内容问题在当前 Spec 内定向修订，事实问题刷新 A 证据，路径问题调用 B 重规划。所有修订均有界；不通过的产物不能发布给 D。
 
 ## 7. AI 正式命题与防重
@@ -133,6 +135,10 @@ A 的首轮检索结果由画像和学习目标构造。C 生成前按当前路�
 
 长期 learner memory 保存掌握、薄弱点、已完成会话和最近公开题面。模型/API/Docker 调用期间会话保持 `running`；完成后原子发布新的等待、完成或阻塞状态。
 
+诊断、首次内容、续轮和产物修订均通过持久任务运行。任务保存 deadline、调用预算、检查点引用、lease 和 heartbeat；进程重启后自动恢复排队、等待重试和租约过期任务。HTTP 请求不持有整段模型调用，创建会话返回 `202`，D 通过 SSE 接收事件并可用 `Last-Event-ID` 续接。
+
+模型调用统一使用项目级运行时。FAST 关闭思考并承担正文、答案、审核和修复；QUALITY 以 `reasoning_effort=high` 只承担复杂轮次规划；OFFLINE_MAX 仅用于离线评测。默认全局并发 3、QUALITY 并发 1、OFFLINE_MAX 并发 1，并共享工作流时限、调用次数、传输重试、熔断和安全遥测。
+
 ## 10. API 与 D 消费
 
 正式会话 API：
@@ -142,9 +148,12 @@ A 的首轮检索结果由画像和学习目标构造。C 生成前按当前路�
 | `POST /orchestrator/sessions` | 创建会话并生成 AI 诊断题 |
 | `GET /orchestrator/sessions/:id` | 读取公开会话视图 |
 | `GET /orchestrator/sessions/:id/events` | 读取公开事件 |
+| `GET /orchestrator/sessions/:id/events/stream` | 通过 SSE 订阅可续接事件流 |
 | `POST /orchestrator/sessions/:id/commands` | 提交诊断、运行代码、提交测评或重试 |
 | `POST /orchestrator/sessions/:id/repair` | 显式迁移不兼容的持久会话 |
 | `GET/PUT /orchestrator/provider-config` | 本机回环地址配置模型 Provider |
+| `GET /orchestrator/docker-status` | 只读检查 Docker daemon 与镜像 |
+| `POST /orchestrator/preflight` | 验证存储、Docker、模型策略、并发、任务与 SSE |
 
 D 只消费公开视图：讲义、实验、题面、代码运行摘要、逐题反馈、路径状态、阻塞原因和正式课程终态。D 不接收诊断答案、正式答案、参考实现、隐藏测试、内部掌握参数或安全存储引用。
 

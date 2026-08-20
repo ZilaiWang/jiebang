@@ -92,6 +92,20 @@ export interface ResourceBlueprint {
     total_items: number
     total_score: number
   }
+  /** Deterministic division of labor prepared before any artifact is authored. */
+  cross_artifact_contract: {
+    concept_responsibilities: string[]
+    code_lab_responsibilities: string[]
+    assessment_responsibilities: string[]
+    forbidden_duplicate_behaviors: string[]
+  }
+  /** Whether one compact High reasoning plan is justified before FAST rendering. */
+  quality_requirement: {
+    profile: "fast" | "quality"
+    reason_codes: string[]
+    policy_version: "glm52-policy-v1"
+    decision_hash: string
+  }
 }
 
 export function buildResourceBlueprint(
@@ -108,6 +122,8 @@ export function buildResourceBlueprint(
   const codeSecurePlan = buildCodeLabSecurePlan(spec, identity.test_suite_id)
   const assessmentPlan = buildAssessmentItemPlan(spec)
   const taskContract = decideCodeLabTaskContract(spec, evidence)
+  const crossArtifactContract = buildCrossArtifactContract()
+  const qualityRequirement = decideQualityRequirement(spec, codeObjectivePlan.length)
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
       entry.objective_id === target.objective_id)!
@@ -168,6 +184,8 @@ export function buildResourceBlueprint(
       task_contract: taskContract,
     },
     assessment: assessmentPlan,
+    cross_artifact_contract: crossArtifactContract,
+    quality_requirement: qualityRequirement,
   }
   return deepFreeze({
     schema_version: "1.0",
@@ -188,7 +206,77 @@ export function buildResourceBlueprint(
       total_items: assessmentPlan.length,
       total_score: assessmentPlan.reduce((sum, item) => sum + item.max_score, 0),
     },
+    cross_artifact_contract: crossArtifactContract,
+    quality_requirement: qualityRequirement,
   })
+}
+
+function buildCrossArtifactContract(): ResourceBlueprint["cross_artifact_contract"] {
+  return {
+    concept_responsibilities: [
+      "解释必要事实、先修衔接、例题、误区、自查与提示",
+    ],
+    code_lab_responsibilities: [
+      "把目标转换为可执行练习，严格遵守 task_contract 与公开/私有边界",
+    ],
+    assessment_responsibilities: [
+      "用冻结的题量、题型和认知操作独立检验学习目标",
+    ],
+    forbidden_duplicate_behaviors: [
+      "测评不得复制代码实验的完整题面或公开测试",
+      "代码实验不得复制讲义的完整 worked example 作为答案",
+      "三类产物不得重复公开私有答案、隐藏测试或评分细节",
+    ],
+  }
+}
+
+function decideQualityRequirement(
+  spec: GenerationSpec,
+  codeObjectiveCount: number,
+): ResourceBlueprint["quality_requirement"] {
+  // Runtime input validation requires difficulty, while this planner also remains
+  // compatible with older trusted callers that predate DifficultyVector.
+  const difficulty = spec.difficulty ?? {
+    cognitive_level: 0,
+    prerequisite_load: 0,
+    reasoning_steps: 0,
+    code_complexity: 0,
+    scaffold_strength: 0,
+  }
+  const tier3Count = spec.assessment_blueprint?.tier_3_count ?? 0
+  const hardHigh = difficulty.reasoning_steps >= 5
+    || difficulty.code_complexity >= 5
+    || (difficulty.task_composition ?? 0) >= 5
+  const signals = [
+    spec.targets.length >= 3,
+    difficulty.reasoning_steps >= 3,
+    difficulty.code_complexity >= 3,
+    difficulty.prerequisite_load >= 3,
+    (difficulty.transfer_distance ?? 0) >= 3,
+    (difficulty.boundary_condition_density ?? 0) >= 3,
+    (difficulty.task_composition ?? 0) >= 3,
+    tier3Count >= 2,
+    codeObjectiveCount >= 3,
+  ]
+  const profile = hardHigh || signals.filter(Boolean).length >= 2
+    ? "quality" as const
+    : "fast" as const
+  const reasonCodes = profile === "quality"
+    ? ["COMPLEX_COMPOSITE_TASK"]
+    : ["STANDARD_SINGLE_ROUND"]
+  return {
+    profile,
+    reason_codes: reasonCodes,
+    policy_version: "glm52-policy-v1",
+    decision_hash: contentHash({
+      profile,
+      reason_codes: reasonCodes,
+      difficulty,
+      objective_count: spec.targets.length,
+      tier_3_count: tier3Count,
+      code_objective_count: codeObjectiveCount,
+    }),
+  }
 }
 
 function deepFreeze<T>(value: T): T {

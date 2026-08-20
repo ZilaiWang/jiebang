@@ -48,7 +48,7 @@ export async function createOrchestratorSession(
   input: CreateSessionInput,
   fetcher: Fetcher = fetch,
 ): Promise<any> {
-  return requestJson("/orchestrator/sessions", input.learnerId, fetcher, {
+  const created = await requestJson("/orchestrator/sessions", input.learnerId, fetcher, {
     method: "POST",
     body: JSON.stringify({
       mode: "deterministic",
@@ -61,6 +61,9 @@ export async function createOrchestratorSession(
       },
     }),
   })
+  return created.status === "running"
+    ? waitForOrchestratorSession(created.session_id, input.learnerId, fetcher)
+    : created
 }
 
 export async function getProviderConfiguration(fetcher: Fetcher = fetch): Promise<ProviderConfigurationView> {
@@ -149,21 +152,67 @@ export async function waitForOrchestratorSession(
   fetcher: Fetcher = fetch,
   options: { timeoutMs?: number; intervalMs?: number; onRunning?: (session: any) => void } = {},
 ): Promise<any> {
-  // 覆盖主 Agent 当前的有界生成与修复预算；具体重试次数由服务端统一管理，
-  // 客户端只负责在总等待窗口内轮询公开状态。
   const timeoutMs = options.timeoutMs ?? 600_000
-  const intervalMs = options.intervalMs ?? 800
   const deadline = Date.now() + timeoutMs
   let latest = await getOrchestratorSession(sessionId, learnerId, fetcher)
   while (latest.status === "running" && Date.now() < deadline) {
     options.onRunning?.(latest)
-    await new Promise((resolve) => setTimeout(resolve, intervalMs))
-    latest = await getOrchestratorSession(sessionId, learnerId, fetcher)
+    try {
+      latest = await waitForSessionStateEvent(sessionId, learnerId, latest, deadline, fetcher, options.onRunning)
+    } catch {
+      // SSE is the primary path. Older proxies and test fetchers fall back to
+      // bounded polling without changing server-side job ownership.
+      await new Promise((resolve) => setTimeout(resolve, options.intervalMs ?? 800))
+      latest = await getOrchestratorSession(sessionId, learnerId, fetcher)
+    }
   }
   if (latest.status === "running") {
     throw new OrchestratorClientError("SESSION_GENERATION_TIMEOUT", "主 Agent生成下一轮资源超时，请稍后刷新会话", 504)
   }
   return latest
+}
+
+async function waitForSessionStateEvent(
+  sessionId: string,
+  learnerId: string,
+  current: any,
+  deadline: number,
+  fetcher: Fetcher,
+  onRunning?: (session: any) => void,
+): Promise<any> {
+  const headers = new Headers()
+  headers.set("authorization", `Bearer ${learnerId}`)
+  const response = await fetcher(
+    `/orchestrator/sessions/${encodeURIComponent(sessionId)}/events/stream`,
+    { headers },
+  )
+  if (!response.ok || !response.body) throw new Error("SSE_UNAVAILABLE")
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let latest = current
+  try {
+    while (Date.now() < deadline) {
+      const chunk = await reader.read()
+      if (chunk.done) return latest
+      buffer += decoder.decode(chunk.value, { stream: true })
+      let boundary = buffer.indexOf("\n\n")
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const eventName = frame.split("\n").find((line) => line.startsWith("event:"))?.slice(6).trim()
+        if (eventName === "session_state") {
+          latest = await getOrchestratorSession(sessionId, learnerId, fetcher)
+          if (latest.status !== "running") return latest
+          onRunning?.(latest)
+        }
+        boundary = buffer.indexOf("\n\n")
+      }
+    }
+    return latest
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
 }
 
 export async function retryOrchestratorSession(

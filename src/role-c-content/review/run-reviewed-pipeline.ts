@@ -796,6 +796,7 @@ function basePipelineOptions(
     ...(options.fact_audit_port ? { fact_audit_port: options.fact_audit_port } : {}),
     ...(options.trace_seq_start !== undefined ? { trace_seq_start: options.trace_seq_start } : {}),
     ...(options.checkpoint_store ? { checkpoint_store: options.checkpoint_store } : {}),
+    ...(options.semantic_planner ? { semantic_planner: options.semantic_planner } : {}),
     // READY cache is intentionally absent: reviewed candidates cannot consume a
     // historical release produced without the current review policy. A private
     // partial checkpoint only reuses stage-valid drafts; the completed candidate

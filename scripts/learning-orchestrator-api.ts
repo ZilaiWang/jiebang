@@ -18,10 +18,15 @@ console.log(JSON.stringify({
   url: `http://${server.hostname}:${server.port}`,
   endpoints: [
     "GET /health",
+    "GET /orchestrator/docker-status",
+    "POST /orchestrator/preflight",
+    "GET/PUT /orchestrator/provider-config",
     "POST /orchestrator/runs",
     "POST /orchestrator/sessions",
     "GET /orchestrator/sessions/:id",
     "POST /orchestrator/sessions/:id/commands",
+    "POST /orchestrator/sessions/:id/repair",
     "GET /orchestrator/sessions/:id/events",
+    "GET /orchestrator/sessions/:id/events/stream",
   ],
 }, null, 2))
