@@ -67,7 +67,7 @@ import {
 } from "./fact-lookup"
 import { codeSubmissionHint, labFeedbackExplanations, publicTestChecklist } from "./lab-feedback"
 import { LoopVisualizerToggle } from "./loop-visualizer"
-import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
 import type { AssessmentPayload, Citation, CodeLabPayload, LessonPayload, PublicSessionFixture } from "./types"
 import { planNavSection } from "./plan-navigation"
 import {
@@ -719,6 +719,11 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const ragItems = Array.isArray(ragResult?.results) ? ragResult.results : []
   const radar = abilityRadarView(profile)
   const chain = pathChainView(pathNodes as any, ragItems, profile?.known_concepts ?? [])
+  const candidateCards = knowledgeCandidateCards(activeSession.rag_result, {
+    current_path_node: activeSession.current_path_node,
+    formal_path: formalPath,
+    profile,
+  })
   const titleForPathNode = (node: any) => pathNodeTitle(node, ragItems, formalPath?.original_goal)
   const currentFullNode = pathNodes.find((node: any) => node?.node_id === activeSession.current_path_node?.node_id) ?? activeSession.current_path_node
   const whyCurrent = pathNodeWhyView(currentFullNode, ragItems, profile?.known_concepts ?? [], formalPath?.original_goal)
@@ -727,7 +732,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const recoveryAction = blockedSessionAction(activeSession)
   if (!activeSession.current_path_node) return <BlockedResourceState session={activeSession} busy={busy} onRetry={() => void retry()} onRestart={reset} title="学习方案尚未形成可恢复检查点" />
   return <div className="page path-page week2-plan-page">
-    <PageHeading kicker="学习方案 · Week 2 可视化报告" title={`本次计划：${displayPlanName}`} description="诊断完成后先在这里查看主 Agent公开的画像、难度匹配、正式路径和Agent协同过程；只有你主动点击后才进入 C 生成的互动学习内容。" />
+    <PageHeading kicker="学习方案 · Week 2 可视化报告" title={`本次计划：${displayPlanName}`} description="诊断完成后先在这里查看主 Agent公开的画像、A知识检索候选、正式路径和Agent协同过程；只有你主动点击后才进入 C 生成的互动学习内容。" />
 
     <section className="week2-summary-grid">
       <article className="profile-visual-card">
@@ -749,10 +754,10 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
         </> : <MissingContent text="主 Agent尚未公开 B 学习者画像。" />}
       </article>
 
-      <article className="difficulty-curve-card">
-        <header><span><Target size={18} /></span><div><small>难度匹配曲线 · A检索证据</small><h2>{ragItems.length ? `${ragItems.length} 个公开知识候选` : "尚无难度匹配数据"}</h2></div></header>
-        {ragItems.length ? <div className="difficulty-bars">{ragItems.slice(0, 8).map((item: any) => <article key={item.source_id}><div><b>{item.title}</b><small>{item.source_id} · {difficultyLabel(item.difficulty)}</small></div><span><i style={{ width: `${Math.min(100, Math.max(4, Number(item.score) || 0))}%` }} /></span><em className={item.retrieval_trace?.difficulty_match ? "is-match" : "is-gap"}>{item.retrieval_trace?.difficulty_match ? "难度匹配" : "需复核"}</em></article>)}</div> : <MissingContent text="主 Agent尚未公开 A RAG 难度匹配结果。" />}
-        <p className="truth-note">曲线长度使用A公开检索分数；匹配状态使用 retrieval_trace.difficulty_match。D不自行计算“适配率”。</p>
+      <article className="knowledge-match-card">
+        <header><span><Target size={18} /></span><div><small>知识检索匹配 · A检索 / B采用</small><h2>{candidateCards.length ? `${candidateCards.length} 个知识候选` : "尚无知识候选"}</h2></div></header>
+        {candidateCards.length ? <div className="knowledge-candidate-grid">{candidateCards.map((candidate, index) => <article className="knowledge-candidate" key={candidate.sourceId}><div className="knowledge-candidate-top"><span>{String(index + 1).padStart(2, "0")}</span><div><small>知识候选</small><h3>{candidate.title}</h3></div></div><div className="knowledge-candidate-detail"><span>知识点</span><b>{candidate.sourceId}</b></div><div className="knowledge-candidate-reasons"><span>为何选</span>{candidate.reasons.length ? <ol>{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ol> : <p>A 已检索到该知识点，B 将其纳入正式学习路径；当前公开字段未说明更具体的采用原因。</p>}</div></article>)}</div> : <MissingContent text="主 Agent尚未公开知识候选。" />}
+        <p className="truth-note">A 先检索知识候选，B 再结合学习目标、学习者画像和先修关系进行选择与排序，形成正式学习路径；这里展示的是被 B 采用的知识节点。</p>
       </article>
     </section>
 
