@@ -22,11 +22,14 @@ export interface ConceptTutorModelInput {
     resource_blueprint?: {
       blueprint_id: string
       spec_id: string
+      cross_artifact_contract: NonNullable<ConceptTutorRequest["resource_blueprint"]>["cross_artifact_contract"]
+      quality_requirement: NonNullable<ConceptTutorRequest["resource_blueprint"]>["quality_requirement"]
       objectives: Array<Pick<
         NonNullable<ConceptTutorRequest["resource_blueprint"]>["objectives"][number],
         "objective_id" | "source_id" | "observable_behavior" | "importance" | "required_fact_ids" | "concept"
       >>
     }
+    round_semantic_plan?: ConceptTutorRequest["round_semantic_plan"]
     next_round_context?: ConceptTutorRequest["next_round_context"] & {
       teaching_strategy?: "reduce_load" | "same_difficulty_new_variant" | "hold_current_path"
     }
@@ -93,6 +96,8 @@ export function buildConceptTutorModelInput(
               // contract follows that segment identity while blueprint_id keeps
               // every segment tied to the same root teaching decision.
               spec_id: request.generation_spec.spec_id,
+              cross_artifact_contract: structuredClone(request.resource_blueprint.cross_artifact_contract),
+              quality_requirement: structuredClone(request.resource_blueprint.quality_requirement),
               objectives: request.resource_blueprint.objectives
                 .filter((objective) => targetObjectiveIds.includes(objective.objective_id))
                 .map((objective) => ({
@@ -105,6 +110,9 @@ export function buildConceptTutorModelInput(
                 })),
             },
           }
+        : {}),
+      ...(request.round_semantic_plan
+        ? { round_semantic_plan: structuredClone(request.round_semantic_plan) }
         : {}),
       ...(nextRoundContext ? { next_round_context: nextRoundContext } : {}),
       ...(request.revision_objections ? { revision_objections: structuredClone(request.revision_objections) } : {}),

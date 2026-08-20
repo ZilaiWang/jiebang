@@ -1,6 +1,23 @@
 import { contentHash } from "./common"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import {
+  fastModelPolicy,
+  GLM52_MODEL_POLICY_VERSION,
+  modelCallPolicy,
+  ModelExecutionBudget,
+  ModelExecutionBudgetExceededError,
+  classifyProviderFailure,
+  retryDelayMs,
+  sharedModelCircuitBreaker,
+  sharedModelScheduler,
+  sharedModelSchedulerFor,
+  type ModelCallPolicy,
+  type ModelCallTrace,
+  type ModelCircuitBreaker,
+  type ModelScheduler,
+  type ModelTraceSink,
+} from "../../model-runtime"
 
 /** 在缺少模型配置时尝试加载 .env.role-c.local。显式传入的 env 值优先。 */
 function ensureModelEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
@@ -24,22 +41,28 @@ function ensureModelEnv(env: Record<string, string | undefined>): Record<string,
   }
 }
 
+export interface StructuredModelRequest {
+  task: string
+  system_prompt: string
+  input: unknown
+  output_schema_id: string
+  output_schema: Record<string, unknown>
+  temperature: number
+  max_tokens: number
+  idempotency_key: string
+  /** Versioned per-call runtime policy. Production callers should always set this. */
+  policy?: ModelCallPolicy
+  /** Absolute business deadline shared by the surrounding workflow. */
+  deadline_at_ms?: number
+  /** Compatibility seam; policy.thinking takes precedence. */
+  thinking?: "enabled" | "disabled"
+}
+
 /** Vendor-neutral boundary. Prompt/model work can replace this without changing C contracts. */
 export interface ModelGateway {
   readonly model_id: string
   readonly model_config_hash: string
-  generateStructured<T>(request: {
-    task: string
-    system_prompt: string
-    input: unknown
-    output_schema_id: string
-    output_schema: Record<string, unknown>
-    temperature: number
-    max_tokens: number
-    idempotency_key: string
-    /** Per-call override for hybrid reasoning models; falls back to gateway configuration. */
-    thinking?: "enabled" | "disabled"
-  }): Promise<T>
+  generateStructured<T>(request: StructuredModelRequest): Promise<T>
 }
 
 export interface ModelUsageEvent {
@@ -47,8 +70,13 @@ export interface ModelUsageEvent {
   model_id: string
   idempotency_key: string
   prompt_tokens?: number
+  cached_prompt_tokens?: number
   completion_tokens?: number
+  reasoning_tokens?: number
   total_tokens?: number
+  duration_ms?: number
+  queued_ms?: number
+  policy_profile?: ModelCallPolicy["profile"]
 }
 
 export type ModelGatewayFetch = (
@@ -70,6 +98,12 @@ export interface OpenAICompatibleGatewayOptions {
   max_transport_retries?: number
   fetch_impl?: ModelGatewayFetch
   on_usage?: (event: ModelUsageEvent) => void
+  on_trace?: ModelTraceSink
+  scheduler?: ModelScheduler
+  execution_budget?: ModelExecutionBudget
+  circuit_breaker?: ModelCircuitBreaker
+  force_fast?: boolean
+  trace_context?: { job_id?: string; session_id?: string; run_id?: string }
 }
 
 /**
@@ -114,109 +148,257 @@ export class OpenAICompatibleModelGateway implements ModelGateway {
       response_format: this.options.response_format,
       schema_strict: this.options.schema_strict,
       thinking: this.options.thinking,
+      policy_version: GLM52_MODEL_POLICY_VERSION,
+      force_fast: Boolean(this.options.force_fast),
       auth_header: this.options.auth_header.toLowerCase(),
       auth_scheme: this.options.auth_scheme,
       protocol: "openai-compatible-chat-json-schema-v1",
     }).slice("sha256:".length)}`
   }
 
-  async generateStructured<T>(request: {
-    task: string
-    system_prompt: string
-    input: unknown
-    output_schema_id: string
-    output_schema: Record<string, unknown>
-    temperature: number
-    max_tokens: number
-    idempotency_key: string
-    thinking?: "enabled" | "disabled"
-  }): Promise<T> {
+  async generateStructured<T>(request: StructuredModelRequest): Promise<T> {
+    const policy = this.resolvePolicy(request)
+    const effectiveIdempotencyKey = contentHash({
+      caller_key: request.idempotency_key,
+      model_id: this.model_id,
+      policy_version: policy.policy_version,
+      policy_profile: policy.profile,
+      reasoning_effort: policy.reasoning_effort ?? null,
+      max_tokens: Math.min(request.max_tokens, policy.max_tokens),
+      response_format: policy.response_format,
+      output_schema_id: request.output_schema_id,
+    })
+    const budget = this.options.execution_budget
+    const deadlineAt = Math.min(
+      request.deadline_at_ms ?? Number.POSITIVE_INFINITY,
+      budget ? Date.now() + budget.remainingMs() : Number.POSITIVE_INFINITY,
+    )
     let lastError: unknown
-    for (let attempt = 0; attempt <= this.options.max_transport_retries; attempt += 1) {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), this.options.timeout_ms)
+    for (let attempt = 0; attempt <= policy.max_transport_retries; attempt += 1) {
+      const traceStarted = performance.now()
+      let queuedMs = 0
+      let providerRequestId: string | undefined
+      let usage: Record<string, unknown> | undefined
+      let finishReason: string | undefined
+      let jsonParseOk = false
       try {
-        const response = await (this.options.fetch_impl ?? fetch)(this.options.endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(this.options.api_key ? {
-              [this.options.auth_header]: this.options.auth_scheme
-                ? `${this.options.auth_scheme} ${this.options.api_key}`
-                : this.options.api_key,
-            } : {}),
-            "idempotency-key": request.idempotency_key,
-          },
-          body: JSON.stringify({
-            model: this.options.model,
-            messages: [
-              { role: "system", content: systemPromptWithSchema(this.options, request) },
-              { role: "user", content: JSON.stringify(request.input) },
-            ],
-            temperature: request.temperature,
-            max_tokens: request.max_tokens,
-            ...(request.thinking ?? this.options.thinking
-              ? { thinking: { type: request.thinking ?? this.options.thinking } }
-              : {}),
-            ...responseFormatBody(this.options, request),
-          }),
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          let detail = ""
-          try { const errBody = await response.json() as any; detail = errBody?.error?.message || errBody?.message || "" } catch { /* ignore */ }
-          const isAuth = response.status === 401 || response.status === 403
-          const error = new ModelGatewayError(
-            response.status === 429 || response.status >= 500 ? "RETRIABLE_HTTP_ERROR" : isAuth ? "AUTH_ERROR" : "HTTP_ERROR",
-            isAuth ? `API Key 认证失败（HTTP ${response.status}）${detail ? "：" + detail : "——请检查 API Key 是否正确、未过期"}` : `模型服务返回 HTTP ${response.status}${detail ? "：" + detail : ""}`,
-          )
-          if (error.code === "RETRIABLE_HTTP_ERROR" && attempt < this.options.max_transport_retries) {
-            lastError = error
-            continue
-          }
-          throw error
-        }
-        let body: Record<string, unknown>
-        try {
-          body = await response.json() as Record<string, unknown>
-        } catch {
-          throw new ModelGatewayError("INVALID_RESPONSE", "模型服务响应体不是合法 JSON")
-        }
+        budget?.consumeModelCall()
+        ;(this.options.circuit_breaker ?? sharedModelCircuitBreaker).beforeRequest()
+        const scheduled = await (this.options.scheduler ?? sharedModelScheduler).run(
+          policy,
+          deadlineAt,
+          () => this.performRequest(request, policy, effectiveIdempotencyKey, deadlineAt),
+        )
+        queuedMs = scheduled.queued_ms
+        const { body, response } = scheduled.value
+        providerRequestId = response.headers.get("x-request-id")
+          ?? response.headers.get("request-id")
+          ?? stringOrUndefined(body.id)
         const output = extractChatCompletionContent(body)
-        const finishReason = extractFinishReason(body)
-        const usage = isRecord(body.usage) ? body.usage : undefined
+        finishReason = extractFinishReason(body)
+        usage = isRecord(body.usage) ? body.usage : undefined
+        const durationMs = performance.now() - traceStarted
         try {
           this.options.on_usage?.({
             task: request.task,
             model_id: this.model_id,
-            idempotency_key: request.idempotency_key,
+            idempotency_key: effectiveIdempotencyKey,
             prompt_tokens: numberOrUndefined(usage?.prompt_tokens),
+            cached_prompt_tokens: nestedNumber(usage, "prompt_tokens_details", "cached_tokens"),
             completion_tokens: numberOrUndefined(usage?.completion_tokens),
+            reasoning_tokens: nestedNumber(usage, "completion_tokens_details", "reasoning_tokens"),
             total_tokens: numberOrUndefined(usage?.total_tokens),
+            duration_ms: durationMs,
+            queued_ms: queuedMs,
+            policy_profile: policy.profile,
           })
         } catch { /* telemetry must not repeat or fail a successful model call */ }
         if (finishReason === "length") {
           throw new ModelGatewayError("OUTPUT_TRUNCATED", "模型输出达到 token 上限，结构化 JSON 被截断")
         }
-        return (typeof output === "string" ? parseJson(output) : output) as T
+        const parsed = (typeof output === "string" ? parseJson(output) : output) as T
+        jsonParseOk = true
+        ;(this.options.circuit_breaker ?? sharedModelCircuitBreaker).recordSuccess()
+        await this.emitTrace(request, policy, attempt, queuedMs, traceStarted, {
+          usage,
+          finishReason,
+          jsonParseOk,
+          providerRequestId,
+        })
+        return parsed
       } catch (error) {
         const normalized = isAbortError(error)
-          ? new ModelGatewayError("TIMEOUT", `模型请求超过 ${this.options.timeout_ms}ms`)
+          ? new ModelGatewayError("TIMEOUT", `模型请求超过 ${policy.timeout_ms}ms`)
+          : error instanceof ModelExecutionBudgetExceededError
+            ? new ModelGatewayError("BUDGET_EXCEEDED", error.message)
           : error instanceof ModelGatewayError
             ? error
             : error instanceof Error
             ? new ModelGatewayError("NETWORK_ERROR", `模型服务网络请求失败：${error.name}: ${error.message}`)
             : new ModelGatewayError("NETWORK_ERROR", "模型服务网络请求失败")
-        if (attempt < this.options.max_transport_retries && isRetriable(normalized)) {
+        await this.emitTrace(request, policy, attempt, queuedMs, traceStarted, {
+          usage,
+          finishReason,
+          jsonParseOk,
+          providerRequestId,
+          error: normalized,
+        })
+        if (attempt < policy.max_transport_retries && isRetriable(normalized)) {
+          ;(this.options.circuit_breaker ?? sharedModelCircuitBreaker).recordRetriableFailure()
+          budget?.consumeTransportRetry()
           lastError = normalized
+          await delay(retryDelayMs(attempt, normalized.retry_after))
           continue
         }
         throw normalized
-      } finally {
-        clearTimeout(timeout)
       }
     }
     throw lastError ?? new ModelGatewayError("INVALID_RESPONSE", "模型请求未返回结果")
+  }
+
+  private resolvePolicy(request: StructuredModelRequest): ModelCallPolicy {
+    if (request.policy) {
+      if (!this.options.force_fast || request.policy.profile === "fast") return request.policy
+      return fastModelPolicy("FORCED_FAST_RUNTIME", request.policy.max_tokens, {
+        timeout_ms: Math.min(request.policy.timeout_ms, 120_000),
+        max_transport_retries: request.policy.max_transport_retries,
+        response_format: request.policy.response_format,
+        priority: request.policy.priority === "offline" ? "background" : request.policy.priority,
+        do_sample: request.policy.do_sample,
+      })
+    }
+    const thinking = request.thinking ?? this.options.thinking ?? "disabled"
+    if (thinking === "enabled") {
+      return modelCallPolicy("quality", {
+        reason_codes: ["LEGACY_THINKING_ENABLED_MAPPED_TO_QUALITY"],
+        max_tokens: request.max_tokens,
+        timeout_ms: this.options.timeout_ms,
+        max_transport_retries: Math.min(1, this.options.max_transport_retries) as 0 | 1,
+        response_format: this.options.response_format,
+      })
+    }
+    return fastModelPolicy("LEGACY_CALL_POLICY", request.max_tokens, {
+      timeout_ms: this.options.timeout_ms,
+      max_transport_retries: Math.min(1, this.options.max_transport_retries) as 0 | 1,
+      response_format: this.options.response_format,
+      do_sample: false,
+    })
+  }
+
+  private async performRequest(
+    request: StructuredModelRequest,
+    policy: ModelCallPolicy,
+    idempotencyKey: string,
+    deadlineAt: number,
+  ): Promise<{ response: Response; body: Record<string, unknown> }> {
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) throw new ModelExecutionBudgetExceededError("DEADLINE")
+    const controller = new AbortController()
+    const timeoutMs = Math.max(1, Math.min(policy.timeout_ms, remaining))
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const responseFormatOptions = { ...this.options, response_format: policy.response_format }
+      const isGlm52 = this.options.model.toLocaleLowerCase().startsWith("glm-5.2")
+      const response = await (this.options.fetch_impl ?? fetch)(this.options.endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(this.options.api_key ? {
+            [this.options.auth_header]: this.options.auth_scheme
+              ? `${this.options.auth_scheme} ${this.options.api_key}`
+              : this.options.api_key,
+          } : {}),
+          "idempotency-key": idempotencyKey,
+        },
+        body: JSON.stringify({
+          model: this.options.model,
+          messages: [
+            { role: "system", content: systemPromptWithSchema(responseFormatOptions, request) },
+            { role: "user", content: JSON.stringify(request.input) },
+          ],
+          temperature: request.temperature,
+          max_tokens: Math.min(request.max_tokens, policy.max_tokens),
+          thinking: { type: policy.thinking },
+          ...(isGlm52 && policy.thinking === "enabled" && policy.reasoning_effort
+            ? { reasoning_effort: policy.reasoning_effort }
+            : {}),
+          ...(isGlm52 ? { do_sample: policy.do_sample } : {}),
+          ...responseFormatBody(responseFormatOptions, request),
+        }),
+        signal: controller.signal,
+      })
+      let body: Record<string, unknown>
+      try {
+        body = await response.json() as Record<string, unknown>
+      } catch {
+        throw new ModelGatewayError("INVALID_RESPONSE", "模型服务响应体不是合法 JSON", { http_status: response.status })
+      }
+      if (!response.ok) {
+        const classification = classifyProviderFailure(response.status, body)
+        const detail = providerErrorMessage(body)
+        const code = classification.retriable
+          ? "RETRIABLE_HTTP_ERROR"
+          : classification.category === "auth"
+            ? "AUTH_ERROR"
+            : "HTTP_ERROR"
+        throw new ModelGatewayError(
+          code,
+          code === "AUTH_ERROR"
+            ? `API Key 认证失败（HTTP ${response.status}）${detail ? `：${detail}` : ""}`
+            : `模型服务返回 HTTP ${response.status}${detail ? `：${detail}` : ""}`,
+          {
+            provider_code: classification.provider_code,
+            http_status: response.status,
+            retry_after: response.headers.get("retry-after") ?? undefined,
+          },
+        )
+      }
+      return { response, body }
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  private async emitTrace(
+    request: StructuredModelRequest,
+    policy: ModelCallPolicy,
+    attempt: number,
+    queuedMs: number,
+    started: number,
+    detail: {
+      usage?: Record<string, unknown>
+      finishReason?: string
+      jsonParseOk: boolean
+      providerRequestId?: string
+      error?: ModelGatewayError
+    },
+  ): Promise<void> {
+    if (!this.options.on_trace) return
+    const trace: ModelCallTrace = {
+      trace_id: contentHash({ task: request.task, idempotency_key: request.idempotency_key, attempt, started }),
+      ...this.options.trace_context,
+      task: request.task,
+      stage: request.task,
+      attempt: attempt + 1,
+      model_id: this.model_id,
+      policy_profile: policy.profile,
+      policy_version: policy.policy_version,
+      policy_reason_codes: [...policy.reason_codes],
+      queued_ms: Math.round(queuedMs),
+      total_ms: Math.round(performance.now() - started),
+      prompt_tokens: numberOrUndefined(detail.usage?.prompt_tokens),
+      cached_prompt_tokens: nestedNumber(detail.usage, "prompt_tokens_details", "cached_tokens"),
+      completion_tokens: numberOrUndefined(detail.usage?.completion_tokens),
+      reasoning_tokens: nestedNumber(detail.usage, "completion_tokens_details", "reasoning_tokens"),
+      total_tokens: numberOrUndefined(detail.usage?.total_tokens),
+      finish_reason: detail.finishReason,
+      response_format: policy.response_format,
+      json_parse_ok: detail.jsonParseOk,
+      provider_error_code: detail.error?.provider_code,
+      provider_request_id: detail.providerRequestId,
+      ...(attempt > 0 ? { retry_kind: "transport" as const } : {}),
+    }
+    try { await this.options.on_trace(trace) } catch { /* telemetry cannot fail generation */ }
   }
 }
 
@@ -230,12 +412,25 @@ export class ModelGatewayError extends Error {
       | "NETWORK_ERROR"
       | "INVALID_RESPONSE"
       | "OUTPUT_TRUNCATED"
-      | "INVALID_JSON",
+      | "INVALID_JSON"
+      | "BUDGET_EXCEEDED",
     message: string,
+    detail: {
+      provider_code?: string
+      http_status?: number
+      retry_after?: string
+    } = {},
   ) {
     super(message)
     this.name = "ModelGatewayError"
+    this.provider_code = detail.provider_code
+    this.http_status = detail.http_status
+    this.retry_after = detail.retry_after
   }
+
+  readonly provider_code?: string
+  readonly http_status?: number
+  readonly retry_after?: string
 }
 
 /** No production default is provided: an absent provider returns a clear blocked state. */
@@ -273,11 +468,11 @@ export class ModelOutputValidationError extends Error {
 
 export function createRoleCModelGatewayFromEnv(
   env: Record<string, string | undefined> = process.env,
-  overrides: Pick<OpenAICompatibleGatewayOptions, "fetch_impl" | "on_usage"> = {},
+  overrides: Pick<OpenAICompatibleGatewayOptions, "fetch_impl" | "on_usage" | "on_trace" | "scheduler" | "execution_budget" | "circuit_breaker" | "trace_context"> = {},
 ): OpenAICompatibleModelGateway {
   const resolvedEnv = ensureModelEnv(env)
-  const endpoint = resolvedEnv.ROLE_C_MODEL_ENDPOINT
-  const model = resolvedEnv.ROLE_C_MODEL_ID
+  const endpoint = resolvedEnv.MODEL_RUNTIME_ENDPOINT ?? resolvedEnv.ROLE_C_MODEL_ENDPOINT
+  const model = resolvedEnv.MODEL_RUNTIME_MODEL_ID ?? resolvedEnv.ROLE_C_MODEL_ID
   if (!endpoint || !model) {
     throw new ModelProviderUnavailableError(
       "模型配置缺失：需要 ROLE_C_MODEL_ENDPOINT 和 ROLE_C_MODEL_ID。请复制 .env.role-c.example 为 .env.role-c.local 并填入模型参数。",
@@ -286,14 +481,28 @@ export function createRoleCModelGatewayFromEnv(
   return new OpenAICompatibleModelGateway({
     endpoint,
     model,
-    api_key: resolvedEnv.ROLE_C_MODEL_API_KEY,
-    response_format: responseFormatFromEnv(resolvedEnv.ROLE_C_MODEL_RESPONSE_FORMAT),
+    api_key: resolvedEnv.MODEL_RUNTIME_API_KEY ?? resolvedEnv.ROLE_C_MODEL_API_KEY,
+    response_format: responseFormatFromEnv(
+      resolvedEnv.MODEL_RUNTIME_RESPONSE_FORMAT ?? resolvedEnv.ROLE_C_MODEL_RESPONSE_FORMAT,
+    ),
     schema_strict: optionalBoolean(resolvedEnv.ROLE_C_MODEL_SCHEMA_STRICT, true),
     thinking: thinkingFromEnv(resolvedEnv.ROLE_C_MODEL_THINKING),
     auth_header: resolvedEnv.ROLE_C_MODEL_AUTH_HEADER || "authorization",
     auth_scheme: resolvedEnv.ROLE_C_MODEL_AUTH_SCHEME ?? "Bearer",
     timeout_ms: optionalPositiveInteger(resolvedEnv.ROLE_C_MODEL_TIMEOUT_MS, 120_000),
-    max_transport_retries: optionalNonNegativeInteger(resolvedEnv.ROLE_C_MODEL_MAX_RETRIES, 2),
+    max_transport_retries: optionalNonNegativeInteger(resolvedEnv.ROLE_C_MODEL_MAX_RETRIES, 1),
+    force_fast: optionalBoolean(resolvedEnv.MODEL_RUNTIME_FORCE_FAST, false),
+    scheduler: overrides.scheduler ?? sharedModelSchedulerFor({
+      global: optionalPositiveCount(resolvedEnv.MODEL_RUNTIME_MAX_IN_FLIGHT, 3),
+      quality: optionalPositiveCount(resolvedEnv.MODEL_RUNTIME_QUALITY_MAX_IN_FLIGHT, 1),
+      offline: optionalPositiveCount(resolvedEnv.MODEL_RUNTIME_OFFLINE_MAX_IN_FLIGHT, 1),
+    }),
+    execution_budget: overrides.execution_budget ?? new ModelExecutionBudget({
+      soft_deadline_ms: optionalPositiveInteger(resolvedEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS, 180_000),
+      hard_deadline_ms: optionalPositiveInteger(resolvedEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS, 360_000),
+      max_model_calls: optionalPositiveCount(resolvedEnv.MODEL_RUNTIME_MAX_MODEL_CALLS, 14),
+      max_transport_retries_total: optionalNonNegativeInteger(resolvedEnv.MODEL_RUNTIME_TRANSPORT_RETRY_BUDGET, 3),
+    }),
     ...overrides,
   })
 }
@@ -511,6 +720,29 @@ function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined
 }
 
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function nestedNumber(
+  record: Record<string, unknown> | undefined,
+  parent: string,
+  child: string,
+): number | undefined {
+  const nested = record?.[parent]
+  return isRecord(nested) ? numberOrUndefined(nested[child]) : undefined
+}
+
+function providerErrorMessage(body: Record<string, unknown>): string {
+  const error = isRecord(body.error) ? body.error : undefined
+  const value = error?.message ?? body.message
+  return typeof value === "string" ? value : ""
+}
+
+function delay(durationMs: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, durationMs))
+}
+
 function optionalPositiveInteger(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback
   const parsed = Number(value)
@@ -525,6 +757,15 @@ function optionalNonNegativeInteger(value: string | undefined, fallback: number)
   const parsed = Number(value)
   if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 5) {
     throw new ModelProviderUnavailableError("ROLE_C_MODEL_MAX_RETRIES 必须为 0..5 的整数")
+  }
+  return parsed
+}
+
+function optionalPositiveCount(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === "") return fallback
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 1_000) {
+    throw new ModelProviderUnavailableError("MODEL_RUNTIME_MAX_MODEL_CALLS 必须为 1..1000 的整数")
   }
   return parsed
 }

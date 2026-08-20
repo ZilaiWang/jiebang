@@ -43,6 +43,12 @@ import {
   ModelDiagnosticQuestionAuthor,
   type DiagnosticQuestionAuthorPort,
 } from "./diagnostic-question-author"
+import {
+  AtomicFileDurableJobStore,
+  DurableJobRunner,
+  createModelWorkflowJob,
+  type ModelWorkflowJobKind,
+} from "../model-runtime"
 
 export type InteractiveSessionStatus = "waiting_for_user" | "running" | "completed" | "blocked" | "failed"
 export type InteractiveStage = "objective_diagnosis" | "assessment" | "completed" | "blocked" | "failed"
@@ -261,11 +267,82 @@ export interface InteractiveSessionCommand {
 export class InteractiveSessionStore {
   private readonly commandQueues = new Map<string, Promise<unknown>>()
   private readonly createQueues = new Map<string, Promise<InteractiveSessionRecord>>()
+  private readonly durableJobs: AtomicFileDurableJobStore
+  private readonly jobRunner: DurableJobRunner
 
   constructor(
     readonly data_root: string,
     private readonly options: InteractiveSessionStoreOptions = {},
-  ) {}
+  ) {
+    this.durableJobs = new AtomicFileDurableJobStore(join(data_root, "jobs"))
+    this.jobRunner = new DurableJobRunner(this.durableJobs, {
+      owner: `interactive-session-${process.pid}-${randomUUID()}`,
+      max_in_flight: 2,
+      lease_ms: 30_000,
+    })
+    this.jobRunner.register("initial_content_round", async (job) => {
+      await this.generateInitialRoundInBackground(job.session_id)
+    })
+    this.jobRunner.register("diagnostic", async (job) => {
+      await this.generateDiagnosisInBackground(job.session_id)
+    })
+    this.jobRunner.register("next_content_round", async (job) => {
+      const record = await this.load(job.session_id)
+      const context = record.private.next_round_context
+      if (!context) throw new Error("NEXT_ROUND_CONTEXT_MISSING")
+      await this.generateNextRoundInBackground(job.session_id, context)
+    })
+    this.jobRunner.register("artifact_revision", async (job) => {
+      const record = await this.load(job.session_id)
+      const recovery = record.private.role_c_generation_recovery ?? undefined
+      if (record.private.next_round_context) {
+        await this.generateNextRoundInBackground(job.session_id, record.private.next_round_context, recovery)
+      } else if (!recovery && record.private.role_c) {
+        await this.repairLegacyAssessmentInBackground(job.session_id)
+      } else {
+        await this.generateInitialRoundInBackground(job.session_id, recovery)
+      }
+    })
+  }
+
+  /** Starts the worker and recovers queued or lease-expired jobs from disk. */
+  async ready(): Promise<void> {
+    await this.jobRunner.start()
+  }
+
+  jobWorkerStatus(): { running: boolean } {
+    return { running: this.jobRunner.isRunning() }
+  }
+
+  private async enqueueContentJob(kind: Extract<ModelWorkflowJobKind,
+    "initial_content_round" | "next_content_round" | "artifact_revision">,
+    record: InteractiveSessionRecord,
+  ): Promise<void> {
+    const identity = JSON.stringify({
+      session_id: record.session_id,
+      round_no: record.round_no,
+      generation_attempt: record.private.role_c_generation_attempt,
+      failed_generations: record.private.role_c_failed_generations,
+      recovery_fingerprint: record.private.role_c_generation_recovery?.failure_fingerprint ?? null,
+      next_request_id: record.private.next_round_context?.request_id ?? null,
+      kind,
+    })
+    const jobId = `JOB-${createHash("sha256").update(identity).digest("hex").slice(0, 32)}`
+    await this.jobRunner.enqueue(createModelWorkflowJob({
+      job_id: jobId,
+      session_id: record.session_id,
+      run_id: record.run_id,
+      kind,
+      current_stage: kind === "initial_content_round" ? "initial_content" : "next_content",
+      deadline_ms: 8 * 60_000,
+      // Model/runtime retries and explicit user recovery own retry policy. The
+      // durable job itself is replayed only after a crashed/expired lease.
+      max_attempts: 1,
+      policy_snapshot: { policy_version: "glm52-policy-v1", profile: "mixed" },
+      budget_snapshot: { max_model_calls: 14, max_transport_retries: 3 },
+      checkpoint_refs: [join(this.data_root, "role-c", "generation-checkpoints")],
+    }))
+  }
 
   private diagnosticQuestionAuthor(): DiagnosticQuestionAuthorPort {
     return this.options.diagnostic_question_author
@@ -290,54 +367,58 @@ export class InteractiveSessionStore {
     }
   }
 
+  /** HTTP-facing creation: persist the session first and let the durable worker author diagnosis. */
+  async createQueued(input: CreateInteractiveSessionInput): Promise<InteractiveSessionRecord> {
+    const sessionId = safeId(input.session_id ?? `SESSION-${randomUUID()}`)
+    const operation = this.withSessionLock(sessionId, async () => {
+      const record = await this.buildSessionShell({ ...input, session_id: sessionId }, true)
+      await this.save(record, null)
+      await this.jobRunner.enqueue(createModelWorkflowJob({
+        job_id: `JOB-${createHash("sha256").update(`${sessionId}:diagnostic`).digest("hex").slice(0, 32)}`,
+        session_id: sessionId,
+        run_id: record.run_id,
+        kind: "diagnostic",
+        current_stage: "diagnosis",
+        deadline_ms: 3 * 60_000,
+        max_attempts: 1,
+        policy_snapshot: { policy_version: "glm52-policy-v1", profile: "fast" },
+        budget_snapshot: { max_model_calls: 4, max_transport_retries: 2 },
+      }))
+      return record
+    })
+    return operation
+  }
+
   private async createUnlocked(input: CreateInteractiveSessionInput): Promise<InteractiveSessionRecord> {
     const sessionId = safeId(input.session_id!)
     const existing = await this.loadOptional(sessionId)
     if (existing) throw new InteractiveSessionError("SESSION_ALREADY_EXISTS", `Session ${sessionId} already exists`, 409)
+    const record = await this.buildSessionShell(input, false)
+    await this.populateDiagnosis(record)
+    await this.save(record, null)
+    return record
+  }
 
+  private async buildSessionShell(
+    input: CreateInteractiveSessionInput,
+    queued: boolean,
+  ): Promise<InteractiveSessionRecord> {
+    const sessionId = safeId(input.session_id!)
+    const existing = await this.loadOptional(sessionId)
+    if (existing) throw new InteractiveSessionError("SESSION_ALREADY_EXISTS", `Session ${sessionId} already exists`, 409)
     const now = new Date().toISOString()
-    const knowledgeBase = await loadKnowledgeBase()
-    const goalSpec = resolveLearningGoalSpec(input.learner_request.learning_goal_spec ?? {
-      mode: "custom_goal",
-      custom_goal: input.learner_request.goal,
-    })
+    const runId = safeId(input.run_id ?? `RUN-${randomUUID()}`)
     const learnerId = input.learner_request.learner_id ?? sessionId
     const learnerMemory = await loadLearnerMemory(this.data_root, learnerId)
-    const targetItems = knowledgeBase.items.filter((item) => goalSpec.mapped_source_ids.includes(item.sourceId))
-    const targets = selectDiagnosticEvidenceTargets({
-      knowledgeBase,
-      target_source_ids: goalSpec.mapped_source_ids,
-      prerequisite_source_ids: [...new Set(targetItems.flatMap((item) => item.prerequisites))],
-      learner_memory: learnerMemory,
-      max_items: 5,
-    })
-    let diagnosis: Awaited<ReturnType<typeof authorDiagnosisForm>>
-    try {
-      diagnosis = await authorDiagnosisForm(
-        this.diagnosticQuestionAuthor(),
-        sessionId,
-        input.learner_request.goal,
-        targets,
-        learnerMemory.recent_assessment_items ?? [],
-      )
-    } catch (error) {
-      throw new InteractiveSessionError(
-        "DIAGNOSTIC_GENERATION_FAILED",
-        error instanceof Error ? error.message : "AI 诊断题生成失败",
-        503,
-      )
-    }
-    const diagnosisItems = diagnosis.items
-    const answerKey = diagnosis.answerKey
     const events: InteractiveEvent[] = [
       event(sessionId, "session_created", "objective_diagnosis", "learning-orchestrator created a persistent session", now),
       event(sessionId, "worker_completed", "objective_diagnosis", "background-collector accepted learner background", now, "background-collector"),
       event(sessionId, "worker_completed", "objective_diagnosis", "self-assessor accepted learner self assessment", now, "self-assessor"),
-      event(sessionId, "worker_invoked", "objective_diagnosis", "objective-diagnostician prepared grounded questions", now, "objective-diagnostician"),
-      event(sessionId, "waiting_for_user", "objective_diagnosis", "waiting for diagnosis answers", now, "objective-diagnostician"),
+      ...(queued
+        ? [event(sessionId, "worker_invoked", "objective_diagnosis", "正在准备客观诊断题", now, "objective-diagnostician")]
+        : []),
     ]
-    const runId = safeId(input.run_id ?? `RUN-${randomUUID()}`)
-    const record: InteractiveSessionRecord = {
+    return {
       schema_version: "1.0",
       revision: 0,
       session_id: sessionId,
@@ -345,19 +426,23 @@ export class InteractiveSessionStore {
       owner_id: input.owner_id,
       mode: input.mode,
       learner_request: structuredClone(input.learner_request),
-      status: "waiting_for_user",
+      status: queued ? "running" : "waiting_for_user",
       current_stage: "objective_diagnosis",
       round_no: 1,
-      waiting_for: { type: "diagnosis_answers", items: diagnosisItems },
+      waiting_for: null,
       worker_ledger: [
         { worker: "background-collector", status: "completed", summary: "已收集学习背景", updated_at: now },
         { worker: "self-assessor", status: "completed", summary: "已收集学习者自评", updated_at: now },
-        { worker: "objective-diagnostician", status: "waiting_for_user", summary: "等待诊断作答", updated_at: now },
+        ...(queued
+          ? [{ worker: "objective-diagnostician" as const, status: "running" as const, summary: "正在准备客观诊断题", updated_at: now }]
+          : []),
       ],
       worker_ledger_history: [
         createWorkerLedgerHistoryEntry(sessionId, runId, 1, 1, 1, "background-collector", "completed", "已收集学习背景", "objective_diagnosis", now, now, "session_logic", false, [], ["background-collector:session-input"]),
         createWorkerLedgerHistoryEntry(sessionId, runId, 1, 2, 1, "self-assessor", "completed", "已收集学习者自评", "objective_diagnosis", now, now, "session_logic", false, ["background-collector:session-input"], ["self-assessor:session-input"]),
-        createWorkerLedgerHistoryEntry(sessionId, runId, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待诊断作答", "objective_diagnosis", now, null, "session_logic", true, ["background-collector:session-input", "self-assessor:session-input"], ["objective-diagnostician:diagnosis-form"]),
+        ...(queued
+          ? [createWorkerLedgerHistoryEntry(sessionId, runId, 1, 3, 1, "objective-diagnostician", "running", "正在准备客观诊断题", "objective_diagnosis", now, null, "session_logic", false, ["background-collector:session-input", "self-assessor:session-input"], [])]
+          : []),
       ],
       content_review: null,
       profile: null,
@@ -373,18 +458,98 @@ export class InteractiveSessionStore {
       terminal_outcome: null,
       events,
       processed_commands: {},
-      private: { diagnosis_answer_key: answerKey, diagnosis_answers: null, diagnosis_items: diagnosisItems, upstream_artifacts: {}, next_round_context: null, assessment_history: mergeAssessmentHistory(learnerMemory.recent_assessment_items ?? [], diagnosis.history), role_c_generation_attempt: 0, role_c_failed_generations: 0, role_c_generation_recovery: null, profile_epoch: 0, node_remediate_rounds: 0, node_reinforce_rounds: 0, role_c: null },
+      private: {
+        diagnosis_answer_key: {},
+        diagnosis_answers: null,
+        diagnosis_items: [],
+        upstream_artifacts: {},
+        next_round_context: null,
+        assessment_history: structuredClone(learnerMemory.recent_assessment_items ?? []),
+        role_c_generation_attempt: 0,
+        role_c_failed_generations: 0,
+        role_c_generation_recovery: null,
+        profile_epoch: 0,
+        node_remediate_rounds: 0,
+        node_reinforce_rounds: 0,
+        role_c: null,
+      },
       code_execution: null,
       created_at: now,
       updated_at: now,
     }
+  }
+
+  private async populateDiagnosis(record: InteractiveSessionRecord): Promise<void> {
+    const knowledgeBase = await loadKnowledgeBase()
+    const goalSpec = resolveLearningGoalSpec(record.learner_request.learning_goal_spec ?? {
+      mode: "custom_goal",
+      custom_goal: record.learner_request.goal,
+    })
+    const learnerId = record.learner_request.learner_id ?? record.session_id
+    const learnerMemory = await loadLearnerMemory(this.data_root, learnerId)
+    const targetItems = knowledgeBase.items.filter((item) => goalSpec.mapped_source_ids.includes(item.sourceId))
+    const targets = selectDiagnosticEvidenceTargets({
+      knowledgeBase,
+      target_source_ids: goalSpec.mapped_source_ids,
+      prerequisite_source_ids: [...new Set(targetItems.flatMap((item) => item.prerequisites))],
+      learner_memory: learnerMemory,
+      max_items: 5,
+    })
+    let diagnosis: Awaited<ReturnType<typeof authorDiagnosisForm>>
+    try {
+      diagnosis = await authorDiagnosisForm(
+        this.diagnosticQuestionAuthor(),
+        record.session_id,
+        record.learner_request.goal,
+        targets,
+        learnerMemory.recent_assessment_items ?? [],
+      )
+    } catch (error) {
+      throw new InteractiveSessionError(
+        "DIAGNOSTIC_GENERATION_FAILED",
+        error instanceof Error ? error.message : "AI 诊断题生成失败",
+        503,
+      )
+    }
+    const diagnosisItems = diagnosis.items
+    const answerKey = diagnosis.answerKey
+    const now = new Date().toISOString()
+    record.status = "waiting_for_user"
+    record.current_stage = "objective_diagnosis"
+    record.waiting_for = { type: "diagnosis_answers", items: diagnosisItems }
+    record.worker_ledger = [
+      { worker: "background-collector", status: "completed", summary: "已收集学习背景", updated_at: now },
+      { worker: "self-assessor", status: "completed", summary: "已收集学习者自评", updated_at: now },
+      { worker: "objective-diagnostician", status: "waiting_for_user", summary: "等待诊断作答", updated_at: now },
+    ]
+    record.worker_ledger_history = [
+      ...record.worker_ledger_history.filter((entry) => entry.unit_name !== "objective-diagnostician"),
+      createWorkerLedgerHistoryEntry(record.session_id, record.run_id, 1, 3, 1, "objective-diagnostician", "waiting_for_user", "等待诊断作答", "objective_diagnosis", now, null, "session_logic", true, ["background-collector:session-input", "self-assessor:session-input"], ["objective-diagnostician:diagnosis-form"]),
+    ]
+    record.private.diagnosis_answer_key = answerKey
+    record.private.diagnosis_items = diagnosisItems
+    record.private.assessment_history = mergeAssessmentHistory(learnerMemory.recent_assessment_items ?? [], diagnosis.history)
+    record.events.push(event(record.session_id, "worker_invoked", "objective_diagnosis", "objective-diagnostician prepared grounded questions", now, "objective-diagnostician"))
+    record.events.push(event(record.session_id, "waiting_for_user", "objective_diagnosis", "waiting for diagnosis answers", now, "objective-diagnostician"))
+    record.updated_at = now
     await saveLearnerMemory(this.data_root, {
       ...learnerMemory,
       recent_assessment_items: record.private.assessment_history,
       updated_at: now,
     })
-    await this.save(record, null)
-    return record
+  }
+
+  private async generateDiagnosisInBackground(sessionId: string): Promise<void> {
+    await this.withSessionLock(sessionId, async () => {
+      const record = await this.load(sessionId)
+      if (record.status !== "running" || record.private.diagnosis_items.length > 0) return
+      try {
+        await this.populateDiagnosis(record)
+      } catch (error) {
+        applyDiagnosticGenerationFailure(record, error)
+      }
+      await this.save(record)
+    })
   }
 
   async load(sessionId: string): Promise<InteractiveSessionRecord> {
@@ -413,7 +578,7 @@ export class InteractiveSessionStore {
       record.events.push(event(record.session_id, "session_updated", "assessment", staleResources ? "学习资源与当前节点不一致，正在通过C按当前节点重新生成" : "旧测评含简答题，正在通过C重新生成代码题", record.updated_at, "tiered-evaluator"))
       const response = publicSessionView(record)
       await this.save(record)
-      void this.repairLegacyAssessmentInBackground(safeSessionId)
+      await this.enqueueContentJob("artifact_revision", record)
       return response
     })
   }
@@ -481,7 +646,7 @@ export class InteractiveSessionStore {
         const response = publicSessionView(updated)
         updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
         await this.save(updated)
-        void this.generateInitialRoundInBackground(sessionId)
+        await this.enqueueContentJob("initial_content_round", updated)
         return response
       }
     } else if (command.type === "run_code_lab") {
@@ -524,7 +689,7 @@ export class InteractiveSessionStore {
         const response = publicSessionView(updated)
         updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
         await this.save(updated)
-        void this.generateNextRoundInBackground(sessionId, updated.private.next_round_context)
+        await this.enqueueContentJob("next_content_round", updated)
         return response
       }
     } else {
@@ -548,6 +713,10 @@ export class InteractiveSessionStore {
       if (record.terminal_outcome?.kind === "content_generation_failed"
         && generationFailure?.canRetry
         && record.profile && record.formal_path && record.current_path_node) {
+        // Every explicit recovery is a new generation attempt. This changes
+        // both the Role C run identity and durable job identity, so a prior
+        // completed/failed artifact_revision job cannot swallow a later retry.
+        record.private.role_c_generation_attempt = (record.private.role_c_generation_attempt ?? 0) + 1
         record.status = "running"
         record.current_stage = "assessment"
         record.waiting_for = null
@@ -555,7 +724,7 @@ export class InteractiveSessionStore {
         record.terminal_outcome = null
         const recovery = generationRecoveryContext(
           generationFailure,
-          record.private.role_c_failed_generations + 1,
+          record.private.role_c_generation_attempt,
         )
         record.private.role_c_generation_recovery = recovery
         const startedAt = new Date().toISOString()
@@ -572,9 +741,9 @@ export class InteractiveSessionStore {
         record.processed_commands[command.command_id] = { request_hash: requestHash, response }
         await this.save(record)
         if (record.private.next_round_context) {
-          void this.generateNextRoundInBackground(sessionId, record.private.next_round_context, recovery)
+          await this.enqueueContentJob("artifact_revision", record)
         } else {
-          void this.generateInitialRoundInBackground(sessionId, recovery)
+          await this.enqueueContentJob("artifact_revision", record)
         }
         return response
       }
@@ -619,7 +788,9 @@ export class InteractiveSessionStore {
         const retryContext = focusMatchesCurrentNode
           ? persistedContext
           : { ...persistedContext, focus_objective_ids: nodeObjectiveIds }
-        void this.generateNextRoundInBackground(sessionId, retryContext)
+        record.private.next_round_context = retryContext
+        await this.save(record)
+        await this.enqueueContentJob("next_content_round", record)
         return response
       }
       updated = await retryInteractiveSession(record, this.data_root)
@@ -971,6 +1142,7 @@ async function retryInteractiveSession(
   dataRoot: string,
 ): Promise<InteractiveSessionRecord> {
   const record = structuredClone(original)
+  const blockedReason = record.blocked_reason
   if (record.blocked_reason?.startsWith(`${LEARNING_SUPPORT_REQUIRED}:`)) {
     throw new InteractiveSessionError(
       LEARNING_SUPPORT_REQUIRED,
@@ -985,6 +1157,25 @@ async function retryInteractiveSession(
     "code-lab": "pending",
     "tiered-evaluator": "pending",
   }, { repairAttemptNo: record.private.role_c_failed_generations + 1 })
+  if (blockedReason?.startsWith("SUBMISSION_BOUNDARY_BLOCKED:")
+    && record.formal_path && record.current_path_node && record.rag_result) {
+    const path = record.formal_path as FormalLearningPath
+    const node = record.current_path_node as LearningPathNode
+    record.private.role_c_generation_attempt = (record.private.role_c_generation_attempt ?? 0) + 1
+    const currentNode = bindPathNodeFactsForRoleC(node, record.rag_result as RagResult)
+    const next = await generateFormalRoleCRound(record, path, currentNode, dataRoot)
+    if (!next.ok) {
+      applyRoleCGenerationFailure(record, next)
+      record.events.push(event(record.session_id, "session_blocked", "blocked", next.reason, new Date().toISOString()))
+      record.updated_at = new Date().toISOString()
+      return record
+    }
+    await applyFormalRoleCRound(record, next, dataRoot)
+    markReviewedRoleCWorkers(record)
+    record.events.push(event(record.session_id, "session_updated", "assessment", "submission boundary changed; regenerated the current learning resources", new Date().toISOString()))
+    record.updated_at = new Date().toISOString()
+    return record
+  }
   if (feedbackDecisionAction(record.feedback) === "advance") {
     const path = record.formal_path as FormalLearningPath | null
     const node = record.current_path_node as LearningPathNode | null

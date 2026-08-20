@@ -57,4 +57,22 @@ describe("private Role C generation checkpoints", () => {
     await writeFile(file, JSON.stringify(envelope), "utf8")
     expect(await store.load(inputHash)).toBeUndefined()
   })
+
+  test("persists a semantic plan before concept generation starts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "role-c-semantic-checkpoint-"))
+    directories.push(root)
+    const store = new AtomicFilePipelineCheckpointStore(root)
+    const inputHash = contentHash({ spec: "S2", evidence: "E2" })
+    const checkpoint: any = {
+      input_hash: inputHash,
+      stage: "semantic_plan_ready",
+      round_semantic_plan: {
+        plan_id: "PLAN-1",
+        spec_id: "SPEC-1",
+        blueprint_id: "BLUEPRINT-1",
+      },
+    }
+    await store.save(checkpoint)
+    expect(await store.load(inputHash)).toEqual(checkpoint)
+  })
 })

@@ -108,6 +108,7 @@ import {
   type AssessmentItemPlan,
   type ConceptSegmentAuthorPayload,
 } from "./staged-generation"
+import { fastModelPolicy } from "../../model-runtime"
 
 export interface ModelBackedProviderOptions {
   /** Staged is the production path; monolithic remains available for compatibility and benchmarks. */
@@ -1217,6 +1218,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
   private async generateStage<T>(stage: StructuredStage<T>): Promise<T> {
     let issues: string[] = []
     let previousOutput: T | undefined
+    let renderMaxTokens = stage.max_tokens
     for (let attempt = 0; attempt <= stage.max_repairs; attempt += 1) {
       let value: T
       const systemPrompt = attempt === 0
@@ -1265,8 +1267,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           output_schema_id: stage.output_schema_id,
           output_schema: stage.output_schema,
           temperature: stage.temperature,
-          max_tokens: stage.max_tokens,
-          thinking: attempt > 0 && repairNeedsThinking(issues) ? "enabled" : "disabled",
+          max_tokens: renderMaxTokens,
+          policy: fastModelPolicy(
+            attempt === 0 ? "ROLE_C_STRUCTURED_RENDER" : "ROLE_C_TARGETED_REPAIR",
+            renderMaxTokens,
+            { max_transport_retries: attempt === 0 ? 1 : 0 },
+          ),
           idempotency_key: idempotencyKey({
             ...stage.idempotency_identity,
             model_config_hash: this.gateway.model_config_hash,
@@ -1286,6 +1292,14 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           && ["INVALID_JSON", "INVALID_RESPONSE", "OUTPUT_TRUNCATED"].includes(error.code)
         ) {
           issues = [`模型输出格式错误：${error.message}`]
+          if (error.code === "OUTPUT_TRUNCATED") {
+            // Retry only this structured stage. The semantic plan and completed
+            // checkpoints remain unchanged, and the retry always stays FAST.
+            renderMaxTokens = Math.min(
+              Math.ceil(stage.max_tokens * 1.5),
+              stageTokenCeiling(stage.task, stage.max_tokens),
+            )
+          }
           continue
         }
         throw error
@@ -1348,7 +1362,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       output_schema: assessmentNoveltyPatchSchema(indices),
       temperature: stage.temperature,
       max_tokens: Math.min(stage.max_tokens, 4_000),
-      thinking: "disabled",
+      policy: fastModelPolicy("ASSESSMENT_NOVELTY_PATCH", Math.min(stage.max_tokens, 4_000), {
+        max_transport_retries: 0,
+        do_sample: true,
+      }),
       idempotency_key: idempotencyKey({
         ...stage.idempotency_identity,
         task: "role-c.tiered-evaluator.public.novelty-repair",
@@ -1377,6 +1394,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           output_schema: schema,
           temperature: this.conceptTemperature,
           max_tokens: this.conceptMaxTokens,
+          policy: fastModelPolicy("ROLE_C_MONOLITHIC_CONCEPT", this.conceptMaxTokens),
           idempotency_key: idempotencyKey({
             spec_id: request.generation_spec.spec_id,
             evidence_ref: request.generation_spec.evidence_ref,
@@ -1417,6 +1435,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           output_schema: schema,
           temperature: this.codeLabTemperature,
           max_tokens: this.codeLabMaxTokens,
+          policy: fastModelPolicy("ROLE_C_MONOLITHIC_CODE_LAB", this.codeLabMaxTokens),
           idempotency_key: idempotencyKey({
             spec_id: request.generation_spec.spec_id,
             concept_artifact_id: request.concept_artifact.artifact_id,
@@ -1458,6 +1477,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           output_schema: schema,
           temperature: this.assessmentTemperature,
           max_tokens: this.assessmentMaxTokens,
+          policy: fastModelPolicy("ROLE_C_MONOLITHIC_ASSESSMENT", this.assessmentMaxTokens),
           idempotency_key: idempotencyKey({
             spec_id: request.generation_spec.spec_id,
             concept_artifact_id: request.concept_artifact.artifact_id,
@@ -1486,11 +1506,6 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     }
     return draft as AssessmentDraft
   }
-}
-
-/** Structural repairs stay deterministic; only semantic/reasoning failures spend thinking budget. */
-export function repairNeedsThinking(issues: string[]): boolean {
-  return issues.some((issue) => /semantic|unsupported|alignment|evidence|citation|objective|语义|证据|引用|目标|对齐/i.test(issue))
 }
 
 export interface AssessmentNoveltyDesignBrief {
@@ -2389,6 +2404,14 @@ function positiveInteger(value: number | undefined, fallback: number, name: stri
   const selected = value ?? fallback
   if (!Number.isSafeInteger(selected) || selected < 1) throw new Error(`${name} 必须是正整数`)
   return selected
+}
+
+function stageTokenCeiling(task: string, configured: number): number {
+  if (task.includes("concept-tutor")) return Math.max(configured, 16_000)
+  if (task.includes("assessment.public")) return Math.max(configured, 24_000)
+  if (task.includes("assessment.secure")) return Math.max(configured, 16_000)
+  if (task.includes("code-lab")) return Math.max(configured, 16_000)
+  return Math.max(configured, 16_000)
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

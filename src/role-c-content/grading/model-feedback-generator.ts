@@ -1,6 +1,7 @@
 import type { GradeFeedback, GradeItemResult, GradeResultPayload } from "../contracts/artifacts"
 import { contentHash } from "../contracts/common"
 import type { ModelGateway } from "../contracts/model-gateway"
+import { fastModelPolicy } from "../../model-runtime"
 import {
   EVALUATOR_FEEDBACK_PROMPT_VERSION,
   EVALUATOR_FEEDBACK_SYSTEM_PROMPT,
@@ -40,6 +41,7 @@ export class ModelBackedGradeFeedbackGenerator implements GradeFeedbackGenerator
       output_schema: getRoleCModelOutputSchema("grade_feedback.schema.json"),
       temperature: 0.2,
       max_tokens: 2_500,
+      policy: fastModelPolicy("LEARNER_FEEDBACK_RENDER", 2_500),
       idempotency_key: `IDEMP-${contentHash({
         input,
         prompt_version: EVALUATOR_FEEDBACK_PROMPT_VERSION,

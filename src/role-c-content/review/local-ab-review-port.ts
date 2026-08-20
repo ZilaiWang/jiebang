@@ -362,6 +362,7 @@ function auditPathTeaching(
     knowledgeBase,
     citedSourceIds: taughtSourceIds,
     targetSourceIds,
+    contentDifficulty: generationSpecTeachingDifficulty(request.generation_spec),
   })
 
   const knownSourceIds = new Set(
@@ -411,6 +412,22 @@ function auditPathTeaching(
     fixScope: "new_spec",
     canRecover: unknownReferences.length === 0 && raw.canRecover,
   }
+}
+
+function generationSpecTeachingDifficulty(
+  spec: ContentReviewRequest["generation_spec"],
+): "beginner" | "basic" | "intermediate" | "integrated" {
+  const teachingLoad = Math.max(
+    spec.difficulty.domain_complexity,
+    spec.difficulty.cognitive_demand,
+    spec.difficulty.reasoning_steps,
+    spec.difficulty.code_complexity,
+    spec.difficulty.prerequisite_load,
+  )
+  if (teachingLoad <= 1) return "beginner"
+  if (teachingLoad <= 2) return "basic"
+  if (teachingLoad <= 3) return "intermediate"
+  return "integrated"
 }
 
 function auditEvidenceAnchoredBlocks(

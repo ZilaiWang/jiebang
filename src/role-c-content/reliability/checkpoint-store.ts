@@ -3,13 +3,25 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { contentHash } from "../contracts/common"
 import { protectSensitivePath } from "../../security/windows-secure-acl"
+import type { RoundSemanticPlan } from "../planning/round-semantic-plan"
 
 export interface CPipelineCheckpoint {
   input_hash: string
-  stage: "concept_ready" | "code_lab_ready" | "branches_ready"
-  concept: ConceptLessonArtifact
+  stage: "semantic_plan_ready" | "concept_ready" | "code_lab_ready" | "assessment_ready" | "branches_ready"
+  concept?: ConceptLessonArtifact
+  round_semantic_plan?: RoundSemanticPlan
   code_lab?: CodeLabArtifactPair
   assessment?: AssessmentArtifactPair
+  metadata?: {
+    spec_id: string
+    blueprint_id: string
+    model_id: string
+    prompt_version: string
+    policy_version: string
+    policy_decision_hash: string
+    evidence_hash: string
+    created_at: string
+  }
 }
 
 export interface CPipelineCheckpointStore {
@@ -25,11 +37,20 @@ export class InMemoryPipelineCheckpointStore implements CPipelineCheckpointStore
     return value ? structuredClone(value) : undefined
   }
   async save(checkpoint: CPipelineCheckpoint): Promise<void> {
+    if (checkpoint.stage === "semantic_plan_ready" && !checkpoint.round_semantic_plan) {
+      throw new Error("semantic_plan_ready checkpoint 缺少语义规划")
+    }
+    if (checkpoint.stage !== "semantic_plan_ready" && !checkpoint.concept) {
+      throw new Error(`${checkpoint.stage} checkpoint 缺少讲义产物`)
+    }
     if (checkpoint.stage === "code_lab_ready" && !checkpoint.code_lab) {
       throw new Error("code_lab_ready checkpoint 缺少代码实验产物")
     }
     if (checkpoint.stage === "branches_ready" && (!checkpoint.code_lab || !checkpoint.assessment)) {
       throw new Error("branches_ready checkpoint 缺少分支产物")
+    }
+    if (checkpoint.stage === "assessment_ready" && !checkpoint.assessment) {
+      throw new Error("assessment_ready checkpoint 缺少测评产物")
     }
     this.values.set(checkpoint.input_hash, structuredClone(checkpoint))
   }
@@ -108,11 +129,20 @@ export class AtomicFilePipelineCheckpointStore implements CPipelineCheckpointSto
 }
 
 function assertCheckpointShape(checkpoint: CPipelineCheckpoint): void {
+  if (checkpoint.stage === "semantic_plan_ready" && !checkpoint.round_semantic_plan) {
+    throw new Error("semantic_plan_ready checkpoint 缺少语义规划")
+  }
+  if (checkpoint.stage !== "semantic_plan_ready" && !checkpoint.concept) {
+    throw new Error(`${checkpoint.stage} checkpoint 缺少讲义产物`)
+  }
   if (checkpoint.stage === "code_lab_ready" && !checkpoint.code_lab) {
     throw new Error("code_lab_ready checkpoint 缺少代码实验产物")
   }
   if (checkpoint.stage === "branches_ready"
     && (!checkpoint.code_lab || !checkpoint.assessment)) {
     throw new Error("branches_ready checkpoint 缺少分支产物")
+  }
+  if (checkpoint.stage === "assessment_ready" && !checkpoint.assessment) {
+    throw new Error("assessment_ready checkpoint 缺少测评产物")
   }
 }

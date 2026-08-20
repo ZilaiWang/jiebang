@@ -124,7 +124,7 @@ function workspaceFromUrl(): WorkspaceState | null {
 /** 实时检查 Docker 是否就绪（每次创建前调用，不依赖页面加载时的缓存值）。 */
 export async function checkDockerReady(fetchImpl: typeof fetch = fetch): Promise<{ ready: boolean; error?: string }> {
   try {
-    const response = await fetchImpl("/health")
+    const response = await fetchImpl("/orchestrator/docker-status")
     const data = await response.json() as { docker?: { ready?: boolean; error?: string } }
     return data?.docker?.ready
       ? { ready: true }
@@ -635,7 +635,7 @@ function ApiConfigModal({ current, dockerStatus, onDockerSetup, onClose, onSave 
         // 轮询直到 Docker 就绪
         const poll = setInterval(async () => {
           try {
-            const res = await fetch("/health")
+            const res = await fetch("/orchestrator/docker-status")
             const data = await res.json()
             if (data?.docker?.ready) {
               clearInterval(poll)

@@ -52,7 +52,11 @@ async function createSession(handle: (request: Request) => Promise<Response>) {
       root_dir: "C:/browser-must-not-control-this",
     }),
   }))
-  return { response, body: await json(response) }
+  const accepted = await json(response)
+  const body = accepted.status === "running"
+    ? await waitForSessionGeneration(handle, accepted.session_id)
+    : accepted
+  return { response, body }
 }
 
 async function waitForSessionGeneration(
@@ -84,7 +88,7 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
         learner_request: { learner_id: "learner-interactive-001", goal: "学习 Python 循环" },
       }),
     }))
-    expect(create.status).toBe(201)
+    expect(create.status).toBe(202)
 
     const mismatchedCreate = await handle(new Request("http://localhost/orchestrator/sessions", {
       method: "POST",
@@ -254,7 +258,7 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
     const { data_root, handle } = await fixture()
     const created = await createSession(handle)
 
-    expect(created.response.status).toBe(201)
+    expect(created.response.status).toBe(202)
     expect(created.body).toMatchObject({
       session_id: "SESSION-INTERACTIVE-001",
       status: "waiting_for_user",

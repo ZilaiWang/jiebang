@@ -31,6 +31,7 @@ import {
 import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import { join, resolve } from "node:path"
 import { appendFile, mkdir } from "node:fs/promises"
+import type { ModelCallTrace } from "../model-runtime"
 import {
   adaptLearnerProfile,
   adaptRagResult,
@@ -55,6 +56,7 @@ import {
   LearningCycleService,
   ModelContentSemanticAuditPort,
   ModelBackedRoleCContentProvider,
+  ModelRoundSemanticPlanner,
   modelBackedProviderOptionsFromEnv,
   projectPublicRagEvidencePack,
   createRoleCModelGatewayFromEnv,
@@ -124,6 +126,20 @@ function stageDiagnosticSink(dataDirectory?: string) {
       await appendFile(path, `${JSON.stringify({ ...diagnostic, timestamp: new Date().toISOString() })}\n`, "utf8")
     } catch {
       // Diagnostics must never weaken or replace the trusted content gate.
+    }
+  }
+}
+
+function modelTraceSink(dataDirectory?: string) {
+  if (!dataDirectory?.trim()) return undefined
+  const directory = join(resolve(dataDirectory), "telemetry")
+  const path = join(directory, "model-calls.jsonl")
+  return async (trace: ModelCallTrace): Promise<void> => {
+    try {
+      await mkdir(directory, { recursive: true })
+      await appendFile(path, `${JSON.stringify({ ...trace, recorded_at: new Date().toISOString() })}\n`, "utf8")
+    } catch {
+      // Observability is non-authoritative and never weakens content validation.
     }
   }
 }
@@ -245,7 +261,10 @@ export async function generateRoleCForRoleDWithRuntime(
   let modelGateway: ReturnType<typeof createRoleCModelGatewayFromEnv> | undefined
   try {
     modelGateway = runtime.providerMode === "model"
-      ? createRoleCModelGatewayFromEnv(runtimeEnv)
+      ? createRoleCModelGatewayFromEnv(runtimeEnv, {
+          on_trace: modelTraceSink(runtime.dataDirectory),
+          trace_context: { run_id: input.runId },
+        })
       : undefined
   } catch (error) {
     const reason = error instanceof Error ? error.message : "C 的模型 Provider 配置不可用"
@@ -401,6 +420,9 @@ export async function generateRoleCForRoleDWithRuntime(
       max_recovery_attempts: 2,
       ...(persistence.checkpointStore
         ? { checkpoint_store: persistence.checkpointStore }
+        : {}),
+      ...(modelGateway
+        ? { semantic_planner: new ModelRoundSemanticPlanner(modelGateway) }
         : {}),
       ...(runtime.critic ? { critic: runtime.critic } : {}),
       async on_ready(context) {
@@ -995,7 +1017,10 @@ export async function continueRoleCAfterSubmission(
   let runner: CodeRunner
   try {
     modelGateway = runtime.providerMode === "model"
-      ? createRoleCModelGatewayFromEnv(runtimeEnv)
+      ? createRoleCModelGatewayFromEnv(runtimeEnv, {
+          on_trace: modelTraceSink(runtime.dataDirectory),
+          trace_context: { session_id: input.sessionId, run_id: currentRun.run_id },
+        })
       : undefined
     runner = await resolveRoleCCodeRunner(runtime)
   } catch (error) {
@@ -1172,6 +1197,12 @@ export async function continueRoleCAfterSubmission(
                 : {}),
             }),
           ...(runtime.critic ? { critic: runtime.critic } : {}),
+          ...(persistence.checkpointStore
+            ? { checkpoint_store: persistence.checkpointStore }
+            : {}),
+          ...(modelGateway
+            ? { semantic_planner: new ModelRoundSemanticPlanner(modelGateway) }
+            : {}),
           max_external_revisions: 2,
         },
         review_execution_config_version: "role-c-role-d-review-v1",

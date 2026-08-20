@@ -14,6 +14,7 @@ import type { GenerationSpec } from "../contracts/generation-spec"
 import type { CodeLabVerificationFailureDiagnostic } from "../validators/code-lab-validator"
 import type { AlignmentObjection } from "../validators/alignment-validator"
 import type { ResourceBlueprint } from "../planning/resource-blueprint"
+import type { RoundSemanticPlan } from "../planning/round-semantic-plan"
 
 export interface NextRoundGenerationContext {
   request_id: string
@@ -55,6 +56,8 @@ export interface ConceptTutorRequest {
   external_revision_round?: 0 | 1 | 2
   /** Shared deterministic teaching decision for concept, practice and assessment. */
   resource_blueprint?: ResourceBlueprint
+  /** Optional compact quality plan; it organizes semantics without changing the frozen blueprint. */
+  round_semantic_plan?: RoundSemanticPlan
   generation_recovery?: GenerationRecoveryContext
 }
 
@@ -66,6 +69,7 @@ export interface CodeLabRequest {
   revision_objections?: AlignmentObjection[]
   external_revision_round?: 0 | 1 | 2
   resource_blueprint?: ResourceBlueprint
+  round_semantic_plan?: RoundSemanticPlan
   generation_recovery?: GenerationRecoveryContext
 }
 
@@ -84,6 +88,7 @@ export interface TieredEvaluatorRequest {
   revision_objections?: AlignmentObjection[]
   external_revision_round?: 0 | 1 | 2
   resource_blueprint?: ResourceBlueprint
+  round_semantic_plan?: RoundSemanticPlan
   generation_recovery?: GenerationRecoveryContext
 }
 

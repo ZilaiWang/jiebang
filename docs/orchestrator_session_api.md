@@ -22,7 +22,16 @@ bun --env-file=.env.role-c.local scripts/learning-orchestrator-api.ts \
 GET /health
 ```
 
-返回可用端点列表。
+返回服务、持久任务 Worker 状态和可用端点列表。该接口不调用模型、不构建 Docker 镜像。
+
+### 启动前检查
+
+```http
+GET  /orchestrator/docker-status
+POST /orchestrator/preflight
+```
+
+`docker-status` 只检查 Docker daemon 与既有 Runner 镜像。`preflight` 显式验证存储读写、Docker、GLM-5.2 身份、FAST `json_object`、可选 `json_schema` 能力、QUALITY 高思考调用、三路 FAST 并发、持久任务 Worker 与 SSE；适合部署或演示前执行，不挂在健康检查和普通会话请求上。`json_schema` 不受支持时继续使用已经验证的 `json_object + 本地 Schema`，不会降低业务校验。
 
 ### Provider 配置（仅本机回环地址）
 
@@ -31,7 +40,7 @@ GET  /orchestrator/provider-config
 PUT  /orchestrator/provider-config
 ```
 
-仅允许 `127.0.0.1` / `localhost` / `[::1]` 访问（`LOCAL_CONFIGURATION_ONLY`）。`PUT` 写入 `<data_root>/provider-config.json`（原子写，权限 0600）并注入环境变量：
+仅允许 `127.0.0.1` / `localhost` / `[::1]` 访问（`LOCAL_CONFIGURATION_ONLY`）。`PUT` 写入 `<data_root>/provider-config.json`（原子写，权限 0600）并注入环境变量；部署设置 `MODEL_CONFIG_READONLY=true` 后禁止运行时修改：
 
 ```json
 {
@@ -69,20 +78,17 @@ Content-Type: application/json
 - 会话 ID / run ID 必须匹配 `[A-Za-z0-9_-]`，重复创建返回 `SESSION_ALREADY_EXISTS` (409)；
 - 创建请求体上限 1MB，`Content-Type` 必须为 `application/json`。
 
-创建后不会一次性跑完。主 Agent 先返回：
+创建接口返回 HTTP `202`。主 Agent 先持久化 `running` 会话和诊断任务：
 
 ```json
 {
-  "status": "waiting_for_user",
+  "status": "running",
   "current_stage": "objective_diagnosis",
-  "waiting_for": {
-    "type": "diagnosis_answers",
-    "items": []
-  }
+  "waiting_for": null
 }
 ```
 
-诊断目标由 B 根据学习目标、先修和历史薄弱点选定；A 提供对应 source/fact；AI 按 `diagnostic-author-1.0.1` 当次生成单选题面、选项和答案。模型输出必须通过 source/fact 绑定、选项唯一性和历史防重校验。可信答案只保存在服务端会话文件中（`private.diagnosis_answer_key`），不会返回浏览器。
+诊断任务完成后进入 `waiting_for_user / diagnosis_answers`。诊断目标由 B 根据学习目标、先修和历史薄弱点选定；A 提供对应 source/fact；AI 按 `diagnostic-author-1.0.1` 当次生成单选题面、选项和答案。模型输出必须通过 source/fact 绑定、选项唯一性和历史防重校验。可信答案只保存在服务端会话文件中（`private.diagnosis_answer_key`），不会返回浏览器。
 
 ### 查询并恢复会话
 
@@ -201,7 +207,7 @@ Content-Type: application/json
 
 reprofile 触发链路(2026-08-08 修复):画像预期现在来自 B 画像真实 known/weak_concepts(`profileExpectationForTarget` 按 source_id 映射,不再硬编码 weak);`profile_version` 跨轮稳定(`<run_id>-profile-E<epoch>`),同一画像纪元内多轮 evidence 跨轮累积,reprofile 后 epoch+1 使新画像从零累积;触发门槛 `profile_drift_minimum_conflicts=1` 适配每节点单 objective。
 
-首次 C 内容和提交测评后的下一轮内容都在后台生成。命令响应先返回持久化的 `running` 检查点，前端轮询 `GET /orchestrator/sessions/:id`，直到进入 `waiting_for_user`、`blocked` 或 `failed`。
+首次 C 内容和提交测评后的下一轮内容都由持久任务生成。命令响应先返回 `running`；前端优先订阅 SSE，断线或不支持 SSE 时轮询，直到进入 `waiting_for_user`、`blocked` 或 `failed`。
 
 #### 运行测评代码题（即时试运行）
 
@@ -243,6 +249,17 @@ Authorization: Bearer learner-001
 ```
 
 返回主 Agent 持久化的事件列表（`session_created` / `worker_completed` / `worker_invoked` / `waiting_for_user` / `command_received` / `session_updated` / `session_completed` / `session_blocked`）。
+
+支持 `after_seq` 增量读取。实时订阅使用：
+
+```http
+GET /orchestrator/sessions/:sessionId/events/stream
+Authorization: Bearer learner-001
+Last-Event-ID: 12
+Accept: text/event-stream
+```
+
+事件流先重放指定序号后的持久事件，再推送新事件和心跳。断线后使用最后收到的事件 ID 续接；会话文件仍是最终状态依据。
 
 ## D 可直接使用的公开字段
 

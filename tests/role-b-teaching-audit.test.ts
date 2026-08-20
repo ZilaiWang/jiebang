@@ -77,6 +77,28 @@ describe("teaching audit", () => {
     expect(result.checks.difficulty.verdict).toBe("aligned")
   })
 
+  test("difficulty_alignment: audits the frozen teaching load instead of the target label when supplied", async () => {
+    const kb = await getKB()
+    const result = auditTeaching({
+      artifactId: "ART-PLANNED-BASIC",
+      learnerProfile: makeProfile({
+        level: "basic",
+        known_concepts: ["for 循环", "列表", "函数定义与调用"],
+        weak_concepts: [],
+        goal: "学习成绩统计器综合项目",
+      }),
+      knowledgeBase: kb,
+      citedSourceIds: ["K018"],
+      targetSourceIds: ["K018"],
+      contentDifficulty: "basic",
+    })
+    expect(result.checks.difficulty).toMatchObject({
+      verdict: "aligned",
+      learnerLevel: "basic",
+      contentMaxDifficulty: "basic",
+    })
+  })
+
   test("prerequisite: K007(for 循环) with all prereqs known → aligned", async () => {
     const kb = await getKB()
     // K007 prereqs = [K002, K003]; both in known_concepts

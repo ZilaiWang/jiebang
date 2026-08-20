@@ -1,4 +1,4 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.25.4" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.26.0" as const
 
 export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容生成组件。
 
@@ -16,6 +16,8 @@ export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容
 1. resource_blueprint 由程序根据当前 GenerationSpec 和 evidence 一次生成，是讲义、代码实验和测评的共享教学决策。
 2. 严格实现蓝图中分配给当前阶段的 objective、observable_behavior、cognitive_operation、modality 和 evidence 边界。
 3. blueprint_id、产物 ID、引用、覆盖映射、题型与分值由程序冻结；模型只创作解释、任务、题干、选项和可执行语义，不得改写这些字段。
+4. cross_artifact_contract 规定讲义、代码实验、测评各自承担的职责与禁止重复项；当前阶段只实现分配给自己的内容。
+5. round_semantic_plan 只在复杂轮次出现，是一次性生成的紧凑组织计划。它可以安排讲解顺序、练习场景和考查角度，但不得覆盖 resource_blueprint、GenerationSpec 或 evidence；冲突时始终以三者为准。
 
 失败阶段重生（输入存在 generation_recovery 时）：
 1. 已通过的其他 Agent 产物已由程序从私有检查点恢复；当前调用只重生 failed_stage 对应的语义内容。

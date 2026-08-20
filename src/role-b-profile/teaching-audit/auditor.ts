@@ -32,7 +32,11 @@ export function auditTeaching(input: TeachingAuditInput): TeachingAuditResult {
     .map((sid) => input.knowledgeBase.items.find((item) => item.sourceId === sid))
     .filter((item): item is KnowledgeItem => item != null)
 
-  const difficultyCheck = checkDifficulty(input.learnerProfile.level, targetItems)
+  const difficultyCheck = checkDifficulty(
+    input.learnerProfile.level,
+    targetItems,
+    input.contentDifficulty,
+  )
   const prerequisiteCheck = checkPrerequisites(
     targetItems,
     input.learnerProfile,
@@ -88,6 +92,7 @@ export function auditTeaching(input: TeachingAuditInput): TeachingAuditResult {
 function checkDifficulty(
   learnerLevel: KnowledgeDifficulty,
   targetItems: KnowledgeItem[],
+  contentDifficulty?: KnowledgeDifficulty,
 ): DifficultyCheck {
   if (targetItems.length === 0) {
     return {
@@ -99,9 +104,11 @@ function checkDifficulty(
     }
   }
 
-  const contentMaxIdx = Math.max(
-    ...targetItems.map((item) => LEVEL_ORDER.indexOf(item.difficulty)).filter((idx) => idx >= 0),
-  )
+  const contentMaxIdx = contentDifficulty
+    ? LEVEL_ORDER.indexOf(contentDifficulty)
+    : Math.max(
+        ...targetItems.map((item) => LEVEL_ORDER.indexOf(item.difficulty)).filter((idx) => idx >= 0),
+      )
   const contentMaxDifficulty = LEVEL_ORDER[contentMaxIdx]
   const learnerIdx = LEVEL_ORDER.indexOf(learnerLevel)
 

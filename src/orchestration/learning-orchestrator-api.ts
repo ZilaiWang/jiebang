@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs"
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 
-async function checkDockerImage(): Promise<{ ready: boolean; digest?: string; error?: string }> {
+async function checkDockerImage(buildMissing = false): Promise<{ ready: boolean; digest?: string; error?: string }> {
   if (!Bun.which("docker")) {
     return { ready: false, error: "未找到 Docker。请安装 Docker Desktop：https://www.docker.com/products/docker-desktop/" }
   }
@@ -23,7 +23,9 @@ async function checkDockerImage(): Promise<{ ready: boolean; digest?: string; er
     const ec = await inspect.exited
     clearTimeout(timer2)
     if (ec !== 0) {
-      // 自动构建镜像
+      if (!buildMissing) {
+        return { ready: false, error: `Docker runner 镜像不存在：${image}。请先执行一键配置或 bun run docker:role-c:build` }
+      }
       const build = Bun.spawn(["docker", "build", "-t", image, "-f", "docker/role-c-python-runner/Dockerfile", "docker/role-c-python-runner/"], {
         stdout: "pipe", stderr: "pipe", cwd: process.cwd(),
       })
@@ -42,8 +44,7 @@ async function checkDockerImage(): Promise<{ ready: boolean; digest?: string; er
 }
 
 async function getDockerStatus(): Promise<{ ready: boolean; digest?: string; error?: string }> {
-  // 每次实时检测，不缓存——用户关闭 Docker 后 /health 必须立即反映真实状态（前端每次创建前都会查）
-  return checkDockerImage()
+  return checkDockerImage(false)
 }
 import { protectSensitivePath } from "../security/windows-secure-acl"
 import { runLearningOrchestrator } from "./learning-orchestrator-runner"
@@ -54,6 +55,8 @@ import {
   type InteractiveSessionRecord,
 } from "./interactive-session"
 import { validateOrchestratorApiBody, type RunRequestBody, type SessionRequestBody } from "./orchestrator-api-schema"
+import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/model-gateway"
+import { modelCallPolicy } from "../model-runtime"
 
 interface ErrorBody {
   error: {
@@ -97,17 +100,19 @@ export function createLearningOrchestratorApiHandler(
 
   return async function handle(request: Request): Promise<Response> {
     try {
+      await sessions.ready()
       const url = new URL(request.url)
 
       if (request.method === "GET" && url.pathname === "/health") {
-        const docker = await getDockerStatus()
         return jsonResponse({
           status: "ok",
           service: "learning-orchestrator",
-          docker,
+          job_worker: sessions.jobWorkerStatus(),
           endpoints: [
             "GET /health",
             "GET /orchestrator/docker-setup",
+            "GET /orchestrator/docker-status",
+            "POST /orchestrator/preflight",
             "GET /orchestrator/provider-config",
             "PUT /orchestrator/provider-config",
             "POST /orchestrator/runs",
@@ -116,8 +121,33 @@ export function createLearningOrchestratorApiHandler(
             "POST /orchestrator/sessions/:id/repair",
             "POST /orchestrator/sessions/:id/commands",
             "GET /orchestrator/sessions/:id/events",
+            "GET /orchestrator/sessions/:id/events/stream",
           ],
         })
+      }
+
+      if (request.method === "GET" && url.pathname === "/orchestrator/docker-status") {
+        return jsonResponse({ status: "ok", docker: await getDockerStatus() })
+      }
+
+      if (request.method === "POST" && url.pathname === "/orchestrator/preflight") {
+        requireLoopback(request)
+        const [docker, storage, model] = await Promise.all([
+          checkDockerImage(true),
+          checkRuntimeStorage(dataRoot),
+          checkModelRuntime(providerEnvironment),
+        ])
+        const worker = sessions.jobWorkerStatus()
+        return jsonResponse({
+          ready: docker.ready && worker.running && storage.ready && model.ready,
+          checks: {
+            docker,
+            storage,
+            model,
+            job_worker: worker,
+            sse: { ready: true, endpoint: "/orchestrator/sessions/:id/events/stream" },
+          },
+        }, docker.ready && worker.running && storage.ready && model.ready ? 200 : 503)
       }
 
       // Docker 一键自动配置：检测→启动→构建镜像
@@ -190,6 +220,9 @@ export function createLearningOrchestratorApiHandler(
           return jsonResponse(providerPublicView(config))
         }
         if (request.method === "PUT") {
+          if (providerEnvironment.MODEL_CONFIG_READONLY?.trim().toLowerCase() === "true") {
+            throw new InteractiveSessionError("MODEL_CONFIG_READONLY", "当前运行配置已锁定，不能在服务运行期间修改模型参数", 409)
+          }
           if (!providerWritesEnabled) {
             throw new InteractiveSessionError("LOCAL_CONFIGURATION_ONLY", "Provider configuration writes are disabled when the server is not bound to loopback", 403)
           }
@@ -248,14 +281,14 @@ export function createLearningOrchestratorApiHandler(
         if (validation.value.learner_request!.learner_id !== principal) {
           throw new InteractiveSessionError("LEARNER_IDENTITY_MISMATCH", "Authenticated learner does not match learner_request", 403)
         }
-        const record = await sessions.create({
+        const record = await sessions.createQueued({
           session_id: validation.value.session_id,
           run_id: validation.value.run_id,
           mode: validation.value.mode!,
           learner_request: validation.value.learner_request!,
           owner_id: principal,
         })
-        return jsonResponse(publicSessionView(record), 201)
+        return jsonResponse(publicSessionView(record), 202)
       }
 
       const sessionMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)$/)
@@ -280,7 +313,25 @@ export function createLearningOrchestratorApiHandler(
       if (request.method === "GET" && eventsMatch) {
         const record = await sessions.load(eventsMatch[1]!)
         assertOwner(record, requirePrincipal(request))
-        return jsonResponse({ session_id: record.session_id, events: record.events })
+        const afterSeq = Math.max(0, Number(url.searchParams.get("after_seq") ?? "0") || 0)
+        return jsonResponse({
+          session_id: record.session_id,
+          next_seq: record.events.length,
+          events: record.events.slice(afterSeq).map((entry, index) => ({
+            seq: afterSeq + index + 1,
+            ...entry,
+          })),
+        })
+      }
+
+      const streamMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/events\/stream$/)
+      if (request.method === "GET" && streamMatch) {
+        const sessionId = streamMatch[1]!
+        const record = await sessions.load(sessionId)
+        assertOwner(record, requirePrincipal(request))
+        const headerCursor = Number(request.headers.get("last-event-id") ?? "0") || 0
+        const queryCursor = Number(url.searchParams.get("after_seq") ?? "0") || 0
+        return sessionEventStream(sessions, sessionId, Math.max(0, headerCursor, queryCursor), request.signal)
       }
 
       const commandMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/commands$/)
@@ -316,6 +367,9 @@ export function startLearningOrchestratorApiServer(
   return Bun.serve({
     port: options.port ?? 8787,
     hostname: options.hostname ?? "127.0.0.1",
+    // Normal user generation is detached into durable jobs. Preflight is an
+    // explicit operator action and may legitimately wait for QUALITY probing.
+    idleTimeout: 255,
     fetch: createLearningOrchestratorApiHandler({
       data_root: options.data_root,
       provider_config_path: options.provider_config_path,
@@ -449,8 +503,175 @@ async function parseJson<T>(request: Request): Promise<T> {
   return value as T
 }
 
+async function checkRuntimeStorage(dataRoot: string): Promise<{ ready: boolean; error?: string }> {
+  const directories = [
+    join(dataRoot, "sessions"),
+    join(dataRoot, "jobs"),
+    join(dataRoot, "role-c", "generation-checkpoints"),
+    join(dataRoot, "role-c", "secure-artifacts"),
+  ]
+  try {
+    await Promise.all(directories.map(async (directory) => {
+      await mkdir(directory, { recursive: true, mode: 0o700 })
+      const probe = join(directory, `.preflight-${process.pid}-${crypto.randomUUID()}`)
+      await writeFile(probe, "ok", { encoding: "utf8", mode: 0o600 })
+      await rm(probe, { force: true })
+    }))
+    return { ready: true }
+  } catch (error) {
+    return { ready: false, error: error instanceof Error ? error.message.slice(0, 300) : "运行目录不可写" }
+  }
+}
+
+async function checkModelRuntime(
+  environment: Record<string, string | undefined>,
+): Promise<{
+  ready: boolean
+  model_id?: string
+  fast?: { ready: boolean; duration_ms: number }
+  quality?: { ready: boolean; duration_ms: number }
+  concurrency_3?: { ready: boolean; duration_ms: number }
+  structured_output?: {
+    active_format: "json_object"
+    json_object: true
+    json_schema: boolean
+    json_schema_error?: string
+  }
+  error?: string
+}> {
+  try {
+    const gateway = createRoleCModelGatewayFromEnv(environment)
+    if (!gateway.model_id.toLocaleLowerCase().startsWith("glm-5.2")) {
+      throw new Error(`PREFLIGHT_MODEL_MISMATCH: 需要 glm-5.2，当前为 ${gateway.model_id}`)
+    }
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["ok"],
+      properties: { ok: { type: "boolean", const: true } },
+    }
+    const call = async (
+      profile: "fast" | "quality",
+      suffix: string,
+      responseFormat: "json_object" | "json_schema" = "json_object",
+    ) => {
+      const started = performance.now()
+      const maxTokens = profile === "quality" ? 4_096 : 512
+      const value = await gateway.generateStructured<{ ok: true }>({
+        task: `runtime.preflight.${profile}.${suffix}`,
+        system_prompt: "仅输出符合 Schema 的 JSON：{\"ok\":true}。",
+        input: { check: suffix },
+        output_schema_id: "runtime_preflight_v1",
+        output_schema: schema,
+        temperature: 0,
+        max_tokens: maxTokens,
+        idempotency_key: `preflight-${profile}-${suffix}-${Date.now()}`,
+        policy: modelCallPolicy(profile, {
+          reason_codes: ["PREFLIGHT"],
+          max_tokens: maxTokens,
+          timeout_ms: profile === "quality" ? 180_000 : 60_000,
+          max_transport_retries: 0,
+          response_format: responseFormat,
+        }),
+      })
+      if (value.ok !== true) throw new Error("PREFLIGHT_RESPONSE_INVALID")
+      return Math.round(performance.now() - started)
+    }
+    const fastDuration = await call("fast", "structured")
+    let jsonSchema = true
+    let jsonSchemaError: string | undefined
+    try {
+      await call("fast", "json-schema-capability", "json_schema")
+    } catch (error) {
+      jsonSchema = false
+      jsonSchemaError = error instanceof Error ? error.message.slice(0, 300) : "json_schema 探测失败"
+    }
+    const qualityDuration = await call("quality", "reasoning_effort_high")
+    const concurrentStarted = performance.now()
+    await Promise.all([0, 1, 2].map((index) => call("fast", `concurrency-${index}`)))
+    return {
+      ready: true,
+      model_id: gateway.model_id,
+      fast: { ready: true, duration_ms: fastDuration },
+      quality: { ready: true, duration_ms: qualityDuration },
+      concurrency_3: { ready: true, duration_ms: Math.round(performance.now() - concurrentStarted) },
+      structured_output: {
+        active_format: "json_object",
+        json_object: true,
+        json_schema: jsonSchema,
+        ...(jsonSchemaError ? { json_schema_error: jsonSchemaError } : {}),
+      },
+    }
+  } catch (error) {
+    return {
+      ready: false,
+      error: error instanceof Error ? error.message.slice(0, 500) : "模型运行时预检失败",
+    }
+  }
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), { status, headers: JSON_HEADERS })
+}
+
+function sessionEventStream(
+  sessions: InteractiveSessionStore,
+  sessionId: string,
+  initialCursor: number,
+  signal: AbortSignal,
+): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let cursor = initialCursor
+      let lastRevision = -1
+      let lastHeartbeat = 0
+      const deadline = Date.now() + 30_000
+      try {
+        while (!signal.aborted && Date.now() < deadline) {
+          const record = await sessions.load(sessionId)
+          const events = record.events.slice(cursor)
+          for (const entry of events) {
+            cursor += 1
+            controller.enqueue(encoder.encode(
+              `id: ${cursor}\nevent: workflow\ndata: ${JSON.stringify({ seq: cursor, ...entry })}\n\n`,
+            ))
+          }
+          if (record.revision !== lastRevision || events.length > 0) {
+            lastRevision = record.revision
+            controller.enqueue(encoder.encode(
+              `event: session_state\ndata: ${JSON.stringify({
+                session_id: record.session_id,
+                revision: record.revision,
+                status: record.status,
+                current_stage: record.current_stage,
+                next_seq: cursor,
+              })}\n\n`,
+            ))
+          }
+          if (Date.now() - lastHeartbeat >= 5_000) {
+            lastHeartbeat = Date.now()
+            controller.enqueue(encoder.encode(`: heartbeat ${lastHeartbeat}\n\n`))
+          }
+          if (record.status !== "running") break
+          await Bun.sleep(400)
+        }
+        controller.close()
+      } catch (error) {
+        if (!signal.aborted) controller.error(error)
+        else controller.close()
+      }
+    },
+  })
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    },
+  })
 }
 
 function errorResponse(status: number, code: string, message: string, details?: string[]): Response {

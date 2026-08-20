@@ -36,12 +36,15 @@ export interface CodeLabModelInput {
   resource_blueprint?: {
     blueprint_id: string
     spec_id: string
+    cross_artifact_contract: NonNullable<CodeLabRequest["resource_blueprint"]>["cross_artifact_contract"]
+    quality_requirement: NonNullable<CodeLabRequest["resource_blueprint"]>["quality_requirement"]
     code_lab: NonNullable<CodeLabRequest["resource_blueprint"]>["code_lab"]
     objectives: Array<Pick<
       NonNullable<CodeLabRequest["resource_blueprint"]>["objectives"][number],
       "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "code_lab"
     >>
   }
+  round_semantic_plan?: CodeLabRequest["round_semantic_plan"]
   generation_recovery?: CodeLabRequest["generation_recovery"]
 }
 
@@ -115,6 +118,8 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
       ? {
           blueprint_id: request.resource_blueprint.blueprint_id,
           spec_id: request.resource_blueprint.spec_id,
+          cross_artifact_contract: structuredClone(request.resource_blueprint.cross_artifact_contract),
+          quality_requirement: structuredClone(request.resource_blueprint.quality_requirement),
           code_lab: structuredClone(request.resource_blueprint.code_lab),
           objectives: request.resource_blueprint.objectives.map((objective) => ({
             objective_id: objective.objective_id,
@@ -124,6 +129,9 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
             code_lab: structuredClone(objective.code_lab),
           })),
         }
+      : undefined,
+    round_semantic_plan: request.round_semantic_plan
+      ? structuredClone(request.round_semantic_plan)
       : undefined,
     generation_recovery: request.generation_recovery
       ? structuredClone(request.generation_recovery)

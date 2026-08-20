@@ -134,4 +134,20 @@ describe("Role C model semantic fact audit", () => {
       unsupported_text: ["随机遍历"],
     })])
   })
+
+  test("canonicalizes harmless structured-output variations from the provider", async () => {
+    const gateway = new AuditGateway({
+      results: [{
+        review_block_id: "assessment:assessment_item:ITEM-1",
+        verdict: "SUPPORTED",
+        reason: "题目可仅根据引用事实判断。",
+        unsupported_text: null,
+      }],
+    })
+    const result = await new ModelContentSemanticAuditPort(gateway).auditArtifact(auditInput())
+    expect(result).toEqual([expect.objectContaining({
+      verdict: "supported",
+      unsupported_text: [],
+    })])
+  })
 })

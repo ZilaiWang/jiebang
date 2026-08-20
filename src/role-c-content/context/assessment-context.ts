@@ -41,12 +41,15 @@ export interface AssessmentAuthorModelInput {
   resource_blueprint?: {
     blueprint_id: string
     spec_id: string
+    cross_artifact_contract: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["cross_artifact_contract"]
+    quality_requirement: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["quality_requirement"]
     assessment: NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["assessment"]
     objectives: Array<Pick<
       NonNullable<TieredEvaluatorRequest["resource_blueprint"]>["objectives"][number],
       "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "assessment"
     >>
   }
+  round_semantic_plan?: TieredEvaluatorRequest["round_semantic_plan"]
   generation_recovery?: TieredEvaluatorRequest["generation_recovery"]
 }
 
@@ -138,6 +141,8 @@ export function buildAssessmentAuthorModelInput(
       ? {
           blueprint_id: request.resource_blueprint.blueprint_id,
           spec_id: request.resource_blueprint.spec_id,
+          cross_artifact_contract: structuredClone(request.resource_blueprint.cross_artifact_contract),
+          quality_requirement: structuredClone(request.resource_blueprint.quality_requirement),
           assessment: structuredClone(request.resource_blueprint.assessment),
           objectives: request.resource_blueprint.objectives.map((objective) => ({
             objective_id: objective.objective_id,
@@ -147,6 +152,9 @@ export function buildAssessmentAuthorModelInput(
             assessment: structuredClone(objective.assessment),
           })),
         }
+      : undefined,
+    round_semantic_plan: request.round_semantic_plan
+      ? structuredClone(request.round_semantic_plan)
       : undefined,
     generation_recovery: request.generation_recovery
       ? structuredClone(request.generation_recovery)
