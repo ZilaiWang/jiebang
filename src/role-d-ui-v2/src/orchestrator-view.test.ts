@@ -1,7 +1,27 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
+  test("builds one card for every formal path node and names the node that needs each prerequisite", () => {
+    const cards = knowledgeCandidateCards({ results: [{ source_id: "K001", title: "Python 是什么" }] }, {
+      formal_path: {
+        nodes: [
+          { target_source_ids: ["K001"], goal: "Python 是什么", prerequisite_source_ids: [] },
+          { target_source_ids: ["K002"], goal: "变量与赋值", prerequisite_source_ids: ["K001"] },
+          { target_source_ids: ["K007"], goal: "for 循环", prerequisite_source_ids: ["K002"] },
+        ],
+      },
+      current_path_node: { target_source_ids: ["K001"] },
+      profile: { weak_concepts: ["变量与赋值"] },
+    })
+    expect(cards).toEqual([
+      { sourceId: "K001", title: "Python 是什么", reasons: ["是“变量与赋值”的前置结点"] },
+      { sourceId: "K002", title: "变量与赋值", reasons: ["是“for 循环”的前置结点", "客观诊断回答错误"] },
+      { sourceId: "K007", title: "for 循环", reasons: ["直接命中本次学习目标"] },
+    ])
+  })
+
+
   test("explains why a node is learned using B-public prerequisites and stage order", () => {
     const ragItems = [
       { source_id: "K007", title: "for 循环" },

@@ -319,6 +319,59 @@ export function pathNodeTitle(node: any, ragItems: Array<{ source_id: string; ti
  * prerequisite_source_ids（先修依赖）与画像 known_concepts（已掌握）推导，
  * 不自行编造学习原因。
  */
+export interface KnowledgeCandidateCardView {
+  sourceId: string
+  title: string
+  reasons: string[]
+}
+
+/**
+ * 将 A 的公开检索候选组织成 D 可读的小卡片。
+ * 原因只来自 B 公开路径/画像和候选 source_id，不根据分数或知识点难度臆测。
+ */
+export function knowledgeCandidateCards(
+  ragResult: any,
+  context: { current_path_node?: any; formal_path?: any; profile?: { weak_concepts?: string[] } },
+): KnowledgeCandidateCardView[] {
+  const results = Array.isArray(ragResult?.results) ? ragResult.results : []
+  const node = context.current_path_node ?? {}
+  const pathNodes = Array.isArray(context.formal_path?.nodes) ? context.formal_path.nodes : []
+  const finalNode = pathNodes.at(-1) ?? node
+  const targetIds = new Set<string>(Array.isArray(finalNode?.target_source_ids) ? finalNode.target_source_ids : [])
+  const prerequisiteFor = new Map<string, string[]>()
+  pathNodes.forEach((pathNode: any) => {
+    const targetTitle = String(pathNode?.goal ?? "").trim()
+    for (const sourceId of Array.isArray(pathNode?.prerequisite_source_ids) ? pathNode.prerequisite_source_ids : []) {
+      if (!targetTitle) continue
+      const titles = prerequisiteFor.get(String(sourceId)) ?? []
+      titles.push(targetTitle)
+      prerequisiteFor.set(String(sourceId), titles)
+    }
+  })
+  const diagnosisWrongConcepts = Array.isArray(context.profile?.weak_concepts) ? context.profile.weak_concepts : []
+  const resultBySource = new Map<string, any>(results.map((item: any) => [String(item?.source_id ?? item?.sourceId ?? "").trim(), item] as [string, any]))
+  const candidateSources: string[] = pathNodes.length > 0
+    ? pathNodes.flatMap((pathNode: any) => Array.isArray(pathNode?.target_source_ids) ? pathNode.target_source_ids.map(String) : [])
+    : results.map((item: any) => String(item?.source_id ?? item?.sourceId ?? ""))
+  return [...new Set(candidateSources.map((value: string) => value.trim()).filter(Boolean))].flatMap((sourceId: string) => {
+    const item = resultBySource.get(sourceId)
+    const pathNode = pathNodes.find((candidate: any) => Array.isArray(candidate?.target_source_ids) && candidate.target_source_ids.includes(sourceId))
+    const title = String(item?.title ?? pathNode?.goal ?? sourceId).trim()
+    if (!title) return []
+    const reasons: string[] = []
+    const prerequisiteTargets = prerequisiteFor.get(sourceId) ?? []
+    if (prerequisiteTargets.length > 0) {
+      reasons.push(...[...new Set(prerequisiteTargets)].map((targetTitle) => `是“${targetTitle}”的前置结点`))
+    }
+    if (diagnosisWrongConcepts.some((concept) => concept === title || title.includes(concept) || concept.includes(title))) reasons.push("客观诊断回答错误")
+    if (targetIds.has(sourceId)) reasons.push("直接命中本次学习目标")
+    if (reasons.length === 0) {
+      const matchedFields = item?.retrieval_trace?.matched_fields ?? item?.retrievalTrace?.matchedFields ?? []
+      if (Array.isArray(matchedFields) && matchedFields.length > 0) reasons.push("A 检索根据当前目标和画像找到它")
+    }
+    return [{ sourceId, title, reasons }]
+  })
+}
 export function pathNodeWhyView(
   node: any,
   ragItems: Array<{ source_id: string; title?: string }>,

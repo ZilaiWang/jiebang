@@ -1,4 +1,23 @@
-/* Week 2 learning-plan visualization */
+.knowledge-match-card { padding: 24px; border: 1px solid rgba(109,85,183,.13); border-radius: 20px; background: rgba(255,255,255,.92); box-shadow: 0 9px 26px rgba(80,60,150,.055); }
+.knowledge-match-card > header { display: flex; align-items: flex-start; gap: 12px; }
+.knowledge-match-card > header > span { width: 38px; height: 38px; display: grid; place-items: center; flex: none; border-radius: 12px; color: #1768d4; background: #eaf3ff; }
+.knowledge-match-card > header div { flex: 1; }
+.knowledge-match-card small { color: #817a9c; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.knowledge-match-card h2 { margin: 5px 0 0; color: #2d2450; font-size: 22px; }
+.knowledge-candidate-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.knowledge-candidate { padding: 14px; border: 1px solid #e2e5e2; border-radius: 14px; background: #fafbfa; }
+.knowledge-candidate-top { display: grid; grid-template-columns: 31px minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+.knowledge-candidate-top > span { display: grid; place-items: center; width: 31px; height: 31px; border-radius: 10px; color: #1768d4; background: #e5f0fe; font-size: 11px; font-weight: 900; }
+.knowledge-candidate-top h3 { margin: 5px 0 0; color: #423c55; font-size: 14px; line-height: 1.45; }
+.knowledge-candidate-top em { padding: 4px 6px; border-radius: 7px; color: #7c8490; background: #eef0f1; font-size: 10px; font-style: normal; }
+.knowledge-candidate-detail, .knowledge-candidate-reasons { display: grid; grid-template-columns: 48px 1fr; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #e8ebe8; }
+.knowledge-candidate-detail > span, .knowledge-candidate-reasons > span { color: #8a9190; font-size: 10px; font-weight: 700; }
+.knowledge-candidate-detail b { color: #4a465c; font-size: 12px; }
+.knowledge-candidate-reasons ol { display: grid; gap: 5px; margin: 0; padding-left: 18px; color: #554a7a; font-size: 11px; line-height: 1.5; }
+.knowledge-candidate-reasons p { margin: 0; color: #898b8a; font-size: 10px; line-height: 1.55; }
+@media (max-width: 680px) { .knowledge-candidate-grid { grid-template-columns: 1fr; } }
+
+
 .week2-plan-page { max-width: 1240px; }
 .week2-summary-grid { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 15px; }
 .profile-visual-card, .difficulty-curve-card, .learning-path-visual, .current-objectives-card, .agent-collaboration-card { border: 1px solid rgba(109,85,183,.13); border-radius: 20px; background: rgba(255,255,255,.92); box-shadow: 0 9px 26px rgba(80,60,150,.055); }
