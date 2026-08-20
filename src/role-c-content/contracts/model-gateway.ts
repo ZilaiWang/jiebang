@@ -37,6 +37,8 @@ export interface ModelGateway {
     temperature: number
     max_tokens: number
     idempotency_key: string
+    /** Per-call override for hybrid reasoning models; falls back to gateway configuration. */
+    thinking?: "enabled" | "disabled"
   }): Promise<T>
 }
 
@@ -84,7 +86,7 @@ export class OpenAICompatibleModelGateway implements ModelGateway {
   constructor(options: OpenAICompatibleGatewayOptions) {
     if (!options.endpoint.trim()) throw new Error("ModelGateway endpoint 不能为空")
     if (!options.model.trim()) throw new Error("ModelGateway model 不能为空")
-    const timeoutMs = options.timeout_ms ?? 30_000
+    const timeoutMs = options.timeout_ms ?? 120_000
     const maxTransportRetries = options.max_transport_retries ?? 2
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 600_000) {
       throw new Error("ModelGateway timeout_ms 必须是 100..600000 的整数")
@@ -127,6 +129,7 @@ export class OpenAICompatibleModelGateway implements ModelGateway {
     temperature: number
     max_tokens: number
     idempotency_key: string
+    thinking?: "enabled" | "disabled"
   }): Promise<T> {
     let lastError: unknown
     for (let attempt = 0; attempt <= this.options.max_transport_retries; attempt += 1) {
@@ -152,7 +155,9 @@ export class OpenAICompatibleModelGateway implements ModelGateway {
             ],
             temperature: request.temperature,
             max_tokens: request.max_tokens,
-            ...(this.options.thinking ? { thinking: { type: this.options.thinking } } : {}),
+            ...(request.thinking ?? this.options.thinking
+              ? { thinking: { type: request.thinking ?? this.options.thinking } }
+              : {}),
             ...responseFormatBody(this.options, request),
           }),
           signal: controller.signal,
@@ -287,7 +292,7 @@ export function createRoleCModelGatewayFromEnv(
     thinking: thinkingFromEnv(resolvedEnv.ROLE_C_MODEL_THINKING),
     auth_header: resolvedEnv.ROLE_C_MODEL_AUTH_HEADER || "authorization",
     auth_scheme: resolvedEnv.ROLE_C_MODEL_AUTH_SCHEME ?? "Bearer",
-    timeout_ms: optionalPositiveInteger(resolvedEnv.ROLE_C_MODEL_TIMEOUT_MS, 30_000),
+    timeout_ms: optionalPositiveInteger(resolvedEnv.ROLE_C_MODEL_TIMEOUT_MS, 120_000),
     max_transport_retries: optionalNonNegativeInteger(resolvedEnv.ROLE_C_MODEL_MAX_RETRIES, 2),
     ...overrides,
   })
@@ -472,7 +477,7 @@ function responseFormatFromEnv(value: string | undefined): OpenAICompatibleGatew
 }
 
 function thinkingFromEnv(value: string | undefined): OpenAICompatibleGatewayOptions["thinking"] {
-  if (value === undefined || value === "") return undefined
+  if (value === undefined || value === "") return "disabled"
   if (value === "enabled" || value === "disabled") return value
   throw new ModelProviderUnavailableError("ROLE_C_MODEL_THINKING 必须为 enabled 或 disabled")
 }

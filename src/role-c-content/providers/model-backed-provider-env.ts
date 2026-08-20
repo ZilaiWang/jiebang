@@ -35,7 +35,7 @@ export function modelBackedProviderOptionsFromEnv(
     code_lab_max_tokens: tokenBudget(env.ROLE_C_MODEL_CODE_LAB_MAX_TOKENS, 7_000, "ROLE_C_MODEL_CODE_LAB_MAX_TOKENS"),
     assessment_max_tokens: tokenBudget(env.ROLE_C_MODEL_ASSESSMENT_MAX_TOKENS, 8_000, "ROLE_C_MODEL_ASSESSMENT_MAX_TOKENS"),
     concept_group_size: positiveInteger(env.ROLE_C_MODEL_CONCEPT_GROUP_SIZE, 1, "ROLE_C_MODEL_CONCEPT_GROUP_SIZE"),
-    concept_concurrency: positiveInteger(env.ROLE_C_MODEL_CONCEPT_CONCURRENCY, 1, "ROLE_C_MODEL_CONCEPT_CONCURRENCY"),
+    concept_concurrency: positiveInteger(env.ROLE_C_MODEL_CONCEPT_CONCURRENCY, 2, "ROLE_C_MODEL_CONCEPT_CONCURRENCY"),
     concept_segment_max_tokens: tokenBudget(env.ROLE_C_MODEL_CONCEPT_SEGMENT_MAX_TOKENS, 3_500, "ROLE_C_MODEL_CONCEPT_SEGMENT_MAX_TOKENS"),
     code_lab_public_max_tokens: tokenBudget(env.ROLE_C_MODEL_CODE_LAB_PUBLIC_MAX_TOKENS, 3_500, "ROLE_C_MODEL_CODE_LAB_PUBLIC_MAX_TOKENS"),
     code_lab_secure_max_tokens: tokenBudget(env.ROLE_C_MODEL_CODE_LAB_SECURE_MAX_TOKENS, 5_000, "ROLE_C_MODEL_CODE_LAB_SECURE_MAX_TOKENS"),

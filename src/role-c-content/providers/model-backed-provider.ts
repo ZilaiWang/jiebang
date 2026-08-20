@@ -219,7 +219,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     this.conceptTemperature = options.concept_temperature ?? 0.2
     this.conceptMaxTokens = options.concept_max_tokens ?? 4_500
     this.conceptGroupSize = positiveInteger(options.concept_group_size, 1, "concept_group_size")
-    this.conceptConcurrency = positiveInteger(options.concept_concurrency, 1, "concept_concurrency")
+    this.conceptConcurrency = positiveInteger(options.concept_concurrency, 2, "concept_concurrency")
     this.conceptSegmentMaxTokens = positiveInteger(options.concept_segment_max_tokens, 3_500, "concept_segment_max_tokens")
     this.codeLabTemperature = options.code_lab_temperature ?? 0
     this.codeLabMaxTokens = options.code_lab_max_tokens ?? 7_000
@@ -1266,6 +1266,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           output_schema: stage.output_schema,
           temperature: stage.temperature,
           max_tokens: stage.max_tokens,
+          thinking: attempt > 0 && repairNeedsThinking(issues) ? "enabled" : "disabled",
           idempotency_key: idempotencyKey({
             ...stage.idempotency_identity,
             model_config_hash: this.gateway.model_config_hash,
@@ -1347,6 +1348,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       output_schema: assessmentNoveltyPatchSchema(indices),
       temperature: stage.temperature,
       max_tokens: Math.min(stage.max_tokens, 4_000),
+      thinking: "disabled",
       idempotency_key: idempotencyKey({
         ...stage.idempotency_identity,
         task: "role-c.tiered-evaluator.public.novelty-repair",
@@ -1484,6 +1486,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     }
     return draft as AssessmentDraft
   }
+}
+
+/** Structural repairs stay deterministic; only semantic/reasoning failures spend thinking budget. */
+export function repairNeedsThinking(issues: string[]): boolean {
+  return issues.some((issue) => /semantic|unsupported|alignment|evidence|citation|objective|语义|证据|引用|目标|对齐/i.test(issue))
 }
 
 export interface AssessmentNoveltyDesignBrief {
