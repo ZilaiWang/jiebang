@@ -2,6 +2,228 @@ import type { SubmissionAnswer } from "./orchestrator-client"
 
 export type OrchestratorPage = "goal" | "diagnosis" | "path" | "lesson" | "assessment" | "feedback"
 
+export type CollaborationDrawerStationState = "completed" | "current" | "pending" | "waiting" | "failed" | "skipped"
+
+export interface CollaborationDrawerStationView {
+  unit: string
+  executionType: string
+  state: CollaborationDrawerStationState
+  summary: string
+  publicOutputCount: number
+  hadFailure: boolean
+  attempt: number
+}
+
+export interface CollaborationDrawerView {
+  stations: CollaborationDrawerStationView[]
+  currentUnit: string | null
+  live: boolean
+}
+
+const COLLABORATION_UNITS = [
+  "background-collector",
+  "self-assessor",
+  "objective-diagnostician",
+  "profile-builder",
+  "path-planner",
+  "concept-tutor",
+  "code-lab",
+  "tiered-evaluator",
+] as const
+
+export function collaborationDrawerView(session: any): CollaborationDrawerView {
+  const roundNo = Number(session?.round_no) || 1
+  const live = session?.status === "running"
+  const history = (Array.isArray(session?.worker_ledger_history) ? session.worker_ledger_history : [])
+    .filter((entry: any) => (Number(entry?.round_no) || 1) === roundNo)
+  const stations = COLLABORATION_UNITS.map((unit) => {
+    const entries = history.filter((entry: any) => entry?.unit_name === unit)
+    const latest = entries[entries.length - 1]
+    const latestStatus = latest?.status
+    const hadFailure = entries.some((entry: any) => entry?.status === "failed" || entry?.status === "blocked")
+    const state: CollaborationDrawerStationState = latestStatus === "completed"
+      ? "completed"
+      : latestStatus === "waiting_for_user"
+        ? "waiting"
+        : latestStatus === "failed" || latestStatus === "blocked"
+          ? "failed"
+          : latestStatus === "skipped"
+            ? "skipped"
+            : (latestStatus === "running" || latestStatus === "invoked") && live
+              ? "current"
+              : "pending"
+    const publicOutputCount = new Set(
+      entries.flatMap((entry: any) => Array.isArray(entry?.output_refs) ? entry.output_refs : [])
+        .filter((ref: any) => ref?.visibility === "public")
+        .map((ref: any) => ref?.ref_id)
+        .filter(Boolean),
+    ).size
+    return {
+      unit,
+      executionType: String(latest?.execution_type ?? "unknown"),
+      state,
+      summary: String(latest?.summary ?? (state === "pending" ? "等待主 Agent调度" : "尚无公开摘要")),
+      publicOutputCount,
+      hadFailure,
+      attempt: Number(latest?.attempt_no) || 1,
+    }
+  })
+  return {
+    stations,
+    currentUnit: stations.find((station) => station.state === "current")?.unit ?? null,
+    live,
+  }
+}
+
+export interface ResourceMatchView {
+  score: number
+  label: "高度匹配" | "基本匹配" | "需要关注" | "等待审核"
+  objectiveScore: number
+  levelScore: number
+  reviewScore: number | null
+  learnerLevel: string
+  resourceLevel: string
+  objectiveCount: number
+  matchedObjectiveCount: number
+  reviewLabel: string
+  note: string
+}
+
+/**
+ * D-side display index only. It uses public session fields and must not be
+ * presented as the competition's B/C difficulty-fit accuracy metric.
+ */
+export interface ResourceFitDimensionPair {
+  challenge: Record<string, number>
+  support: Record<string, number | string>
+}
+
+export interface ResourceFitEntry {
+  artifactId: string
+  kind: "concept_lesson" | "code_lab" | "assessment"
+  target: ResourceFitDimensionPair
+  observed: ResourceFitDimensionPair & { confidence?: number }
+  verdict: "fit" | "too_hard" | "too_easy" | "unclear"
+  score: number
+  mismatchedDimensions: string[]
+  reasonCodes: string[]
+}
+
+export interface ResourceMatchView {
+  source: "official" | "fallback"
+  score: number
+  label: "高度匹配" | "基本匹配" | "需要关注" | "等待审核"
+  objectiveScore: number
+  levelScore: number
+  reviewScore: number | null
+  learnerLevel: string
+  resourceLevel: string
+  objectiveCount: number
+  matchedObjectiveCount: number
+  reviewLabel: string
+  note: string
+  overallVerdict?: string
+  resources: ResourceFitEntry[]
+}
+
+/** 官方字段存在时使用 C 的 resource_fit 结论；否则回退到 D 侧展示估算。 */
+export function resourceMatchView(session: any, resource: any, assessment?: any): ResourceMatchView {
+  const official = session?.resource_fit
+  if (official && Array.isArray(official.resources) && official.overall) {
+    const overallScore = Number(official.overall.score)
+    const score = Number.isFinite(overallScore) ? Math.round(overallScore * 100) : 0
+    const overallVerdict = String(official.overall.verdict ?? "unclear")
+    const hasMismatch = official.resources.some((entry: any) =>
+      entry.fit?.verdict === "too_hard" || entry.fit?.verdict === "too_easy")
+    const label = overallVerdict === "fit" && !hasMismatch
+      ? "高度匹配"
+      : hasMismatch || overallVerdict === "too_hard" || overallVerdict === "too_easy"
+        ? "需要关注"
+        : "基本匹配"
+    const resources: ResourceFitEntry[] = official.resources.map((entry: any) => ({
+      artifactId: String(entry.artifact_id ?? ""),
+      kind: entry.kind === "code_lab" ? "code_lab" : entry.kind === "assessment" ? "assessment" : "concept_lesson",
+      target: {
+        challenge: entry.target?.challenge ?? {},
+        support: entry.target?.support ?? {},
+      },
+      observed: {
+        challenge: entry.observed?.challenge ?? {},
+        support: entry.observed?.support ?? {},
+        confidence: Number(entry.observed?.confidence) || undefined,
+      },
+      verdict: entry.fit?.verdict === "too_hard" || entry.fit?.verdict === "too_easy" || entry.fit?.verdict === "fit"
+        ? entry.fit.verdict
+        : "unclear",
+      score: Number(entry.fit?.score) || 0,
+      mismatchedDimensions: Array.isArray(entry.fit?.mismatched_dimensions) ? entry.fit.mismatched_dimensions : [],
+      reasonCodes: Array.isArray(entry.fit?.reason_codes) ? entry.fit.reason_codes : [],
+    }))
+    return {
+      source: "official",
+      score,
+      label,
+      objectiveScore: 0,
+      levelScore: 0,
+      reviewScore: null,
+      learnerLevel: String(session?.profile?.level ?? "未公开"),
+      resourceLevel: "C 官方资源难度",
+      objectiveCount: 0,
+      matchedObjectiveCount: 0,
+      reviewLabel: "C 资源难度审核已公开",
+      note: "展示 C 公开的 resource_fit 资源难度适配结论（目标 vs 实测 + 审核评分）。",
+      overallVerdict,
+      resources,
+    }
+  }
+
+  const learnerLevel = String(session?.profile?.level ?? "未公开")
+  const resourceObjectives = new Set<string>([
+    ...(Array.isArray(resource?.objective_ids) ? resource.objective_ids : []),
+    ...(Array.isArray(assessment?.items) ? assessment.items.map((item: any) => item?.objective_id).filter(Boolean) : []),
+  ])
+  const targetObjectives = new Set<string>([
+    ...(Array.isArray(session?.current_path_node?.objectives) ? session.current_path_node.objectives.map((item: any) => item?.objective_id).filter(Boolean) : []),
+    ...(Array.isArray(session?.adaptation?.target_objective_ids) ? session.adaptation.target_objective_ids : []),
+  ])
+  const matchedObjectiveCount = [...resourceObjectives].filter((id) => targetObjectives.has(id)).length
+  const objectiveScore = targetObjectives.size === 0
+    ? 0
+    : Math.round((matchedObjectiveCount / targetObjectives.size) * 40)
+
+  const resourceLevel = String(resource?.difficulty ?? assessment?.difficulty ?? session?.current_path_node?.difficulty ?? "未公开")
+  const levelOrder: Record<string, number> = { new: 0, beginner: 1, basic: 2, intermediate: 3, advanced: 4, integrated: 5 }
+  const learnerRank = levelOrder[learnerLevel] ?? -1
+  const resourceRank = levelOrder[resourceLevel] ?? -1
+  const levelScore = learnerRank >= 0 && resourceRank >= 0
+    ? Math.max(0, 30 - Math.min(3, Math.abs(learnerRank - resourceRank)) * 10)
+    : 15
+
+  const review = session?.content_review
+  const reviewScore = review
+    ? review.publish_allowed === true && review.overall_status === "passed" ? 30 : review.overall_status === "blocked" || review.publish_allowed === false ? 0 : 15
+    : null
+  const rawScore = objectiveScore + levelScore + (reviewScore ?? 15)
+  const score = Math.max(0, Math.min(100, rawScore))
+  const label = reviewScore === null ? "等待审核" : score >= 85 ? "高度匹配" : score >= 70 ? "基本匹配" : "需要关注"
+  const reviewLabel = reviewScore === null ? "审核结果未公开" : review.publish_allowed && review.overall_status === "passed" ? "B/C审核通过" : review.publish_allowed === false ? "审核未通过" : "审核进行中"
+  return {
+    source: "fallback",
+    score,
+    label,
+    objectiveScore,
+    levelScore,
+    reviewScore,
+    learnerLevel,
+    resourceLevel,
+    objectiveCount: targetObjectives.size,
+    matchedObjectiveCount,
+    reviewLabel,
+    note: "页面展示指数，依据当前公开字段估算；不是官方难度适配率。",
+    resources: [],
+  }
+}
+
 export function finalFeedbackAction(session: any): { label: string; ready: boolean } | null {
   return isFinalMasterySession(session, null) ? { label: "返回首页", ready: true } : null
 }

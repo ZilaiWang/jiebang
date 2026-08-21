@@ -13,7 +13,6 @@ import {
   CircleHelp,
   Clock3,
   Code2,
-  ExternalLink,
   FileText,
   FlaskConical,
   FolderTree,
@@ -59,7 +58,6 @@ import {
   submitDiagnosisAnswers,
 } from "./orchestrator-client"
 import { semanticLessonLines, indentParagraphText } from "./lesson-format"
-import { stripStandaloneClaimText } from "./lesson-claim-text"
 import {
   buildFactIndex,
   lookupFact,
@@ -68,7 +66,7 @@ import {
 } from "./fact-lookup"
 import { codeSubmissionHint, labFeedbackExplanations, publicTestChecklist } from "./lab-feedback"
 import { LoopVisualizerToggle } from "./loop-visualizer"
-import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, sessionNeedsEventRefresh, shouldPollOrchestratorSession } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, collaborationDrawerView, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, resourceMatchView, sessionNeedsEventRefresh, shouldPollOrchestratorSession, type ResourceFitEntry } from "./orchestrator-view"
 import type { AssessmentPayload, Citation, CodeLabPayload, LessonPayload, PublicSessionFixture } from "./types"
 import { planNavSection } from "./plan-navigation"
 import {
@@ -204,6 +202,7 @@ export function App() {
   const [provider, setProvider] = useState({ configured: false, provider_mode: "model" as const, endpoint: "", model_id: "" })
   const [dockerStatus, setDockerStatus] = useState<{ ready: boolean; error?: string }>({ ready: false })
   const [providerOpen, setProviderOpen] = useState(false)
+  const [collaborationOpen, setCollaborationOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [confirmSwitchUserId, setConfirmSwitchUserId] = useState<string | null>(null)
@@ -506,6 +505,7 @@ export function App() {
             {navItems.map((item) => <NavButton item={item} current={planNavSection(page)} disabled={!liveSession && item.id !== "goal"} onClick={setPage} key={item.id} />)}
           </nav> : <span className="home-top-note">今天，也让自己多懂一些 Python。</span>}
           <div className="top-actions">
+            <button className={`collaboration-button${liveSession?.status === "running" ? " is-live" : ""}`} type="button" onClick={() => setCollaborationOpen(true)}><Bot size={16} /><span>协同流程</span>{liveSession?.status === "running" ? <i /> : null}</button>
             <button className={`api-button${provider.configured ? " is-ready" : ""}`} type="button" onClick={() => setProviderOpen(true)}><Settings2 size={16} /><span>API设置</span><small>{provider.configured ? provider.model_id : "未配置"}</small></button>
             <button className="avatar-button avatar-with-name" type="button" aria-label="切换学习者" onClick={() => setUserOpen((value) => !value)}><UserRound size={18} /><span>{currentUser?.name ?? "选择用户"}</span></button>
           </div>
@@ -513,6 +513,7 @@ export function App() {
         {busy && <div className="live-operation" role="status"><span className="operation-spinner" />{busy}</div>}
         {error && <div className="live-error" role="alert"><b>主 Agent请求未完成</b><span>{error}</span><button type="button" onClick={() => setError("")}>知道了</button></div>}
         {liveSession && page !== "home" ? <MainFlowStatusBar session={liveSession} /> : null}
+        {collaborationOpen ? <CollaborationDrawer session={liveSession} onClose={() => setCollaborationOpen(false)} /> : null}
         <main>
           {page === "home" && <HomeDashboard user={currentUser} mastered={currentUser ? masteredConceptsForUser(workspace, currentUser.id) : []} providerConfigured={provider.configured} onNewPlan={requestNewPlan} onEnterPlan={enterPlan} onDeletePlan={(planId) => currentUser && setWorkspace((value) => deletePlan(value, currentUser.id, planId))} />}
           {page === "goal" && currentPlan ? <GoalPage onContinue={() => setPage("diagnosis")} /> : null}
@@ -545,7 +546,7 @@ export function App() {
         {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} onCreate={(profile) => { setWorkspace((value) => addUser(value, profile)); setProfileOpen(false); setPage("home") }} />}
         {userOpen && createPortal(<UserSwitcher workspace={workspace} onClose={() => setUserOpen(false)} onAdd={() => { setUserOpen(false); setProfileOpen(true) }} onSelect={(id) => { setConfirmSwitchUserId(id); setUserOpen(false) }} />, document.body)}
         {confirmSwitchUserId && createPortal(<ConfirmSwitchUserModal targetUser={workspace.users.find(u => u.id === confirmSwitchUserId)} currentUser={currentUser} onCancel={() => setConfirmSwitchUserId(null)} onConfirm={() => { setWorkspace((value) => selectUser(value, confirmSwitchUserId)); setPage("home"); setConfirmSwitchUserId(null) }} />, document.body)}
-        {providerOpen && <ApiConfigModal current={provider} dockerStatus={dockerStatus} onDockerSetup={() => { fetch("/orchestrator/docker-setup").then(r => r.json()).then(d => { if (d.ready) setDockerStatus({ ready: true }) }) }} onClose={() => { setProviderOpen(false); setOpenPlanAfterProvider(false) }} onSave={async (input) => { const saved = await saveProviderConfiguration(input); setProvider(saved); setProviderOpen(false); if (openPlanAfterProvider && currentUser) { const id = newClientId("plan"); setWorkspace((value) => addPlan(value, currentUser.id, { id, name: "待选择学习目标" })); setOpenPlanAfterProvider(false); setPage("goal") } }} />}
+        {providerOpen && <ApiConfigModal current={provider} dockerStatus={dockerStatus} onDockerSetup={() => { fetch("/orchestrator/docker-setup").then(r => r.json()).then(d => { if (d.ready) setDockerStatus({ ready: true }) }) }} onDockerReady={() => setDockerStatus({ ready: true })} onClose={() => { setProviderOpen(false); setOpenPlanAfterProvider(false) }} onSave={async (input) => { const saved = await saveProviderConfiguration(input); setProvider(saved); setProviderOpen(false); if (openPlanAfterProvider && currentUser) { const id = newClientId("plan"); setWorkspace((value) => addPlan(value, currentUser.id, { id, name: "待选择学习目标" })); setOpenPlanAfterProvider(false); setPage("goal") } }} />}
       </div>
     </LiveContext.Provider>
   )
@@ -587,6 +588,7 @@ function HomeDashboard({ user, mastered, providerConfigured, onNewPlan, onEnterP
         <div className="hero-illustration-fade" />
       </div>
     </section>
+    <AgentGallery />
     <section className="home-bento">
       <section className="plan-manager">
       <header><div><span className="section-kicker section-kicker-with-icon"><Layers3 size={18} /> 计划管理</span><h2>学习，从计划开始</h2><p>计划只保存草稿和主 Agent会话入口；路径、内容与评分仍由上游生成。</p></div><button className="primary-action new-plan-button" type="button" onClick={onNewPlan}>＋ 新建计划</button></header>
@@ -618,7 +620,7 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
 }
 
 
-function ApiConfigModal({ current, dockerStatus, onDockerSetup, onClose, onSave }: { current: { configured: boolean; endpoint: string; model_id: string }; dockerStatus: { ready: boolean; error?: string }; onDockerSetup: () => void; onClose: () => void; onSave: (input: { endpoint: string; modelId: string; apiKey: string }) => Promise<void> }) {
+function ApiConfigModal({ current, dockerStatus, onDockerSetup, onDockerReady, onClose, onSave }: { current: { configured: boolean; endpoint: string; model_id: string }; dockerStatus: { ready: boolean; error?: string }; onDockerSetup: () => void; onDockerReady: () => void; onClose: () => void; onSave: (input: { endpoint: string; modelId: string; apiKey: string }) => Promise<void> }) {
   const [endpoint, setEndpoint] = useState(current.endpoint || "https://api.deepseek.com/chat/completions")
   const [modelId, setModelId] = useState(current.model_id || "deepseek-chat")
   const [apiKey, setApiKey] = useState("")
@@ -633,17 +635,26 @@ function ApiConfigModal({ current, dockerStatus, onDockerSetup, onClose, onSave 
       {!dockerStatus.ready && <button className="docker-setup-button" type="button" onClick={() => {
         setFailure("正在配置 Docker，请稍候…（可能需要 30 秒）")
         onDockerSetup()
-        // 轮询直到 Docker 就绪
+        // 轮询直到 Docker 稳定就绪：要求连续 3 次确认（约 9 秒稳定期），
+        // 避免 Docker Desktop 冷启动时引擎瞬时可用就被误判为完成
+        let stableCount = 0
         const poll = setInterval(async () => {
           try {
             const res = await fetch("/orchestrator/docker-status")
             const data = await res.json()
             if (data?.docker?.ready) {
-              clearInterval(poll)
-              setFailure("")
-              location.reload()
+              stableCount += 1
+              if (stableCount >= 3) {
+                clearInterval(poll)
+                setFailure("")
+                onDockerReady()
+              }
+            } else {
+              stableCount = 0
             }
-          } catch {}
+          } catch {
+            stableCount = 0
+          }
         }, 3000)
         setTimeout(() => { clearInterval(poll); setFailure("Docker 配置超时。请手动启动 Docker Desktop 后刷新页面。") }, 45000)
       }}>🔧 一键配置 Docker</button>}
@@ -785,6 +796,42 @@ function ContentReviewCard({ session }: { session: PublicSessionFixture }) {
   return <article className="agent-collaboration-card"><header><div><small>内容审核 · 发布门禁</small><h2>{reviewStatusLabel(review.overall_status)}</h2></div><ShieldCheck size={22} /></header><div className="agent-collaboration-list">{Object.entries(review.workers).map(([worker, state]) => <article key={worker}><span className={`agent-status status-${state.status}`} /><div><b>{workerLabel(worker)}</b><p>{state.last_error ?? `审核 ${state.review_attempt_no} 次，修复 ${state.repair_attempt_no} 次`}</p></div><em>{state.published ? "published" : state.status}</em></article>)}</div><p className="truth-note">{review.publish_allowed ? "审核已通过，公开资源允许展示。" : "审核未通过前，D 不展示 C 的讲义、代码实验或正式测评。"}</p></article>
 }
 
+function resourceFitBasisText(entry: ResourceFitEntry): string {
+  const basis = entry.verdict === "fit" ? "与实测一致" : "与实测存在差异"
+  const confidence = entry.observed.confidence ? `，置信度 ${Math.round(entry.observed.confidence * 100)}%` : ""
+  const reasons = entry.reasonCodes.length ? ` · ${entry.reasonCodes.join("；")}` : ""
+  return `目标 ${basis}（审核分 ${Math.round(entry.score * 100)}/100${confidence}）${reasons}`
+}
+
+function ResourceMatchCard({ session, resource, assessment, compact = false }: { session: PublicSessionFixture; resource: any; assessment?: AssessmentPayload; compact?: boolean }) {
+  const match = resourceMatchView(session, resource, assessment)
+  const ringStyle = { "--match-score": `${match.score * 3.6}deg` } as React.CSSProperties
+  const resourceKindLabel = (kind: string) => ({ concept_lesson: "定制讲义", code_lab: "代码实验", assessment: "正式测评" } as Record<string, string>)[kind] ?? kind
+  const verdictLabel = (verdict: string) => ({ fit: "匹配", too_hard: "偏难", too_easy: "偏易", unclear: "未判定" } as Record<string, string>)[verdict] ?? verdict
+  return <article className={`resource-match-card ${compact ? "is-compact" : ""} is-${match.source}`} aria-label="本轮资源匹配指数">
+    <header><span><Sparkles size={15} /> 本轮资源匹配指数</span><em>{match.label}</em></header>
+    <div className="resource-match-score" style={ringStyle}><div><strong>{match.score}</strong><small>/ 100</small></div></div>
+    <div className="resource-match-summary"><b>{match.label}</b><p>{match.source === "official" ? `C 资源难度审核：${match.overallVerdict === "fit" ? "整体匹配" : match.overallVerdict === "too_hard" ? "整体偏难" : match.overallVerdict === "too_easy" ? "整体偏易" : "未判定"}` : "讲义与正式测评面向当前画像的页面展示指数"}</p></div>
+    {match.source === "official" && match.resources.length
+      ? <div className="resource-fit-list">{match.resources.map((entry) => <div className={`resource-fit-row is-${entry.verdict}`} key={entry.artifactId}>
+          <div className="resource-fit-kind"><b>{resourceKindLabel(entry.kind)}</b><em>{verdictLabel(entry.verdict)}</em></div>
+          <div className="resource-fit-meter"><i style={{ width: `${Math.round(entry.score * 100)}%` }} /></div>
+          <span className="resource-fit-score">{Math.round(entry.score * 100)}</span>
+          {entry.mismatchedDimensions.length ? <small className="resource-fit-note">需关注：{entry.mismatchedDimensions.join("、")}</small> : <small className="resource-fit-note ok">全部维度匹配</small>}
+        </div>)}</div>
+      : <dl>
+          <div><dt>学习目标覆盖</dt><dd>{match.matchedObjectiveCount} / {match.objectiveCount || "--"}<span>{match.objectiveScore}分</span></dd></div>
+          <div><dt>画像 · 资源层级</dt><dd>{match.learnerLevel} · {match.resourceLevel}<span>{match.levelScore}分</span></dd></div>
+          <div><dt>内容审核</dt><dd>{match.reviewLabel}<span>{match.reviewScore == null ? "待返回" : `${match.reviewScore}分`}</span></dd></div>
+        </dl>}
+    <details><summary>查看匹配依据 <ChevronDown size={14} /></summary>
+      {match.source === "official"
+        ? <ul>{match.resources.map((entry) => <li key={entry.artifactId}><b>{resourceKindLabel(entry.kind)}</b>：{resourceFitBasisText(entry)}</li>)}</ul>
+        : <ul><li>覆盖当前路径或本轮适配目标</li><li>对比 B 画像等级与公开资源层级</li><li>读取主 Agent公开的内容审核状态</li></ul>}
+      <p>{match.note}</p></details>
+  </article>
+}
+
 function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const { retry, reset, runPublishedCodeLab, busy } = useLive()
   const activeSession = useRequiredSession()
@@ -794,6 +841,7 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const [tab, setTab] = useState<LessonTab>("lesson")
   const [sideTab, setSideTab] = useState<SideTab>("hint")
   const [activeSection, setActiveSection] = useState("prerequisite")
+  const [matchOpen, setMatchOpen] = useState(false)
   const [code, setCode] = useState(lab?.starter_code ?? "")
   const [lastExecutedCode, setLastExecutedCode] = useState<string | null>(null)
   useEffect(() => {
@@ -802,14 +850,15 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   }, [activeSession.round_no, activeSession.learning_resources.code_lab?.payload?.lab_id])
   if (!lesson) return <BlockedResourceState session={activeSession} busy={busy} onRetry={() => void retry()} onRestart={reset} title="互动学习资源未通过可信发布" />
   const sections = lesson ? lessonOutline(lesson) : []
-  return <div className="lesson-page"><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}</h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
+  return <div className="lesson-page"><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮资源匹配指数"><Sparkles size={14} />资源匹配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
     <div className="lesson-layout">
       <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { setActiveSection(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>当前内容结构</span><div><i style={{ width: "58%" }} /></div><small>由 C 公开字段直接渲染</small></div></aside>
       <section className="lesson-main"><div className="lesson-tabs" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => setTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => setTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => setTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
         {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={setActiveSection} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
       </section>
       <aside className="lesson-side"><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</aside>
-    </div>
+          </div>
+          {matchOpen ? <Modal title="本轮资源匹配指数" subtitle="C 官方 resource_fit 资源难度适配结论" onClose={() => setMatchOpen(false)}><ResourceMatchCard session={activeSession} resource={lesson} assessment={activeSession.assessment?.payload} /></Modal> : null}
   </div>
 }
 
@@ -833,18 +882,13 @@ function SemanticLessonText({ text }: { text: string }) {
 }
 
 /** 事实证据：C 公开的 claim 文本 + 引用来源，离上文空一行，紫色小字。 */
-function ClaimEvidence({ claims, citations }: { claims: Array<{ claim_id: string; text: string }>; citations: Citation[] }) {
-  if (!claims.length && !citations.length) return null
-  return <div className="claim-evidence">
-    <div className="claim-label">证据事实：</div>
-    {citations.length > 0 && <div className="claim-citations">{formatCitations(citations)}</div>}
-    {claims.map((claim) => <p key={claim.claim_id} className="claim-text">{claim.text}</p>)}
-  </div>
+function ClaimEvidence(_props: { claims: Array<{ claim_id: string; text: string }>; citations: Citation[] }) {
+  return null
 }
 
 /** 从段落文本中移除已作为 ClaimEvidence 独立展示的 claim 文本，避免重复。 */
-function stripClaimTextFromBody(bodyText: string, claims: Array<{ text: string }>): string {
-  return stripStandaloneClaimText(bodyText, claims)
+function stripClaimTextFromBody(bodyText: string, _claims: Array<{ text: string }>): string {
+  return bodyText
 }
 
 function RenderLessonBlock({ block }: { block: LessonPayload["explanation_blocks"][number] }) {
@@ -942,8 +986,16 @@ function HintPanel({ lesson }: { lesson?: LessonPayload }) {
 }
 
 function EvidencePanel({ lesson }: { lesson?: LessonPayload }) {
+  const activeSession = useRequiredSession()
+  const factIndex = buildFactIndex(activeSession.rag_result)
+  const [openKey, setOpenKey] = useState<string | null>(null)
   const evidence = uniqueCitations([...(lesson?.used_evidence ?? []), ...(lesson ? lesson.prerequisite_bridge.flatMap(blockCitations) : [])])
-  return <div className="side-panel-content"><span className="side-kicker"><ShieldCheck size={15} /> 可追溯证据</span><h3>{evidence.length} 条公开引用</h3><p className="muted-copy">只展示 source_id / fact_id；缺失证据会如实显示，不生成虚构来源。</p><div className="evidence-list">{evidence.map((citation) => <article key={`${citation.source_id}-${citation.fact_id}`}><FileText size={16} /><div><b>{citation.source_id}</b><span>{citation.fact_id}</span></div><ExternalLink size={14} /></article>)}</div></div>
+  return <div className="side-panel-content"><span className="side-kicker"><ShieldCheck size={15} /> 可追溯证据</span><h3>{evidence.length} 条公开引用</h3><p className="muted-copy">只展示 source_id / fact_id；缺失证据会如实显示，不生成虚构来源。</p><div className="evidence-list">{evidence.map((citation) => {
+    const key = `${citation.source_id}-${citation.fact_id}`
+    const hit = lookupFact(factIndex, citation)
+    const open = openKey === key
+    return <article key={key}><FileText size={16} /><div><b>{citation.source_id}</b><span>{citation.fact_id}</span></div><button className={`fact-detail-toggle ${open ? "is-open" : ""}`} type="button" onClick={() => setOpenKey(open ? null : key)}>{open ? "收起" : "查看详情"}</button>{open ? <div className="fact-original">{hit.found ? <><b>{hit.entry.fact_id}</b><p>{hit.entry.content}</p></> : <p className="fact-missing-note">该事实不在当前会话证据中</p>}</div> : null}</article>
+  })}</div></div>
 }
 
 function AgentPanel() {
@@ -1021,6 +1073,11 @@ function BlockedResourceState({ session, busy, onRetry, onRestart, title }: { se
 
 function NoSessionState({ onStart }: { onStart: () => void }) {
   return <div className="page"><section className="empty-state"><ShieldCheck size={29} /><h2>需要先创建主 Agent会话</h2><p>为避免伪造，D 不会在没有服务端会话时展示画像、学习方案、C 讲义、正式测评、评分或 Worker状态。</p><button className="primary-action" type="button" onClick={onStart}>新建真实学习会话</button></section></div>
+}
+
+export function CollaborationDrawer({ session, onClose }: { session: PublicSessionFixture | null; onClose: () => void }) {
+  const view = collaborationDrawerView(session ?? { status: "idle", round_no: 1, worker_ledger_history: [] })
+  return createPortal(<div className="collaboration-drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="collaboration-drawer" role="dialog" aria-modal="true" aria-label="多 Agent 协同流程"><header><div><small>主 Agent · 实时编排</small><h2>协同流程</h2><p>{session ? `第 ${session.round_no} 轮 · ${view?.live ? "正在运行" : "当前状态已保存"}` : "尚未创建真实主 Agent会话"}</p></div><button type="button" aria-label="关闭协同流程" onClick={onClose}><X size={20} /></button></header>{view ? <div className="vertical-metro">{view.stations.map((station, index) => <article className={`vertical-station is-${station.state}`} key={station.unit}><div className="vertical-station-mark"><span>{station.state === "completed" ? <Check size={14} /> : station.state === "current" ? <Bot size={14} /> : station.state === "failed" ? "!" : index + 1}</span>{index < view.stations.length - 1 ? <i /> : null}</div><div className="vertical-station-body"><header><b className="agent-art-title">{workerLabel(station.unit)}｜Agent {station.unit}</b><em>{drawerStateLabel(station.state)}</em></header><small className="agent-task-description">● {workerTaskDescription(station.unit)}</small>{station.executionType && station.executionType !== "unknown" ? <small className="agent-execution-type">{drawerExecutionTypeLabel(station.executionType)}</small> : null}<p>{station.summary}</p><footer><span>第 {station.attempt} 次尝试</span><span>公开产物 {station.publicOutputCount}</span>{station.hadFailure ? <span className="drawer-retry">保留失败/重试记录</span> : null}</footer></div></article>)}</div> : <section className="collaboration-empty"><Bot size={32} /><h3>暂无真实协同记录</h3><p>创建学习计划并启动主 Agent后，这里会按真实 worker_ledger_history 显示执行顺序。</p></section>}<footer className="collaboration-legend"><span><i className="legend-current" /> 正在做</span><span><i className="legend-pending" /> 未工作</span><span><i className="legend-completed" /> 已完成</span><span><i className="legend-waiting" /> 等待用户输入</span><small>紫色动态图标仅在真实会话运行时出现</small></footer></aside></div>, document.body)
 }
 
 function MainFlowStatusBar({ session }: { session: PublicSessionFixture }) {
@@ -1171,7 +1228,7 @@ function behaviorLabel(value: string) {
 
 function workerLabel(worker: string) {
   return ({
-    "background-collector": "历史与背景",
+    "background-collector": "背景采集",
     "self-assessor": "学习者自评",
     "objective-diagnostician": "客观诊断",
     "profile-builder": "画像构建",
@@ -1180,6 +1237,91 @@ function workerLabel(worker: string) {
     "code-lab": "代码实验",
     "tiered-evaluator": "分阶测评",
   } as Record<string, string>)[worker] ?? worker
+}
+
+function drawerStateLabel(state: string): string {
+  return ({ current: "正在做", pending: "未工作", completed: "已经完成", waiting: "等待用户", failed: "失败/阻塞", skipped: "已跳过" } as Record<string, string>)[state] ?? "状态未公开"
+}
+
+function workerTaskDescription(worker: string): string {
+  return ({
+    "background-collector": "提取学习者背景、过往经验和学习目标。",
+    "self-assessor": "提取学习者自评等级。",
+    "objective-diagnostician": "处理实际诊断答案，形成有知识依据的诊断证据。",
+    "profile-builder": "综合背景、自评和客观诊断，生成学习者画像。",
+    "path-planner": "根据学习者画像规划个性化学习路径。",
+    "concept-tutor": "根据知识证据生成带引用的个性化讲义。",
+    "code-lab": "生成代码实验，并保护参考答案和隐藏测试。",
+    "tiered-evaluator": "生成分阶正式测评，分离公开题目和私有评分材料。",
+  } as Record<string, string>)[worker] ?? "等待公开任务说明。"
+}
+
+/** 首页 Hero 下方的八位 Agent 横向长廊：中文名 + 英文名（艺术字）+ 第一人称气泡介绍。 */
+const agentGalleryCards: Array<{ id: string; cn: string; en: string; intro: string }> = [
+  {
+    id: "background-collector",
+    cn: "背景采集",
+    en: "Agent background-collector",
+    intro: "我是队伍的「雷达」——不靠猜，先把你的背景、过往经验、每周能投入的时间都收进档案。就像医生问诊先听主诉：把「你从哪里来、要到哪里去」摸清楚，后面的伙伴才不会空转。",
+  },
+  {
+    id: "self-assessor",
+    cn: "学习者自评",
+    en: "Agent self-assessor",
+    intro: "我是「自我介绍的记录员」。你说自己是零基础还是摸过一点 Python？我照单全收，但绝不只信这一句——这份自评会作为画像的起点，交给后面的伙伴去交叉验证，像简历初筛一样先留个第一印象。",
+  },
+  {
+    id: "objective-diagnostician",
+    cn: "客观诊断",
+    en: "Agent objective-diagnostician",
+    intro: "我是「出卷人」，专治「我以为我会了」。主 Agent 出题、你作答，我逐题核对对错，把结果变成有据可查的证据链。口说无凭，答题见真章——这一步决定了画像里写的是「事实」而不是「感觉」。",
+  },
+  {
+    id: "profile-builder",
+    cn: "画像构建",
+    en: "Agent profile-builder",
+    intro: "我是「拼图师」。把背景、自评、诊断结果三块拼图拼成你的学习者画像：哪些概念已知、哪些薄弱、代码认知到什么程度。画像一旦成型，整个系统后续所有决策都拿它当「底稿」，就像给球队建档案再排战术。",
+  },
+  {
+    id: "path-planner",
+    cn: "路径规划",
+    en: "Agent path-planner",
+    intro: "我是「导航员」。拿着你的画像，从知识库里挑出该学的知识点，排成一条有先后的学习路径——先打地基再盖楼。我会把「先学哪个、为什么先学它」讲清楚，让你每一步都走在正确的台阶上，而不是东一榔头西一棒槌。",
+  },
+  {
+    id: "concept-tutor",
+    cn: "定制讲义",
+    en: "Agent concept-tutor",
+    intro: "我是「一对一讲师」。根据路径上的知识点，结合知识库里的真实证据，为你现写一份专属讲义：概念讲解、分步示例、常见误区一个不少，每句话都有出处可查。我不是背课本，是照着你的画像「量身裁衣」。",
+  },
+  {
+    id: "code-lab",
+    cn: "代码实验",
+    en: "Agent code-lab",
+    intro: "我是「实训教练」。光听不练假把式——我出一道代码实验题，给你编辑器、公开测试和运行反馈。你的代码跑不跑得通、卡在哪，我实时告诉你。参考答案和隐藏测试我守得死死的，绝不让题目「泄底」。",
+  },
+  {
+    id: "tiered-evaluator",
+    cn: "分阶测评",
+    en: "Agent tiered-evaluator",
+    intro: "我是「毕业考官」。每轮最后出一套分阶正式测评，题目由易到难分层，答完进入正式评分。分数不靠感觉，正确答案和评分规范都在服务端锁着。测完我还会把结果回传给画像，让下一轮学习更贴合你。",
+  },
+]
+
+function AgentGallery() {
+  return <section className="agent-gallery" aria-label="八位 Agent 自我介绍">
+    <header className="agent-gallery-head"><span className="agent-gallery-headline">八位 Agent 的自我介绍~</span><b className="agent-gallery-accent">缺一不可</b><b className="agent-gallery-accent accent-delay">互相协作</b></header>
+    <div className="agent-gallery-scroll">
+      {agentGalleryCards.map((agent) => <article className="agent-gallery-card" key={agent.id}>
+        <div className="agent-gallery-title"><b className="agent-art-title">{agent.cn}</b><small>{agent.en}</small></div>
+        <div className="agent-gallery-bubble">{agent.intro}</div>
+      </article>)}
+    </div>
+  </section>
+}
+
+function drawerExecutionTypeLabel(type: string): string {
+  return ({ opencode_primary: "OpenCode 主 Agent", opencode_subagent: "OpenCode 子 Agent", deterministic_adapter: "确定性适配器", reviewed_pipeline: "受审核生成流程", session_logic: "会话逻辑", manual: "人工操作" } as Record<string, string>)[type] ?? "执行类型未公开"
 }
 
 function reviewStatusLabel(status: string) {
