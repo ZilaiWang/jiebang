@@ -30,6 +30,8 @@ let session = await request("/orchestrator/sessions", {
   }),
 })
 
+session = await pollUntil(session, (value) => waitingType(value) === "diagnosis_answers" || isTerminal(value))
+assertWaiting(session, "diagnosis_answers", "session did not reach diagnosis after asynchronous creation")
 session = await submitDiagnosis(session, "CMD-DAY4-DIAG-1")
 session = await pollUntil(session, (value) => waitingType(value) === "assessment_answers" || isTerminal(value))
 assertWaiting(session, "assessment_answers", "first-round content generation did not reach assessment")
@@ -115,9 +117,12 @@ async function command(commandId: string, type: string, payload: JsonObject): Pr
   })
 }
 
-async function pollUntil(initial: JsonObject, predicate: (value: JsonObject) => boolean): Promise<JsonObject> {
+async function pollUntil(_initial: JsonObject, predicate: (value: JsonObject) => boolean): Promise<JsonObject> {
   const deadline = Date.now() + timeoutMs
-  let current = initial
+  // Session creation and commands are durable asynchronous jobs. Their HTTP
+  // response may describe an accepted/intermediate job rather than the latest
+  // persisted session, so always begin polling from the canonical GET endpoint.
+  let current = await request(`/orchestrator/sessions/${sessionId}`, { headers })
   while (!predicate(current)) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for session ${sessionId}`)
     await Bun.sleep(1000)
@@ -143,7 +148,10 @@ function waitingType(sessionValue: JsonObject): string {
 }
 
 function isTerminal(sessionValue: JsonObject): boolean {
-  return ["blocked", "failed", "completed"].includes(stringValue(sessionValue.status))
+  const status = stringValue(sessionValue.status)
+  return status === "blocked"
+    || status === "failed"
+    || (status === "completed" && stringValue(sessionValue.current_stage) === "completed")
 }
 
 function assertWaiting(sessionValue: JsonObject, expected: string, message: string): void {
