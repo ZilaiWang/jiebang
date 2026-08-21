@@ -60,7 +60,7 @@ describe("next round context projection", () => {
     } as never)
 
     expect(concept.upstream.next_round_context?.teaching_strategy).toBe("reduce_load")
-    expect(lab.next_round_context?.teaching_strategy).toBe("same_difficulty_new_variant")
+    expect(lab.upstream.next_round_context?.teaching_strategy).toBe("same_difficulty_new_variant")
   })
 
   test("keeps the variation contract on segments without a focus objective (no silent drop)", () => {

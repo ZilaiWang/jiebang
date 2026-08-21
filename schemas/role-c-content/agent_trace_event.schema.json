@@ -6,7 +6,7 @@
   "required": ["schema_version", "seq", "event_type", "run_id", "status", "input_refs", "summary"],
   "properties": {
     "schema_version": { "const": "1.0" }, "seq": { "type": "integer", "minimum": 1 },
-    "event_type": { "enum": ["c.spec.ready", "c.agent.started", "c.agent.ready", "c.validation.failed", "c.review.revision_requested", "c.review.passed", "c.pipeline.blocked", "c.pipeline.failed", "c.pipeline.ready"] },
+    "event_type": { "enum": ["c.spec.ready", "c.agent.started", "c.agent.ready", "c.validation.failed", "c.review.revision_requested", "c.review.passed", "c.review.revision.applied", "c.capacity.reduced", "c.pipeline.blocked", "c.pipeline.failed", "c.pipeline.ready"] },
     "run_id": { "type": "string", "minLength": 1 },
     "agent": { "enum": ["concept-tutor", "code-lab", "tiered-evaluator"] },
     "status": { "enum": ["started", "success", "blocked", "failed"] },
@@ -29,6 +29,16 @@
         },
         "additionalProperties": false
       }
+    },
+    "revision_applied": {
+      "type": "object",
+      "required": ["before_hash", "after_hash", "instruction_hash"],
+      "properties": {
+        "before_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "after_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "instruction_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      },
+      "additionalProperties": false
     },
     "versions": { "$ref": "artifact_envelope.schema.json#/$defs/versions" }
   },

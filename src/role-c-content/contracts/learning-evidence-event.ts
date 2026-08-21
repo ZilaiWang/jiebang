@@ -52,9 +52,11 @@ export interface AgentTraceEvent {
     | "c.validation.failed"
     | "c.review.revision_requested"
     | "c.review.passed"
+    | "c.review.revision.applied"
     | "c.pipeline.blocked"
     | "c.pipeline.failed"
     | "c.pipeline.ready"
+    | "c.capacity.reduced"
   run_id: string
   agent?: "concept-tutor" | "code-lab" | "tiered-evaluator"
   status: "started" | "success" | "blocked" | "failed"
@@ -67,6 +69,12 @@ export interface AgentTraceEvent {
   retry_kind?: "transport" | "format_repair" | "tool" | "semantic_revision" | "resume"
   validator_results?: Array<{ validator: string; ok: boolean; issue_count: number }>
   versions?: ArtifactVersions
+  /** 外审修订实际生效证明：before/after artifact hash + 修订指令 hash。 */
+  revision_applied?: {
+    before_hash: string
+    after_hash: string
+    instruction_hash: string
+  }
 }
 
 export function newTraceEvent(input: Omit<AgentTraceEvent, "schema_version">): AgentTraceEvent {

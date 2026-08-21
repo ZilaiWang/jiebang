@@ -18,6 +18,7 @@ import { analyzePythonSource } from "../security/python-static-analyzer"
 import { validateCitations, type ValidationIssue } from "./citation-validator"
 import { validateAssessmentPublicSecureSeparation, validatePublicArtifactNoSecrets } from "./public-secure-leak-validator"
 import { validateRoleCSchema, validateRoleCSchemaFragment } from "./runtime-schema-validator"
+import { effectiveAssessmentBlueprint } from "../planning/resource-blueprint"
 
 export interface AssessmentDraftValidationReport {
   ok: boolean
@@ -105,7 +106,10 @@ export function validateAssessmentPublicStage(
       issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `核心目标必要事实未被测评完整覆盖：${missing.join("、")}`))
     }
   }
-  const expected = request.generation_spec.assessment_blueprint
+  const expected = effectiveAssessmentBlueprint(
+    request.generation_spec,
+    request.resource_blueprint,
+  )
   for (const tier of [1, 2, 3] as const) {
     const count = publicPayload.items.filter((item) => item.tier === tier).length
     const wanted = tier === 1 ? expected.tier_1_count : tier === 2 ? expected.tier_2_count : expected.tier_3_count
@@ -169,10 +173,14 @@ export function validateAssessmentDraftStructure(
     familyVariants.add(key)
   }
 
+  const effectiveBlueprint = effectiveAssessmentBlueprint(
+    request.generation_spec,
+    request.resource_blueprint,
+  )
   const expectedTierCounts = [
-    request.generation_spec.assessment_blueprint.tier_1_count,
-    request.generation_spec.assessment_blueprint.tier_2_count,
-    request.generation_spec.assessment_blueprint.tier_3_count,
+    effectiveBlueprint.tier_1_count,
+    effectiveBlueprint.tier_2_count,
+    effectiveBlueprint.tier_3_count,
   ]
   expectedTierCounts.forEach((expected, index) => {
     const tier = (index + 1) as 1 | 2 | 3
@@ -182,7 +190,7 @@ export function validateAssessmentDraftStructure(
     }
   })
   const modalities = new Set(publicPayload.items.map((item) => item.modality))
-  for (const modality of request.generation_spec.assessment_blueprint.required_modalities) {
+  for (const modality of effectiveBlueprint.required_modalities) {
     if (!modalities.has(modality)) {
       issues.push(issue("missing_required_modality", "$.public_draft.payload.items", `缺少 blueprint 必需题型 ${modality}`))
     }

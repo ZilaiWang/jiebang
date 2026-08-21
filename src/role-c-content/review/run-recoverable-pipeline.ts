@@ -267,6 +267,7 @@ export async function runRecoverableReviewedCPipeline(
           currentProfile,
           directive,
           options.evidence_refresh_port,
+          options.path_planning_port,
         )
       : await prepareSpecRecovery(
           currentInput,
@@ -353,6 +354,7 @@ async function prepareEvidenceRecovery(
   profile: LearnerProfileSnapshot,
   directive: RecoveryDirective,
   port: EvidenceRefreshPort | undefined,
+  pathPort: RoleBPathPlanningPort | undefined,
 ): Promise<PreparedRecovery> {
   const request = reviewEvidenceGapRequest(input, profile, directive)
   if (!port) {
@@ -393,10 +395,39 @@ async function prepareEvidenceRecovery(
     }
   }
 
+  const refreshedPath = bindRefreshedSupportFacts(
+    pathFromSpec(input.generation_spec),
+    evidence,
+    request.required_support ?? [],
+  )
+  if (supportIdentity(pathFromSpec(input.generation_spec), input.evidence_pack)
+    === supportIdentity(refreshedPath, evidence)) {
+    // A had no additional fact/capability to add. Repeating the same evidence
+    // under a new retrieval_id would only spend another full model round on an
+    // unchanged constraint set. Hand the mismatch to B in the same recovery
+    // attempt so it can revise the behavior/path contract.
+    return prepareSpecRecovery(
+      input,
+      profile,
+      {
+        ...directive,
+        failed_dimensions: unique([
+          ...directive.failed_dimensions,
+          "objective_evidence_mismatch",
+        ]),
+        required_action: "replan_path",
+        fix_scope: "new_spec",
+        reason: `${directive.reason}；A 未返回新增的可用事实，需由 B 调整目标行为或路径`,
+      },
+      pathPort,
+      port,
+    )
+  }
+
   const built = buildRecoverySpec(
     input.generation_spec,
     profile,
-    pathFromSpec(input.generation_spec),
+    refreshedPath,
     evidence,
     "new_evidence",
   )
@@ -413,6 +444,55 @@ async function prepareEvidenceRecovery(
     input: pipelineInputAfterRecovery(input, built.spec, evidence),
     profile,
     evidence_request_id: request.request_id,
+  }
+}
+
+function supportIdentity(path: LearningPathNode, evidence: RagEvidencePack): string {
+  const facts = new Map(evidence.results.flatMap((item) =>
+    item.facts.map((fact) => [`${item.source_id}:${fact.fact_id}`, fact.content] as const)))
+  return contentHash(path.objectives.map((objective) => ({
+    objective_id: objective.objective_id,
+    source_id: objective.source_id,
+    observable_behavior: objective.observable_behavior,
+    facts: objective.required_fact_ids.map((factId) => ({
+      fact_id: factId,
+      content: facts.get(`${objective.source_id}:${factId}`) ?? null,
+    })),
+  })))
+}
+
+/**
+ * Evidence repair must be able to change the fact boundary of the next,
+ * immutable GenerationSpec.  Keeping the previous required_fact_ids while A
+ * returned additional procedure/contract support made recovery a no-op: C
+ * immediately filtered the new facts out of every model context.
+ */
+function bindRefreshedSupportFacts(
+  path: LearningPathNode,
+  evidence: RagEvidencePack,
+  requiredSupport: NonNullable<EvidenceGapRequest["required_support"]>,
+): LearningPathNode {
+  const requestedObjectives = new Set(requiredSupport.map((entry) => entry.objective_id))
+  if (requestedObjectives.size === 0) return path
+  const factsBySource = new Map(evidence.results.map((item) => [
+    item.source_id,
+    item.facts.map((fact) => fact.fact_id),
+  ] as const))
+  return {
+    ...structuredClone(path),
+    objectives: path.objectives.map((objective) => {
+      if (!requestedObjectives.has(objective.objective_id)) {
+        return structuredClone(objective)
+      }
+      const available = factsBySource.get(objective.source_id) ?? []
+      return {
+        ...structuredClone(objective),
+        required_fact_ids: unique([
+          ...objective.required_fact_ids,
+          ...available,
+        ]),
+      }
+    }),
   }
 }
 
@@ -758,7 +838,8 @@ function recoveryDirective(
   result: ReviewedCPipelineResult,
 ): RecoveryDirective | undefined {
   const report = result.review_reports.at(-1)
-  if (!report || report.decision === "pass") return undefined
+  if (!report) return preflightRecoveryDirective(result)
+  if (report.decision === "pass") return undefined
   const action = selectedAction(report)
   if (!action) return undefined
   const relevant = report.revision_instructions.filter((instruction) =>
@@ -791,6 +872,35 @@ function recoveryDirective(
     reason: relevant.map((instruction) => instruction.message).join("；")
       || result.blocked_reason?.message
       || "内容审核未通过",
+  }
+}
+
+/**
+ * Feasibility and capacity checks intentionally run before content generation,
+ * so they do not have an A/B review report yet.  They still carry a normal
+ * recovery meaning and must not become a terminal dead end merely because the
+ * system avoided three unnecessary model calls.
+ */
+function preflightRecoveryDirective(
+  result: ReviewedCPipelineResult,
+): RecoveryDirective | undefined {
+  if (result.status !== "blocked"
+    || result.blocked_reason?.code !== "BLOCKED_MISSING_EVIDENCE") {
+    return undefined
+  }
+  const capacityGap = result.blocked_reason.message.includes("测评容量")
+  return {
+    failed_dimensions: [capacityGap ? "assessment_capacity" : "artifact_feasibility"],
+    missing_prerequisite_source_ids: [],
+    unknown_prerequisite_refs: [],
+    required_action: capacityGap ? "replan_path" : "request_new_evidence",
+    fix_scope: capacityGap ? "new_spec" : "new_evidence",
+    can_recover: true,
+    review_instruction_ids: [],
+    reason: [
+      result.blocked_reason.message,
+      ...(result.blocked_reason.details ?? []),
+    ].join("；"),
   }
 }
 
@@ -843,7 +953,21 @@ function reviewEvidenceGapRequest(
     learner_level: profile.level,
     required_facts: requiredFacts,
     target_objectives: structuredClone(path.objectives),
+    required_support: path.objectives.map((objective) => ({
+      objective_id: objective.objective_id,
+      capability: evidenceCapabilityForBehavior(objective.observable_behavior),
+      reason: `当前证据未能稳定支撑 ${objective.observable_behavior} 行为目标：${directive.reason}`,
+    })),
   }
+}
+
+function evidenceCapabilityForBehavior(
+  behavior: LearningPathNode["objectives"][number]["observable_behavior"],
+): NonNullable<EvidenceGapRequest["required_support"]>[number]["capability"] {
+  if (behavior === "trace" || behavior === "apply") return "procedure"
+  if (behavior === "debug") return "boundary"
+  if (behavior === "create") return "io_contract"
+  return "definition"
 }
 
 function pathPlanningRequest(

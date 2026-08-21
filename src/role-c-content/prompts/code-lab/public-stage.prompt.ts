@@ -38,20 +38,22 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 【execution_contract 执行方式】
 - execution_mode 已由编排器根据当前学习目标确定性冻结，取值就是 staged_contract.execution_mode；你**不得自行判断或更改模式**，只在这个已冻结的模式下创作其余字段（文字、starter、测试、input/output 合同描述）
-- 冻结为 stdin_stdout：不设置 entry_point；任务描述为完整程序从标准输入读取并向标准输出写出结果；input_contract/output_contract 描述标准输入文本与标准输出文本
+- 冻结为 stdin_stdout：不设置 entry_point；input_form=stdin_lines 时从标准输入读取，input_form=none 时不读取输入；两者都向标准输出写出结果，input_contract/output_contract 与之一致
 - 冻结为 function：设置与 starter 函数签名一致的 entry_point；任务描述为实现并返回结果，不把 print 或标准输出作为答案；input_contract/output_contract 描述参数类型与返回值类型
 - execution_contract 里的 execution_mode 直接抄写 staged_contract.execution_mode，不要写成另一个值
 
 【task_contract 完整任务契约（存在时强制遵循）】
 - staged_contract.task_contract 给出本实验的完整判题契约：program_entry（程序入口）、input_form（输入形式）、output_form（输出形式）、grading_invocation（判题调用方式）、output_constraint（输出约束）。
 - 你创作的 instruction、starter_code、public_test、execution_contract 必须与这些字段一致：
+  - learner_action=recall_fact / learner_owned_region=fact_literal 时，学习者只替换由当前 cited fact 直接给出的一个短词或短句占位；input_form=none，public_test.input 为空字符串。starter_code 必须已给出赋值和 print 胶水，用 TODO 标出唯一事实文本待填区；不得读取 input，不得要求学习者编写 if/elif、循环、函数或其他旁支逻辑。instruction、hints 和反思题不得要求学习者推断证据没有说明的参数、冒号、缩进、API、错误结果或运行机制。
+  - learner_action=implement_program 时，学习者补完整程序的核心处理逻辑；learner_action=implement_function 时，学习者补入口函数体并返回结果。
   - input_form=stdin_lines 时，题目的外部输入是标准输入文本，不得把函数参数当作判题入口；output_form=stdout_lines 时，评分产物是标准输出文本，不得把函数返回值当作判题结果。完整程序内可以定义辅助函数来组织逻辑。
   - input_form=function_arguments 时，判题器以参数调用入口函数；output_form=return_value 时，评分产物是函数返回值，不得把 print 输出作为评分结果。
 - 若 staged_contract 没有 task_contract（旧路径），按上方 execution_mode 规则执行。
 
 【starter_code 起始代码】
 - function 模式：提供与 entry_point 完全一致的函数签名和必要导入，用 TODO 注释标出需要完成的部分
-- stdin_stdout 模式：提供拥有标准输入和标准输出的完整程序骨架和 TODO；不得设置 entry_point，也不得要求学习者只提交函数或把函数返回值作为评分结果。完整程序内允许使用 def/return 定义辅助函数，但主程序仍必须读取 stdin 并写入 stdout。
+- stdin_stdout 模式：提供与 task_contract.input_form 一致的完整程序骨架和 TODO；input_form=stdin_lines 时读取 stdin 并写入 stdout，input_form=none 时不读取输入、只使用空 input 测试输出。不得设置 entry_point，也不得要求学习者只提交函数或把函数返回值作为评分结果。非 recall_fact 的完整程序内允许使用 def/return 定义辅助函数。
 - 核心逻辑必须留空（function 模式函数体写 pass 或 raise NotImplementedError("TODO")；stdin_stdout 模式只保留安全的读取/输出骨架或 TODO），不得包含实际答案逻辑
 - 绝对不可：写 return 语句返回计算结果、写完整的循环体或条件判断、写任何可能通过测试的代码
 - 宁可太简单被安全门禁退回，也不可写出接近答案的代码
@@ -72,6 +74,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 【reflection_question 反思题】
 - 只围绕当前 facts 与本实验已明示的输入输出合同提问；不得预设 evidence 未说明的语言行为、边界或泛化规则
+- 优先让学习者指出自己的实现对应了哪条当前事实，或如何用公开测试检查任务合同。不得询问未转换会发生什么、某种错误写法为何报错、未给代码会走哪个分支等证据外假设。
 
 ══════════════════════════════════════════
 结构化要求
@@ -87,6 +90,6 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 6. 教学文字只使用 evidence.facts；输入中不存在事实身份的示例和练习不会作为可发表知识提供。编排器会把冻结事实作为 Claim 附加到 instruction。
 7. starter 不得直接完成任务，不得使用网络、宿主文件、shell、包安装或环境变量。
 8. starter 不得动态访问双下划线属性，不得调用 eval/exec/compile/open/breakpoint/__import__/globals/locals/vars/getattr/setattr/delattr；普通类的 __init__ 定义可用；import 只能来自 execution_contract.allowed_imports。
-9. execution_contract.allowed_imports 必须覆盖参考实现与隐藏测试会用到的平台白名单模块（如 json、math、collections、itertools、statistics、re 等）；只声明确实需要的模块，不得声明不允许的模块。secure 阶段不会也无法修改 allowed_imports，声明不足会导致私有参考实现被安全门禁退回。
+9. execution_contract.allowed_imports 只可从平台白名单 bisect、collections、datetime、decimal、enum、fractions、functools、heapq、itertools、io、json、math、operator、random、re、statistics、string 中选择，并须覆盖 starter、参考实现与隐藏测试实际使用的模块；基础任务优先使用内置语法并返回空数组。不得使用 sys、os、pathlib、subprocess 等平台外模块。secure 阶段不会也无法扩大 allowed_imports。
 10. evidence 涉及文件读写时，公开实验须明确采用安全等价环境：把文件文本作为函数参数，或使用 io.StringIO 这类内存文件对象；不得调用 open、访问宿主路径或声称已改写真实文件。
 11. ${JSON_ONLY}`

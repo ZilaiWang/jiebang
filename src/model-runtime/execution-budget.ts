@@ -11,6 +11,14 @@ export interface ExecutionBudgetSnapshot extends ExecutionBudgetLimits {
   used_transport_retries: number
 }
 
+/**
+ * One reviewed Role C candidate can use up to twenty calls when staged
+ * authoring, one targeted repair per stage, and three semantic artifact audits
+ * are all exercised. Two external revisions mean at most three candidates.
+ * The budget is a hard safety ceiling; successful workflows stop far earlier.
+ */
+export const ROLE_C_CONTENT_MODEL_CALL_BUDGET = 20 * 3
+
 export class ModelExecutionBudgetExceededError extends Error {
   constructor(readonly reason: "DEADLINE" | "MODEL_CALLS" | "TRANSPORT_RETRIES") {
     super(`MODEL_EXECUTION_BUDGET_EXCEEDED:${reason}`)
@@ -26,7 +34,7 @@ export class ModelExecutionBudget {
   constructor(readonly limits: ExecutionBudgetLimits = {
     soft_deadline_ms: 180_000,
     hard_deadline_ms: 360_000,
-    max_model_calls: 14,
+    max_model_calls: ROLE_C_CONTENT_MODEL_CALL_BUDGET,
     max_transport_retries_total: 3,
   }) {
     if (limits.soft_deadline_ms < 1

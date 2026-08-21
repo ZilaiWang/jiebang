@@ -59,6 +59,7 @@ import {
   submitDiagnosisAnswers,
 } from "./orchestrator-client"
 import { semanticLessonLines, indentParagraphText } from "./lesson-format"
+import { stripStandaloneClaimText } from "./lesson-claim-text"
 import {
   buildFactIndex,
   lookupFact,
@@ -843,17 +844,7 @@ function ClaimEvidence({ claims, citations }: { claims: Array<{ claim_id: string
 
 /** 从段落文本中移除已作为 ClaimEvidence 独立展示的 claim 文本，避免重复。 */
 function stripClaimTextFromBody(bodyText: string, claims: Array<{ text: string }>): string {
-  if (!claims.length) {
-    return bodyText.replace(/\s*证据事实[：:]\s*/gu, "").trim()
-  }
-  let cleaned = bodyText
-  for (const claim of claims) {
-    const escaped = claim.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    cleaned = cleaned.replace(new RegExp(`\\s*${escaped}\\s*[；;]?`, "gu"), "")
-    cleaned = cleaned.replace(new RegExp(`\\s*证据事实[：:]\\s*${escaped}\\s*`, "gu"), "")
-  }
-  cleaned = cleaned.replace(/\s*证据事实[：:]\s*/gu, "")
-  return cleaned.replace(/^[；;，,。.\s]+/u, "").replace(/[；;\s]+$/u, "").trim()
+  return stripStandaloneClaimText(bodyText, claims)
 }
 
 function RenderLessonBlock({ block }: { block: LessonPayload["explanation_blocks"][number] }) {

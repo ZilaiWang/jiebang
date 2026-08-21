@@ -110,6 +110,16 @@ export interface EvidenceGapRequest {
   learner_level: KnowledgeDifficulty
   required_facts: EvidenceRef[]
   target_objectives?: LearningPathNode["objectives"]
+  /**
+   * 细粒度证据能力请求（改进方案4 7.2）：除了"再要同一批 fact"，
+   * 明确说明每个 objective 缺失的证据能力（定义/过程/状态转移/边界/对比/输入输出合同），
+   * 让 A 能精确补回真正缺失的规则，而非重复返回同一批 fact。
+   */
+  required_support?: Array<{
+    objective_id: string
+    capability: "definition" | "procedure" | "state_transition" | "boundary" | "contrast" | "io_contract"
+    reason: string
+  }>
 }
 
 export interface FactAuditPacket {

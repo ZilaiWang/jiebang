@@ -8,6 +8,7 @@ import type { CitationRef } from "../contracts/common"
 import type {
   ReviewBlockLocator,
   ReviewContentBlock,
+  ReviewSurfaceKind,
   ReviewablePublicArtifact,
 } from "./types"
 
@@ -40,6 +41,7 @@ export function extractConceptBlocks(artifact: ConceptLessonArtifact): ReviewCon
       block,
       objectiveByBlock.get(block.block_id),
       "citation_only",
+      "direct_instance",
     )),
     ...payload.misconceptions.map((item) => makeBlock(
       "concept",
@@ -47,6 +49,7 @@ export function extractConceptBlocks(artifact: ConceptLessonArtifact): ReviewCon
       item.explanation,
       item.citations,
       "evidence_anchored",
+      "narrative_explanation",
     )),
     ...payload.micro_checks.map((block) => makeBlock(
       "concept",
@@ -54,6 +57,7 @@ export function extractConceptBlocks(artifact: ConceptLessonArtifact): ReviewCon
       promptWithOptions(block.prompt, block.options),
       block.citations,
       "citation_only",
+      block.options?.length ? "choice_assessment" : "open_assessment",
     )),
     ...payload.hint_ladders.flatMap((ladder) => ladder.hints.map((hint) => makeBlock(
       "concept",
@@ -61,6 +65,7 @@ export function extractConceptBlocks(artifact: ConceptLessonArtifact): ReviewCon
       hint.text,
       hint.citations,
       "citation_only",
+      "narrative_explanation",
     ))),
   ]
 }
@@ -81,6 +86,7 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       `${test.description}\n预期行为：${test.expected_behavior}`,
       test.citations,
       "citation_only",
+      "normative_task",
     )),
     ...payload.hint_ladders.flatMap((ladder) => ladder.hints.map((hint) => makeBlock(
       "code_lab",
@@ -88,6 +94,7 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       hint.text,
       hint.citations,
       "citation_only",
+      "narrative_explanation",
     ))),
     makeBlock(
       "code_lab",
@@ -95,6 +102,7 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       payload.starter_code,
       payload.used_evidence,
       "citation_only",
+      "starter_skeleton",
     ),
     ...payload.reflection_questions.map((question, index) => makeBlock(
       "code_lab",
@@ -102,6 +110,7 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       question,
       payload.used_evidence,
       "citation_only",
+      "normative_task",
     )),
   ]
 }
@@ -114,6 +123,13 @@ export function extractAssessmentBlocks(artifact: AssessmentPublicArtifact): Rev
       promptWithOptions(item.prompt, item.options),
       item.citations,
       "citation_only",
+      item.options?.length
+        ? "choice_assessment"
+        : item.modality === "trace"
+          ? "direct_instance"
+          : item.modality === "code"
+            ? "normative_task"
+            : "open_assessment",
     ),
     ...(item.starter_code ? [makeBlock(
       "assessment",
@@ -126,6 +142,7 @@ export function extractAssessmentBlocks(artifact: AssessmentPublicArtifact): Rev
       item.starter_code,
       item.citations,
       "citation_only",
+      "starter_skeleton",
     )] : []),
   ]) ?? []
 }
@@ -135,6 +152,7 @@ function reviewRenderBlock(
   block: RenderBlock,
   objectiveId?: string,
   renderedFactMode?: ReviewContentBlock["fact_audit_mode"],
+  renderedSurfaceKind?: ReviewSurfaceKind,
 ): ReviewContentBlock[] {
   const claims = "claims" in block ? block.claims : []
   const citations = deduplicateCitations(claims.flatMap((claim) => claim.citations))
@@ -151,6 +169,8 @@ function reviewRenderBlock(
         citations,
         renderedFactMode
           ?? (block.block_type === "code" ? "citation_only" : "evidence_anchored"),
+        renderedSurfaceKind
+          ?? (block.block_type === "code" ? "direct_instance" : "narrative_explanation"),
       )]
     : []
   if ("claims" in block) {
@@ -167,6 +187,7 @@ function reviewRenderBlock(
       claim.text,
       claim.citations,
       "claim",
+      "exact_claim",
       )),
     ]
   }
@@ -177,6 +198,7 @@ function reviewRenderBlock(
       promptWithOptions(block.prompt, block.options),
       block.citations,
       "citation_only",
+      block.options?.length ? "choice_assessment" : "open_assessment",
     )]
   }
   if (block.block_type === "hint") {
@@ -186,6 +208,7 @@ function reviewRenderBlock(
       block.text,
       block.citations,
       "citation_only",
+      "narrative_explanation",
     )]
   }
   return []
@@ -230,6 +253,7 @@ function makeBlock(
   text: string,
   citations: CitationRef[],
   factAuditMode: ReviewContentBlock["fact_audit_mode"],
+  surfaceKind: ReviewSurfaceKind,
 ): ReviewContentBlock {
   const parent = locator.parent_block_id ? `:${locator.parent_block_id}` : ""
   return {
@@ -237,6 +261,7 @@ function makeBlock(
     text,
     citations: citations.map((citation) => ({ ...citation })),
     fact_audit_mode: factAuditMode,
+    surface_kind: surfaceKind,
     locator: { ...locator },
   }
 }

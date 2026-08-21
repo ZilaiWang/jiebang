@@ -26,6 +26,9 @@ import { C_SCHEMA_VERSION, contentHash, type SchemaVersion } from "./common"
 import { assertReviewedReadyPipeline } from "../review/validate-reviewed-release"
 import { validatePublicArtifactNoSecrets } from "../validators/public-secure-leak-validator"
 import { validateRoleCSchema, type RoleCSchemaFile } from "../validators/runtime-schema-validator"
+import { buildDifficultyPlan } from "../planning/resource-blueprint"
+import { auditResourceFit, buildResourceFitReport } from "../review/resource-fit-audit"
+import type { ResourceFitReport } from "./resource-fit"
 
 /** Artifacts that D may render or return to a learner-facing client. */
 export type PublicArtifact =
@@ -114,6 +117,12 @@ export interface RoleCReviewedReleaseDelivery {
   trace_events: [AgentTraceEvent, ...AgentTraceEvent[]]
   /** 仅当本轮由上一轮决策触发（remediate/reinforce/advance）时存在。 */
   adaptation?: RoleCAdaptationInfo
+  /**
+   * 三类资源各自的 target/observed 难度与 fit 结论（Resource Fit Report）。
+   * 与 reviewed release 一起发布：保证只有通过审核的真实产物才拥有 fit 结果，
+   * 避免"第一版难度 3 → 修订后实际难度 2，报告仍是 3"的一致性问题。
+   */
+  resource_fit: ResourceFitReport
 }
 
 export type RoleCLearningSessionHandoff =
@@ -315,6 +324,40 @@ function reviewedRelease(pipeline: ReviewedCPipelineResult): {
   })
 }
 
+/**
+ * 对通过审核的三个真实 artifact 生成 Resource Fit Report。
+ * target 来自 generation_spec 的 difficulty_plan（三类资源各自的目标难度）；
+ * observed 由确定性结构特征估计；再对比得到 fit verdict。
+ */
+function buildResourceFit(pipeline: ReviewedCPipelineResult): ResourceFitReport {
+  const spec = pipeline.generation_spec
+  const difficultyPlan = buildDifficultyPlan(spec)
+  const reviewed = assertReviewedReadyPipeline(pipeline, { error_prefix: "ROLE_C_D_FIT" })
+  const entries = ([
+    { kind: "concept_lesson" as const, artifact: reviewed.artifacts[0] },
+    { kind: "code_lab" as const, artifact: reviewed.artifacts[1] },
+    { kind: "assessment" as const, artifact: reviewed.artifacts[2] },
+  ] as const).map(({ kind, artifact }) => {
+    if (!artifact.payload) throw new Error(`ROLE_C_D_FIT_PAYLOAD_MISSING:${kind}`)
+    return auditResourceFit({
+      artifact_id: artifact.artifact_id,
+      kind,
+      payload: artifact.payload as never,
+      target: difficultyPlan[kind],
+    })
+  })
+  return buildResourceFitReport({
+    run_id: spec.run_id,
+    spec_id: spec.spec_id,
+    profile_ref: {
+      profile_id: spec.profile_ref.profile_id,
+      profile_version: spec.profile_ref.profile_version,
+      profile_content_hash: spec.profile_ref.profile_content_hash,
+    },
+    entries,
+  })
+}
+
 /** Builds the exact validated public envelope used by HTTP and delivery ports. */
 export function createReviewedReleaseDelivery(
   pipeline: ReviewedCPipelineResult,
@@ -345,6 +388,7 @@ export function createReviewedReleaseDelivery(
   if (!finalReview) throw new Error("ROLE_C_D_DELIVERY_REVIEW_MISSING")
   const traceEvents = structuredClone(trace) as [AgentTraceEvent, ...AgentTraceEvent[]]
   const adaptation = buildAdaptationInfo(nextRoundContext)
+  const resourceFit = buildResourceFit(pipeline)
   const body = {
     schema_version: C_SCHEMA_VERSION,
     delivery_kind: "reviewed_release" as const,
@@ -356,6 +400,7 @@ export function createReviewedReleaseDelivery(
     artifacts: structuredClone(artifacts),
     trace_events: traceEvents,
     ...(adaptation ? { adaptation } : {}),
+    resource_fit: resourceFit,
   }
   const delivery: RoleCReviewedReleaseDelivery = {
     ...body,
@@ -408,6 +453,8 @@ function reviewedReleaseDeliveryIdentity(
     final_review_hash: release.final_review_hash,
     artifact_hashes: release.artifacts.map((artifact) => contentHash(artifact)),
     trace_semantic_hash: contentHash(semanticTrace),
+    adaptation_hash: release.adaptation ? contentHash(release.adaptation) : null,
+    resource_fit_hash: contentHash(release.resource_fit),
   }
 }
 

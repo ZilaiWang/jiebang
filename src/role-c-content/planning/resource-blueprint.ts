@@ -1,7 +1,15 @@
 import type { AssessmentItemPublic } from "../contracts/artifacts"
 import { contentHash, stableId, type CitationRef } from "../contracts/common"
 import type { RagEvidencePack } from "../contracts/evidence-pack"
-import type { GenerationSpec } from "../contracts/generation-spec"
+import { adaptationDefaults, type GenerationSpec } from "../contracts/generation-spec"
+import type { AssessmentBlueprint } from "../contracts/profile-adapter"
+import type { AssessmentCapacityPlan } from "./assessment-capacity"
+import {
+  splitDifficultyVector,
+  type ChallengeVector,
+  type SupportProfile,
+  type ResourceFitKind,
+} from "../contracts/resource-fit"
 import {
   buildAssessmentItemPlan,
   buildCodeLabObjectivePlan,
@@ -22,6 +30,8 @@ export interface ResourceBlueprintObjective {
   concept: {
     /** Stable objective order. Provider-specific batching is intentionally separate. */
     sequence_index: number
+    /** Evidence-density mode constrains how much semantic expansion is safe. */
+    mode: "normal" | "sparse_safe"
     required_parts: Array<"explanation" | "worked_example" | "misconception" | "micro_check" | "hints" | "summary">
     prerequisite_source_ids: string[]
   }
@@ -54,6 +64,9 @@ export interface ResourceBlueprintObjective {
  */
 export interface CodeLabTaskContract {
   task_kind: "callable_function" | "stdin_stdout_program"
+  /** 学习者实际承担的工作；低证据能力目标不被迫完成证据外的编程任务。 */
+  learner_action: "recall_fact" | "implement_program" | "implement_function"
+  learner_owned_region: "fact_literal" | "program_logic" | "function_body"
   primary_objective_id: string
   execution_mode: "function" | "stdin_stdout"
   /** 程序入口：function = "入口函数（def 定义，函数名由 instruction 指定）"；stdin_stdout = "stdin→stdout"。 */
@@ -80,6 +93,12 @@ export interface ResourceBlueprint {
   evidence_ref: string
   evidence_content_hash: string
   objectives: ResourceBlueprintObjective[]
+  /**
+   * 三类资源各自的目标难度（Target Resource Difficulty）：讲义/代码实验/测评
+   * 分别冻结 challenge（越大越难）与 support（越大支持越强）目标。
+   * 不再由三类资源共用同一份 DifficultyVector——测评应低支架、讲义应高支架。
+   */
+  difficulty_plan: ResourceDifficultyPlan
   code_lab: {
     lab_id: string
     test_suite_id: string
@@ -91,6 +110,11 @@ export interface ResourceBlueprint {
     item_plan: AssessmentItemPlan[]
     total_items: number
     total_score: number
+    /** 生成前容量规划的显式结果；REDUCE 时说明为何实际题量少于上游请求。 */
+    capacity: Pick<
+      AssessmentCapacityPlan,
+      "decision" | "requested_items" | "feasible_items" | "limiting_factors"
+    >
   }
   /** Deterministic division of labor prepared before any artifact is authored. */
   cross_artifact_contract: {
@@ -108,9 +132,39 @@ export interface ResourceBlueprint {
   }
 }
 
+export interface ResourceDifficultyPlanEntry {
+  challenge_target: ChallengeVector
+  support_target: SupportProfile
+}
+
+export type ResourceDifficultyPlan = Record<ResourceFitKind, ResourceDifficultyPlanEntry>
+
+export interface ResourceBlueprintOptions {
+  assessment_blueprint?: AssessmentBlueprint
+  assessment_capacity?: AssessmentCapacityPlan
+}
+
+/**
+ * ResourceBlueprint 是容量规划后的测评执行合同。存在 blueprint 时，题量必须以
+ * item_plan 为准；required modalities 仍来自上游教学意图，并已由 item planner 安置。
+ */
+export function effectiveAssessmentBlueprint(
+  spec: GenerationSpec,
+  blueprint?: ResourceBlueprint,
+): AssessmentBlueprint {
+  if (!blueprint) return structuredClone(spec.assessment_blueprint)
+  return {
+    tier_1_count: blueprint.assessment.item_plan.filter((item) => item.tier === 1).length,
+    tier_2_count: blueprint.assessment.item_plan.filter((item) => item.tier === 2).length,
+    tier_3_count: blueprint.assessment.item_plan.filter((item) => item.tier === 3).length,
+    required_modalities: [...spec.assessment_blueprint.required_modalities],
+  }
+}
+
 export function buildResourceBlueprint(
   spec: GenerationSpec,
   evidence: RagEvidencePack,
+  options: ResourceBlueprintOptions = {},
 ): ResourceBlueprint {
   const evidenceHash = contentHash(evidence)
   if (evidence.retrieval_id !== spec.evidence_ref
@@ -120,13 +174,40 @@ export function buildResourceBlueprint(
   const identity = buildLabIdentity(spec)
   const codeObjectivePlan = buildCodeLabObjectivePlan(spec)
   const codeSecurePlan = buildCodeLabSecurePlan(spec, identity.test_suite_id)
-  const assessmentPlan = buildAssessmentItemPlan(spec)
+  const assessmentSpec = options.assessment_blueprint
+    ? { ...spec, assessment_blueprint: options.assessment_blueprint }
+    : spec
+  const assessmentPlan = buildAssessmentItemPlan(assessmentSpec)
+  const assessmentCapacity = options.assessment_capacity
+    ? {
+        decision: options.assessment_capacity.decision,
+        requested_items: options.assessment_capacity.requested_items,
+        feasible_items: options.assessment_capacity.feasible_items,
+        limiting_factors: [...options.assessment_capacity.limiting_factors],
+      }
+    : {
+        decision: "FULL" as const,
+        requested_items: assessmentPlan.length,
+        feasible_items: assessmentPlan.length,
+        limiting_factors: [],
+      }
   const taskContract = decideCodeLabTaskContract(spec, evidence)
   const crossArtifactContract = buildCrossArtifactContract()
-  const qualityRequirement = decideQualityRequirement(spec, codeObjectivePlan.length)
+  const qualityRequirement = decideQualityRequirement(assessmentSpec, codeObjectivePlan.length)
+  const difficultyPlan = buildDifficultyPlan(spec)
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
       entry.objective_id === target.objective_id)!
+    const targetFactTexts = (evidence.results.find((item) =>
+      item.source_id === target.source_id)?.facts ?? [])
+      .filter((fact) => target.required_fact_ids.includes(fact.fact_id))
+      .map((fact) => fact.content.trim())
+      .filter(Boolean)
+    const conceptMode: ResourceBlueprintObjective["concept"]["mode"] =
+      targetFactTexts.length <= 3
+        || targetFactTexts.join("\n").length < 280
+        ? "sparse_safe"
+        : "normal"
     return {
       objective_id: target.objective_id,
       source_id: target.source_id,
@@ -140,6 +221,7 @@ export function buildResourceBlueprint(
       })),
       concept: {
         sequence_index: index,
+        mode: conceptMode,
         required_parts: [
           "explanation" as const,
           "worked_example" as const,
@@ -176,6 +258,7 @@ export function buildResourceBlueprint(
     evidence_ref: evidence.retrieval_id,
     evidence_content_hash: evidenceHash,
     objectives,
+    difficulty_plan: difficultyPlan,
     code_lab: {
       lab_id: identity.lab_id,
       test_suite_id: identity.test_suite_id,
@@ -183,7 +266,7 @@ export function buildResourceBlueprint(
       secure_plan: codeSecurePlan,
       task_contract: taskContract,
     },
-    assessment: assessmentPlan,
+    assessment: { item_plan: assessmentPlan, capacity: assessmentCapacity },
     cross_artifact_contract: crossArtifactContract,
     quality_requirement: qualityRequirement,
   }
@@ -194,6 +277,7 @@ export function buildResourceBlueprint(
     evidence_ref: evidence.retrieval_id,
     evidence_content_hash: evidenceHash,
     objectives,
+    difficulty_plan: difficultyPlan,
     code_lab: {
       lab_id: identity.lab_id,
       test_suite_id: identity.test_suite_id,
@@ -205,10 +289,104 @@ export function buildResourceBlueprint(
       item_plan: assessmentPlan,
       total_items: assessmentPlan.length,
       total_score: assessmentPlan.reduce((sum, item) => sum + item.max_score, 0),
+      capacity: assessmentCapacity,
     },
     cross_artifact_contract: crossArtifactContract,
     quality_requirement: qualityRequirement,
   })
+}
+
+/**
+ * 为三类资源分别规划目标难度（Target Resource Difficulty）。
+ *
+ * 从 GenerationSpec.difficulty（目标教学负荷）拆分 challenge/support 后，
+ * 按资源形态做差异化：
+ *   - 讲义：认知/推理坡度更缓，支架最强，低阅读密度；
+ *   - 代码实验：过程推理稍高，支架中等，starter/hint 充分；
+ *   - 测评：支架最低（不提示，真正测"独立完成能力"），挑战与目标一致。
+ *
+ * 这是"三种资源不再共用同一份 DifficultyVector"的落地。
+ */
+export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPlan {
+  const difficulty = spec.difficulty
+    ?? adaptationDefaults(spec.learner_adaptation?.level ?? "basic").difficulty
+  const { challenge, support } = splitDifficultyVector(difficulty)
+  const assessmentBlueprint = spec.assessment_blueprint
+  const plannedPrerequisiteLoad = spec.path_node?.prerequisite_source_ids?.length ?? 0
+  const tier2Count = assessmentBlueprint?.tier_2_count ?? 0
+  const tier3Count = assessmentBlueprint?.tier_3_count ?? 0
+  const assessmentTransfer = tier3Count > 0
+    ? 2
+    : tier2Count > 0
+      ? 1
+      : 0
+  const assessmentCognitive = tier3Count > 0
+    ? 3
+    : tier2Count > 0
+      ? 2
+      : 1
+
+  const concept: ResourceDifficultyPlanEntry = {
+    challenge_target: {
+      ...challenge,
+      cognitive_demand: clamp5(challenge.cognitive_demand - 1),
+      reasoning_steps: clamp5(challenge.reasoning_steps - 1),
+      code_complexity: clamp5(challenge.code_complexity - 1),
+      prerequisite_load: clamp5(Math.max(
+        challenge.prerequisite_load,
+        plannedPrerequisiteLoad,
+      )),
+      ...(challenge.transfer_distance !== undefined
+        ? { transfer_distance: clamp5(challenge.transfer_distance - 1) }
+        : {}),
+    },
+    support_target: {
+      scaffold_strength: clamp5(support.scaffold_strength + 1),
+      reading_density: "low",
+      hint_strength: clamp5(support.hint_strength + 1),
+      starter_support: 0,
+    },
+  }
+
+  const codeLab: ResourceDifficultyPlanEntry = {
+    challenge_target: {
+      ...challenge,
+      reasoning_steps: clamp5(challenge.reasoning_steps + 0.5),
+      code_complexity: clamp5(Math.max(challenge.code_complexity, 1)),
+    },
+    support_target: {
+      scaffold_strength: clamp5(support.scaffold_strength),
+      reading_density: support.reading_density,
+      hint_strength: clamp5(Math.max(support.hint_strength, 3)),
+      starter_support: clamp5(Math.max(support.starter_support, 3)),
+    },
+  }
+
+  const assessment: ResourceDifficultyPlanEntry = {
+    challenge_target: {
+      ...challenge,
+      cognitive_demand: clamp5(Math.max(
+        challenge.cognitive_demand,
+        assessmentCognitive,
+      )),
+      transfer_distance: clamp5(Math.max(
+        challenge.transfer_distance ?? 0,
+        assessmentTransfer,
+      )),
+    },
+    support_target: {
+      scaffold_strength: 0,
+      reading_density: "high",
+      hint_strength: 0,
+      starter_support: 0,
+    },
+  }
+
+  return { concept_lesson: concept, code_lab: codeLab, assessment }
+}
+
+function clamp5(value: number): number {
+  return Math.max(0, Math.min(5, Math.round(value * 10) / 10))
 }
 
 function buildCrossArtifactContract(): ResourceBlueprint["cross_artifact_contract"] {
@@ -288,8 +466,9 @@ function deepFreeze<T>(value: T): T {
 /**
  * Planning 层决定 CodeLab 外部执行契约（"先设计题，再确定判题接口"）。
  *
- * 判定基于 primary objective 的教学语义，而不是 evidence 的代码语法：
- * - 函数专题（函数定义/参数与返回值/函数调用）→ callable_function：判题器调用入口函数，execution_mode=function
+ * 判定基于 primary objective 的教学语义与其冻结事实能力：
+ * - 参数/返回值专题 → callable_function：判题器调用入口函数，execution_mode=function
+ * - 只有函数定义/调用、尚无返回值事实 → stdin_stdout_program；允许在完整程序中定义并调用辅助函数
  * - 其余知识点 → stdin_stdout_program：判题器喂 stdin、比较 stdout，产出可运行程序
  *
  * primary objective 决定契约；supporting objectives（如综合项目里的函数先修）只提供证据，
@@ -300,7 +479,7 @@ function deepFreeze<T>(value: T): T {
  *   primary 是本轮主修知识的权威描述（显式 is_primary 标记），信号以它为锚；
  *   goal 是整轮意图的补充。输出型语义（综合项目/完整程序/读取输入输出/统计）
  *   → 设计"产出可运行程序"任务 → stdin_stdout；
- *   函数专题语义（函数定义/调用/参数与返回值）→ 设计"实现可调用函数"任务 → callable_function。
+ *   具备参数/返回值语义 → 设计"实现可调用函数"任务 → callable_function。
  * - primary 的 title/goal 均无信号时，看 primary 证据的 facts 兜底。
  * 不再用知识库标题关键词猜执行方式；相同 primary 标记下改变目标顺序不改变契约。
  */
@@ -332,10 +511,10 @@ function decideCodeLabTaskContract(
   // 的先修函数），因此 goal 只在 primary title 无信号时兜底，绝不让 goal 覆盖
   // primary 决定的任务形态。
   const primaryOutputSignal = /(?:综合项目|完整程序|读取用户输入|读取输入|标准输出|输出结果|统计|计算.*输出|输入.*输出)/u.test(primaryTitle)
-  const primaryFunctionSignal = /(?:函数定义|函数调用|参数与返回值|定义函数|封装成函数)/u.test(primaryTitle)
+  const primaryFunctionSignal = /(?:参数与返回值|函数参数|函数返回值|返回值)/u.test(primaryTitle)
   const goalOutputSignal = /(?:综合项目|完整程序|读取用户输入|读取输入|标准输出|输出结果|统计|计算.*输出|输入.*输出)/u.test(goal)
-  const goalFunctionSignal = /(?:函数定义|函数调用|参数与返回值|定义函数|封装成函数)/u.test(goal)
-  const functionFactSignal = /(?:定义函数|def|参数|返回值|函数调用|封装成函数)/u.test(facts)
+  const goalFunctionSignal = /(?:参数与返回值|函数参数|函数返回值|返回值)/u.test(goal)
+  const functionFactSignal = /(?:参数|返回值|\breturn\b)/u.test(facts)
   const outputFactSignal = /(?:输入输出|stdin|stdout|读取|print|输出)/u.test(facts)
   const taskKind: CodeLabTaskContract["task_kind"] = primaryOutputSignal
     ? "stdin_stdout_program"
@@ -349,20 +528,44 @@ function decideCodeLabTaskContract(
             ? "callable_function"
             : "stdin_stdout_program"
   const callable = taskKind === "callable_function"
+  const implementationFactSignal = /(?:输入|输出|返回值|\breturn\b|循环|遍历|条件|赋值|计算|索引|读写|调用.*参数|文件)/u.test(facts)
+  const learnerAction: CodeLabTaskContract["learner_action"] = callable
+    ? "implement_function"
+    : primary.observable_behavior === "recognize"
+        || primary.observable_behavior === "explain"
+        || !implementationFactSignal
+      ? "recall_fact"
+      : "implement_program"
+  const learnerOwnedRegion: CodeLabTaskContract["learner_owned_region"] =
+    learnerAction === "recall_fact"
+      ? "fact_literal"
+      : learnerAction === "implement_function"
+        ? "function_body"
+        : "program_logic"
   return {
     task_kind: taskKind,
+    learner_action: learnerAction,
+    learner_owned_region: learnerOwnedRegion,
     primary_objective_id: primary.objective_id,
     execution_mode: callable ? "function" : "stdin_stdout",
     program_entry: callable
       ? "入口函数（def 定义，函数名由 instruction 指定）"
-      : "stdin→stdout（整个程序读取 stdin 并打印结果）",
-    input_form: callable ? "function_arguments" : "stdin_lines",
+      : learnerAction === "recall_fact"
+        ? "stdout（程序胶水已给出，学习者只填写事实文本）"
+        : "stdin→stdout（整个程序读取 stdin 并打印结果）",
+    input_form: callable
+      ? "function_arguments"
+      : learnerAction === "recall_fact"
+        ? "none"
+        : "stdin_lines",
     output_form: callable ? "return_value" : "stdout_lines",
     grading_invocation: callable
       ? "call_entry_function"
       : "feed_stdin_compare_stdout",
     output_constraint: callable
       ? "判题器调用入口函数并比较返回值；不得要求 print 输出作为评分结果"
-      : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
+      : learnerAction === "recall_fact"
+        ? "判题器使用空 stdin 并比较 stdout；学习者只替换一个事实文本占位，输出调用由 starter_code 完整提供"
+        : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
   }
 }

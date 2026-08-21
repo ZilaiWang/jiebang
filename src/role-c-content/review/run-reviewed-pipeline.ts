@@ -9,6 +9,7 @@ import {
   type SecureArtifactStore,
 } from "../security/secure-artifact-store"
 import { agentForReviewArtifact, toAlignmentObjections } from "./revision-mapper"
+import { findingFingerprint, revisionStrictlyImproves } from "./disposition-resolver"
 import type {
   ContentReviewDecision,
   ContentReviewFinding,
@@ -17,6 +18,7 @@ import type {
   ContentRevisionInstruction,
   ReviewEvidencePack,
   ReviewedCPipelineResult,
+  ReviewRevisionContext,
   RunReviewedCPipelineOptions,
 } from "./types"
 
@@ -40,10 +42,24 @@ export async function runReviewedCPipeline(
   const reviewEvidence = deepFreeze(projectPublicRagEvidencePack(frozenInput.evidence_pack))
   const reviewReports: ContentReviewResult[] = []
   let cumulativeInstructions: ContentRevisionInstruction[] = []
+  let previousFindingFingerprints: string[] = []
+  let parentCandidateHashes: ReviewRevisionContext["parent_candidate_hashes"] = {
+    concept: "",
+    code_lab_public: "",
+    code_lab_secure: "",
+    assessment_public: "",
+    assessment_secure: "",
+  }
 
   for (let revisionRound = 0; revisionRound <= maxExternalRevisions; revisionRound += 1) {
     const temporaryStore = new InMemorySecureArtifactStore()
-    const candidate = await runCPipeline(
+    const revisionContext = buildReviewRevisionContext(
+      cumulativeInstructions,
+      revisionRound as 0 | 1 | 2,
+      options.review_port.policy_version,
+      parentCandidateHashes,
+    )
+    let candidate = await runCPipeline(
       frozenInput,
       agentsWithReviewInstructions(
         agents,
@@ -51,7 +67,7 @@ export async function runReviewedCPipeline(
         revisionRound as 0 | 1 | 2,
       ),
       temporaryStore,
-      basePipelineOptions(options),
+      basePipelineOptions(options, revisionContext),
     )
     if (candidate.status !== "ready") {
       if (candidate.blocked_reason?.code === "UNSUPPORTED_TARGET") {
@@ -71,6 +87,48 @@ export async function runReviewedCPipeline(
         reviewReports,
         pipelineInputHash,
         generationSpecHash,
+      )
+    }
+
+    // 记录本轮候选产物 hash，并为"外审修订实际生效"追加可证明 trace。
+    let currentHashes: ReviewRevisionContext["parent_candidate_hashes"]
+    try {
+      currentHashes = await extractCandidateHashes(candidate, temporaryStore)
+    } catch {
+      return failedCandidate(
+        candidate,
+        options.review_port.policy_version,
+        reviewReports,
+        "SECURE_STORE_ERROR",
+        "无法校验候选私有产物的修订身份",
+        pipelineInputHash,
+        generationSpecHash,
+      )
+    }
+    const revisionAppliedTrace = revisionAppliedEvents(
+      candidate,
+      revisionContext,
+      parentCandidateHashes,
+      currentHashes,
+    )
+    if (revisionAppliedTrace.length > 0) {
+      candidate = { ...candidate, trace_events: [...candidate.trace_events, ...revisionAppliedTrace] }
+    }
+    const unappliedAgents = revisionContext.revision_round > 0
+      ? revisionContext.affected_agents.filter((agent) => {
+          const pair = artifactHashPairForAgent(agent, parentCandidateHashes, currentHashes)
+          return pair.before.length > 0 && pair.before === pair.after
+        })
+      : []
+    if (unappliedAgents.length > 0) {
+      return revisionStalledCandidate(
+        candidate,
+        options.review_port.policy_version,
+        reviewReports,
+        pipelineInputHash,
+        generationSpecHash,
+        "REVIEW_REVISION_NOT_APPLIED",
+        `外审修订未改变目标产物：${unappliedAgents.join(",")}`,
       )
     }
 
@@ -105,6 +163,58 @@ export async function runReviewedCPipeline(
         generationSpecHash,
       )
     }
+
+    // 单调验收（改进方案4 第 6 节）：外审修订轮必须"问题单调减少"。
+    // 非单调提案不能成为新的最佳候选；若还剩一次明确的局部修订机会，
+    // 保留上一轮基准问题集并把本轮 finding 一并交给最后一次定向重写。
+    // 只有预算耗尽或问题已升级到新证据/新规范时才终止。
+    if (revisionRound > 0 && report.decision !== "pass") {
+      const currentFingerprints = report.artifact_results.flatMap((result) =>
+        result.findings.map((finding) => findingFingerprint(finding)))
+      if (!revisionStrictlyImproves({
+        beforeFingerprints: previousFindingFingerprints,
+        afterFingerprints: currentFingerprints,
+      })) {
+        const unchanged = previousFindingFingerprints.filter((fp) => currentFingerprints.includes(fp))
+        const regression = currentFingerprints.filter((fp) => !previousFindingFingerprints.includes(fp))
+        const retryableInstructions = report.revision_instructions.filter(
+          (instruction) => instruction.fix_scope === "artifact",
+        )
+        const hasCrossInputRequirement = report.revision_instructions.some(
+          (instruction) => instruction.fix_scope !== "artifact",
+        )
+        const canRetryRejectedProposal = revisionRound < maxExternalRevisions
+          && report.decision === "revise"
+          && retryableInstructions.length > 0
+          && !hasCrossInputRequirement
+          && report.artifact_results
+            .filter((result) => result.decision === "revise")
+            .every((result) => result.can_revise)
+        if (canRetryRejectedProposal) {
+          cumulativeInstructions = mergeInstructions(
+            cumulativeInstructions,
+            retryableInstructions,
+          )
+          // Deliberately keep previousFindingFingerprints and
+          // parentCandidateHashes: the rejected proposal is diagnostic input,
+          // not the new accepted baseline.
+          continue
+        }
+        return revisionStalledCandidate(
+          candidate,
+          options.review_port.policy_version,
+          reviewReports,
+          pipelineInputHash,
+          generationSpecHash,
+          unchanged.length > 0 ? "REVIEW_REVISION_NOT_APPLIED" : "REVIEW_REVISION_REGRESSION",
+          unchanged.length > 0
+            ? `外审修订未解决上一轮 ${unchanged.length} 个问题`
+            : `外审修订引入 ${regression.length} 个新问题，未单调改善`,
+        )
+      }
+    }
+    previousFindingFingerprints = report.artifact_results.flatMap((result) =>
+      result.findings.map((finding) => findingFingerprint(finding)))
 
     if (report.decision === "pass") {
       try {
@@ -159,6 +269,8 @@ export async function runReviewedCPipeline(
       )
     }
     cumulativeInstructions = mergeInstructions(cumulativeInstructions, artifactLocal)
+    // 记录本轮候选 hash 作为下一轮外审修订的 parent（用于 before/after 证明）。
+    parentCandidateHashes = currentHashes
   }
 
   throw new Error("ROLE_C_REVIEW_UNREACHABLE")
@@ -381,10 +493,14 @@ function validateReviewResult(
       throw new Error("ROLE_C_REVIEW_RESULT_ARTIFACT_SHAPE")
     }
     for (const finding of artifactResult.findings) {
-      if (!validReviewFinding(finding)
-        || finding.artifact_id !== artifactResult.artifact_id
-        || finding.artifact_kind !== artifactResult.artifact_kind) {
-        throw new Error("ROLE_C_REVIEW_RESULT_FINDING_TARGET")
+      if (!validReviewFinding(finding)) {
+        throw new Error(`ROLE_C_REVIEW_RESULT_FINDING_TARGET:INVALID_SHAPE:${finding.code || "unknown"}`)
+      }
+      if (finding.artifact_id !== artifactResult.artifact_id) {
+        throw new Error(`ROLE_C_REVIEW_RESULT_FINDING_TARGET:ARTIFACT_ID:${finding.code}`)
+      }
+      if (finding.artifact_kind !== artifactResult.artifact_kind) {
+        throw new Error(`ROLE_C_REVIEW_RESULT_FINDING_TARGET:ARTIFACT_KIND:${finding.code}`)
       }
     }
     for (const instruction of artifactResult.revision_instructions) {
@@ -662,12 +778,50 @@ function blockedCandidate(
   }
 }
 
+/**
+ * 修订停滞（未生效或回归）：外审修订未单调改善，停止盲目重跑并给出明确分类。
+ */
+function revisionStalledCandidate(
+  candidate: CPipelineResult,
+  policyVersion: string,
+  reports: ContentReviewResult[],
+  pipelineInputHash: string,
+  generationSpecHash: string,
+  reasonCode: "REVIEW_REVISION_NOT_APPLIED" | "REVIEW_REVISION_REGRESSION",
+  message: string,
+): ReviewedCPipelineResult {
+  return {
+    ...candidate,
+    status: "blocked",
+    state: "BLOCKED",
+    secure_refs: [],
+    blocked_reason: {
+      code: "BLOCKED_CONTENT_REVIEW",
+      message: `${reasonCode}：${message}`,
+      details: [reasonCode],
+    },
+    failure_reason: undefined,
+    trace_events: terminalTrace(candidate, "blocked", `${reasonCode}：${message}`),
+    review_policy_version: policyVersion,
+    review_reports: reports,
+    pipeline_input_hash: pipelineInputHash,
+    generation_spec_hash: generationSpecHash,
+  }
+}
+
 function reviewFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : ""
+  if (/MODEL_EXECUTION_BUDGET_EXCEEDED|模型执行预算/u.test(message)) {
+    return "REVIEW_EXECUTION_BUDGET_EXCEEDED"
+  }
   if (/EVIDENCE_MUTATED|EVIDENCE_MISMATCH/u.test(message)) return "REVIEW_EVIDENCE_MISMATCH"
   if (/RUN_MISMATCH|INPUT_HASH_MISMATCH|SPEC_HASH_MISMATCH|POLICY_MISMATCH|ROUND_MISMATCH/u.test(message)) return "REVIEW_IDENTITY_MISMATCH"
-  const invalidResult = /ROLE_C_REVIEW_(RESULT_[A-Z_]+|INVALID_ARBITRATION|PASS_WITH_FINDINGS|INSTRUCTION_[A-Z_]+)/u.exec(message)
-  if (invalidResult) return `REVIEW_INVALID_RESULT:${invalidResult[1]}`
+  const invalidResult = /ROLE_C_REVIEW_(RESULT_[A-Z_]+|INVALID_ARBITRATION|PASS_WITH_FINDINGS|INSTRUCTION_[A-Z_]+)(?::([A-Z_]+))?(?::([A-Za-z0-9_.-]+))?/u.exec(message)
+  if (invalidResult) {
+    return ["REVIEW_INVALID_RESULT", invalidResult[1], invalidResult[2], invalidResult[3]]
+      .filter(Boolean)
+      .join(":")
+  }
   const semanticResult = /ROLE_C_SEMANTIC_AUDIT_(RESULT_[A-Z_]+)/u.exec(message)
   if (semanticResult) return `REVIEW_INVALID_RESULT:SEMANTIC_AUDIT_${semanticResult[1]}`
   if (/RESULT_|INVALID_ARBITRATION|PASS_WITH_FINDINGS|INSTRUCTION_/u.test(message)) return "REVIEW_INVALID_RESULT"
@@ -790,6 +944,7 @@ function attachReviewMetadata(
 
 function basePipelineOptions(
   options: RunReviewedCPipelineOptions,
+  revisionContext: ReviewRevisionContext,
 ): CPipelineOptions {
   return {
     ...(options.critic ? { critic: options.critic } : {}),
@@ -797,6 +952,7 @@ function basePipelineOptions(
     ...(options.trace_seq_start !== undefined ? { trace_seq_start: options.trace_seq_start } : {}),
     ...(options.checkpoint_store ? { checkpoint_store: options.checkpoint_store } : {}),
     ...(options.semantic_planner ? { semantic_planner: options.semantic_planner } : {}),
+    review_revision_context: revisionContext,
     // READY cache is intentionally absent: reviewed candidates cannot consume a
     // historical release produced without the current review policy. A private
     // partial checkpoint only reuses stage-valid drafts; the completed candidate
@@ -814,6 +970,105 @@ function mergeInstructions(
     instruction.instruction_id,
     instruction,
   ])).values()]
+}
+
+/** 构造本轮外审修订身份（ReviewRevisionContext）。 */
+function buildReviewRevisionContext(
+  instructions: ContentRevisionInstruction[],
+  revisionRound: 0 | 1 | 2,
+  policyVersion: string,
+  parentHashes: ReviewRevisionContext["parent_candidate_hashes"],
+): ReviewRevisionContext {
+  const byAgent = (agent: "concept-tutor" | "code-lab" | "tiered-evaluator") =>
+    instructions.filter((instruction) => instruction.target_agent === agent)
+  const affectedAgents = (
+    ["concept-tutor", "code-lab", "tiered-evaluator"] as const
+  ).filter((agent) => byAgent(agent).length > 0)
+  return {
+    revision_round: revisionRound,
+    review_policy_version: policyVersion,
+    instruction_hash: contentHash(instructions),
+    instructions_by_agent: {
+      concept_tutor: byAgent("concept-tutor"),
+      code_lab: byAgent("code-lab"),
+      tiered_evaluator: byAgent("tiered-evaluator"),
+    },
+    affected_agents: affectedAgents,
+    parent_candidate_hashes: parentHashes,
+  }
+}
+
+async function extractCandidateHashes(
+  candidate: CPipelineResult,
+  secureStore: SecureArtifactStore,
+): Promise<ReviewRevisionContext["parent_candidate_hashes"]> {
+  const secureArtifacts = await Promise.all(candidate.secure_refs.map((ref) =>
+    secureStore.get(ref, {
+      principal: "role-c-pipeline",
+      run_id: candidate.generation_spec.run_id,
+    })))
+  const codeLabSecure = secureArtifacts.find((artifact) => artifact.artifact_type === "code_lab_secure")
+  const assessmentSecure = secureArtifacts.find((artifact) => artifact.artifact_type === "assessment_secure")
+  return {
+    concept: candidate.public_artifacts.concept_lesson
+      ? contentHash(candidate.public_artifacts.concept_lesson)
+      : "",
+    code_lab_public: candidate.public_artifacts.code_lab
+      ? contentHash(candidate.public_artifacts.code_lab)
+      : "",
+    code_lab_secure: codeLabSecure ? contentHash(codeLabSecure) : "",
+    assessment_public: candidate.public_artifacts.assessment
+      ? contentHash(candidate.public_artifacts.assessment)
+      : "",
+    assessment_secure: assessmentSecure ? contentHash(assessmentSecure) : "",
+  }
+}
+
+/** 生成 c.review.revision.applied trace，证明外审修订确实消费并改变了目标产物。 */
+function revisionAppliedEvents(
+  candidate: CPipelineResult,
+  revisionContext: ReviewRevisionContext,
+  parentHashes: ReviewRevisionContext["parent_candidate_hashes"],
+  currentHashes: ReviewRevisionContext["parent_candidate_hashes"],
+): CPipelineResult["trace_events"] {
+  if (revisionContext.revision_round === 0 || revisionContext.affected_agents.length === 0) return []
+  const events: CPipelineResult["trace_events"] = []
+  for (const agent of revisionContext.affected_agents) {
+    const pair = artifactHashPairForAgent(agent, parentHashes, currentHashes)
+    const changed = pair.before !== pair.after
+    events.push({
+      schema_version: "1.0",
+      seq: candidate.trace_events.reduce((max, event) => Math.max(max, event.seq), 0) + events.length + 1,
+      event_type: "c.review.revision.applied",
+      run_id: candidate.generation_spec.run_id,
+      agent: agent as "concept-tutor" | "code-lab" | "tiered-evaluator",
+      status: changed ? "success" : "blocked",
+      input_refs: [candidate.generation_spec.spec_id],
+      summary: changed
+        ? `外审修订已应用：${agent} 产物 ${pair.before.slice(0, 12)} → ${pair.after.slice(0, 12)}`
+        : `外审修订未产生变化：${agent} 产物 hash 与上轮一致`,
+      occurred_at: new Date().toISOString(),
+      versions: candidate.generation_spec.versions,
+      ...(changed ? { revision_applied: { before_hash: pair.before, after_hash: pair.after, instruction_hash: revisionContext.instruction_hash } } : {}),
+    })
+  }
+  return events
+}
+
+function artifactHashPairForAgent(
+  agent: "concept-tutor" | "code-lab" | "tiered-evaluator",
+  parentHashes: ReviewRevisionContext["parent_candidate_hashes"],
+  currentHashes: ReviewRevisionContext["parent_candidate_hashes"],
+): { before: string; after: string } {
+  if (agent === "concept-tutor") return { before: parentHashes.concept, after: currentHashes.concept }
+  if (agent === "code-lab") return {
+    before: contentHash({ public: parentHashes.code_lab_public, secure: parentHashes.code_lab_secure }),
+    after: contentHash({ public: currentHashes.code_lab_public, secure: currentHashes.code_lab_secure }),
+  }
+  return {
+    before: contentHash({ public: parentHashes.assessment_public, secure: parentHashes.assessment_secure }),
+    after: contentHash({ public: currentHashes.assessment_public, secure: currentHashes.assessment_secure }),
+  }
 }
 
 function mergeObjections<T extends { objection_id: string }>(

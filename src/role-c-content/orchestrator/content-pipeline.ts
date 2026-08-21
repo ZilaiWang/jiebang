@@ -7,7 +7,7 @@ import type {
   ConceptLessonArtifact,
 } from "../contracts/artifacts"
 import type { SecureArtifact, SecureArtifactStore } from "../security/secure-artifact-store"
-import type { BlockedReason, FailureReason } from "../contracts/common"
+import { contentHash, type BlockedReason, type FailureReason } from "../contracts/common"
 import type { AgentTraceEvent } from "../contracts/learning-evidence-event"
 import { newTraceEvent } from "../contracts/learning-evidence-event"
 import type { GenerationSpec } from "../contracts/generation-spec"
@@ -34,8 +34,15 @@ import type { CPipelineCheckpoint, CPipelineCheckpointStore } from "../reliabili
 import type { AgentTraceStore } from "../reliability/trace-store"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
 import { validatePublicArtifactNoSecrets } from "../validators/public-secure-leak-validator"
-import { buildResourceBlueprint } from "../planning/resource-blueprint"
+import { buildResourceBlueprint, type ResourceBlueprint } from "../planning/resource-blueprint"
+import { planAssessmentCapacity, type AssessmentCapacityPlan } from "../planning/assessment-capacity"
+import { planArtifactFeasibility } from "../planning/artifact-feasibility"
+import {
+  assessmentObservationKey,
+  STRUCTURAL_NOVELTY_WINDOW,
+} from "../providers/staged-generation"
 import type { RoundSemanticPlan, RoundSemanticPlanner } from "../planning/round-semantic-plan"
+import type { ReviewRevisionContext } from "../review/types"
 
 export interface CPipelineInput {
   generation_spec: GenerationSpec
@@ -76,6 +83,11 @@ export interface CPipelineOptions {
   semantic_planner?: RoundSemanticPlanner
   /** Internal continuation offset; callers normally leave this unset. */
   trace_seq_start?: number
+  /**
+   * 外审修订身份。外审修订轮（revision_round > 0）通过它参与 stage fingerprint，
+   * 保证"审核要求修订的 stage 一定会重新生成"，且旧检查点不得绕过修订意见。
+   */
+  review_revision_context?: ReviewRevisionContext
 }
 
 const activePipelineFlights = new Map<string, Promise<CPipelineResult>>()
@@ -178,6 +190,88 @@ export function pipelineCheckpointHash(input: CPipelineInput): string {
     next_round_context: input.next_round_context,
     prior_assessment_items: input.prior_assessment_items,
   })
+}
+
+/**
+ * 每个阶段单独计算 fingerprint（改进方案4 第 4.3 节）。
+ * base 不含外审修订意见（保持"普通故障恢复可复用成功阶段"的性质）；
+ * 各 stage 指纹额外并入"该阶段自身"的修订指令 hash 与（下游阶段的）concept 产物 id。
+ * 因此：assessment 被质疑只使 assessment 指纹变化，concept/code_lab 指纹不变，仍可复用。
+ */
+export function stageFingerprint(input: {
+  inputHash: string
+  blueprintId: string
+  stage: "concept" | "code_lab" | "assessment"
+  revisionContext?: ReviewRevisionContext
+  conceptArtifactId?: string
+}): string {
+  const base = contentHash({ inputHash: input.inputHash, blueprint: input.blueprintId })
+  if (input.stage === "concept") {
+    return contentHash({
+      base,
+      instructions: contentHash(input.revisionContext?.instructions_by_agent.concept_tutor ?? []),
+    })
+  }
+  const instructions = input.stage === "code_lab"
+    ? contentHash(input.revisionContext?.instructions_by_agent.code_lab ?? [])
+    : contentHash(input.revisionContext?.instructions_by_agent.tiered_evaluator ?? [])
+  return contentHash({
+    base,
+    concept: input.conceptArtifactId ?? "",
+    instructions,
+  })
+}
+
+/**
+ * 判断某阶段产物能否从检查点恢复。
+ * 外审修订轮（revision_round > 0）fail-closed：缺失 stage_fingerprints /
+ * revision_context 的旧检查点不得恢复目标阶段；指纹不匹配同样不恢复。
+ */
+export function canResumeStage(
+  checkpoint: CPipelineCheckpoint | undefined,
+  stage: "concept" | "code_lab" | "assessment",
+  fingerprint: string,
+  revisionContext: ReviewRevisionContext | undefined,
+): boolean {
+  if (!checkpoint) return false
+  const hasStageArtifact = stage === "concept"
+    ? checkpoint.concept !== undefined
+    : stage === "code_lab"
+      ? checkpoint.code_lab !== undefined
+      : checkpoint.assessment !== undefined
+  if (!hasStageArtifact) return false
+  if (!revisionContext || revisionContext.revision_round === 0) return true
+  const affected = stage === "concept"
+    ? revisionContext.instructions_by_agent.concept_tutor.length > 0
+    : stage === "code_lab"
+      ? revisionContext.instructions_by_agent.code_lab.length > 0
+        || revisionContext.instructions_by_agent.concept_tutor.length > 0
+      : revisionContext.instructions_by_agent.tiered_evaluator.length > 0
+        || revisionContext.instructions_by_agent.concept_tutor.length > 0
+  const storedFingerprint = checkpoint.stage_fingerprints?.[stage]
+  // Legacy checkpoints may still provide a valid base candidate for an
+  // unaffected stage. A stage targeted by this review round (or downstream of
+  // a concept revision) must fail closed when no stage identity is available.
+  if (!storedFingerprint) return !affected
+  return storedFingerprint === fingerprint
+}
+
+/** 构造写入检查点的修订身份 + 阶段指纹字段。 */
+function checkpointRevisionFields(
+  fingerprints: Partial<CPipelineCheckpoint["stage_fingerprints"]>,
+  revisionContext: ReviewRevisionContext | undefined,
+): Pick<CPipelineCheckpoint, "stage_fingerprints"> & Pick<CPipelineCheckpoint, "revision_context"> {
+  return {
+    stage_fingerprints: fingerprints as CPipelineCheckpoint["stage_fingerprints"],
+    ...(revisionContext
+      ? {
+          revision_context: {
+            revision_round: revisionContext.revision_round,
+            instruction_hash: revisionContext.instruction_hash,
+          },
+        }
+      : {}),
+  }
 }
 
 function recoveryForAgent(
@@ -307,6 +401,78 @@ function validateGenerationRecovery(
   return []
 }
 
+/** 从 pipeline input 构造 feasibility 输入：事实数取 required_fact_ids，事实内容从 evidence_pack 提取。 */
+function buildFeasibilityInput(input: CPipelineInput, capacity: AssessmentCapacityPlan): Parameters<typeof planArtifactFeasibility>[0] {
+  const factsByRef = new Map<string, { content: string }>()
+  for (const item of input.evidence_pack.results) {
+    for (const fact of item.facts ?? []) {
+      factsByRef.set(`${fact.source_id}:${fact.fact_id}`, { content: fact.content })
+    }
+  }
+  return {
+    objectives: input.generation_spec.targets.map((target) => ({
+      objective_id: target.objective_id,
+      observable_behavior: target.observable_behavior,
+      importance: target.importance,
+      fact_refs: target.required_fact_ids.map((factId) => ({ source_id: target.source_id, fact_id: factId })),
+      facts: target.required_fact_ids.flatMap((factId) => {
+        const fact = factsByRef.get(`${target.source_id}:${factId}`)
+        return fact ? [fact] : []
+      }),
+    })),
+    capacity,
+  }
+}
+
+/**
+ * 从 pipeline input 估算测评容量。available_facts 取该 objective 绑定的事实数
+ * （required_fact_ids）；used_structures 取历史里同 observation_key 的
+ * 去重结构数（operation + reasoning + representation + context + answer form）。
+ */
+function planAssessmentCapacityForPipeline(input: CPipelineInput): AssessmentCapacityPlan {
+  const spec = input.generation_spec
+  const history = input.prior_assessment_items ?? []
+  const usedStructures = new Map<string, Set<string>>()
+  const seenByObservation = new Map<string, number>()
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index]!
+    const key = item.observation_key ?? item.objective_id
+    const seen = seenByObservation.get(key) ?? 0
+    if (seen >= STRUCTURAL_NOVELTY_WINDOW) continue
+    seenByObservation.set(key, seen + 1)
+    if (!item.structure_meta) continue
+    const structureSignature = [
+      item.structure_meta.operation,
+      item.structure_meta.reasoning_pattern,
+      item.structure_meta.representation,
+      item.structure_meta.context_family,
+      item.structure_meta.answer_form,
+    ].join("\u0000")
+    const set = usedStructures.get(key) ?? new Set<string>()
+    set.add(structureSignature)
+    usedStructures.set(key, set)
+  }
+  return planAssessmentCapacity({
+    requested: {
+      tier_1_count: spec.assessment_blueprint.tier_1_count,
+      tier_2_count: spec.assessment_blueprint.tier_2_count,
+      tier_3_count: spec.assessment_blueprint.tier_3_count,
+      required_modalities: [...spec.assessment_blueprint.required_modalities],
+    },
+    objectives: spec.targets.map((target) => {
+      const observationKey = assessmentObservationKey(target)
+      return {
+        objective_id: target.objective_id,
+        observable_behavior: target.observable_behavior,
+        importance: target.importance,
+        available_facts: target.required_fact_ids.length,
+        used_structures: (usedStructures.get(observationKey)
+          ?? usedStructures.get(target.objective_id))?.size ?? 0,
+      }
+    }),
+  })
+}
+
 async function runCPipelineCore(
   input: CPipelineInput,
   agents: RoleCAgents,
@@ -429,16 +595,87 @@ async function runCPipelineCore(
     validator_results: [{ validator: "spec-evidence", ok: true, issue_count: 0 }],
   })
   state = transitionCState(state, "GENERATING")
+
+  // 测评容量规划：生成前先算"证据 + novelty 约束能支撑多少道题"。
+  // 连 core objective 都覆盖不了 → 直接 blocked（要求 B replan），而不是让生成模型 retry 到死；
+  // 可行题量不足但能覆盖 core → 缩减蓝图，避免 CONTENT_NOT_NOVEL 死循环。
+  const capacityPlan = planAssessmentCapacityForPipeline(input)
+
+  // 生成前可行性判断：evidence capability 不足以支撑冻结 behavior 时，
+  // 直接 need_evidence（A 补证据）或 need_spec（B 降级），不调用生成模型。
+  const feasibilityPlan = planArtifactFeasibility(buildFeasibilityInput(input, capacityPlan))
+  if (feasibilityPlan.status === "need_evidence") {
+    const missing = feasibilityPlan.objectives
+      .flatMap((objective) => objective.missing_support.map((gap) => `[${objective.objective_id}] ${gap}`))
+    const blockedReason: BlockedReason = {
+      code: "BLOCKED_MISSING_EVIDENCE",
+      message: "证据能力不足：当前证据无法支撑冻结的 observable behavior，需要 A 补证据或 B 降低行为要求",
+      details: missing.slice(0, 8),
+    }
+    pushTrace({
+      event_type: "c.pipeline.blocked",
+      run_id: input.generation_spec.run_id,
+      status: "blocked",
+      input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id],
+      summary: blockedReason.message,
+      validator_results: [{ validator: "artifact-feasibility", ok: false, issue_count: missing.length }],
+    })
+    return blockedResult(input.generation_spec, state, trace, blockedReason)
+  }
+
+  if (capacityPlan.decision === "REPLAN") {
+    const blockedReason: BlockedReason = {
+      code: "BLOCKED_MISSING_EVIDENCE",
+      message: "测评容量不足：当前证据与历史约束无法覆盖 core objective，需要 B 重新规划路径或补证据",
+      details: [
+        `requested=${capacityPlan.requested_items}`,
+        `feasible=${capacityPlan.feasible_items}`,
+        `limiting=${capacityPlan.limiting_factors.join(",") || "none"}`,
+      ],
+    }
+    pushTrace({
+      event_type: "c.pipeline.blocked",
+      run_id: input.generation_spec.run_id,
+      status: "blocked",
+      input_refs: [input.generation_spec.spec_id, input.evidence_pack.retrieval_id],
+      summary: blockedReason.message,
+      validator_results: [{ validator: "assessment-capacity", ok: false, issue_count: 1 }],
+    })
+    return blockedResult(input.generation_spec, state, trace, blockedReason)
+  }
+  if (capacityPlan.decision === "REDUCE" && capacityPlan.adjusted_blueprint) {
+    pushTrace({
+      event_type: "c.capacity.reduced",
+      run_id: input.generation_spec.run_id,
+      status: "success",
+      input_refs: [input.generation_spec.spec_id],
+      summary: `测评容量不足，蓝图题量 ${capacityPlan.requested_items} → ${capacityPlan.feasible_items}（${capacityPlan.limiting_factors.join(",")}）`,
+    })
+  }
+
   const resourceBlueprint = buildResourceBlueprint(
     input.generation_spec,
     input.evidence_pack,
+    {
+      assessment_blueprint: capacityPlan.adjusted_blueprint
+        ?? input.generation_spec.assessment_blueprint,
+      assessment_capacity: capacityPlan,
+    },
   )
 
   let checkpoint: CPipelineCheckpoint | undefined
   try {
     const loaded = await options.checkpoint_store?.load(inputHash)
-    checkpoint = loaded && checkpointIssues(loaded, input, inputHash).length === 0 ? loaded : undefined
+    checkpoint = loaded && checkpointIssues(loaded, input, inputHash, resourceBlueprint).length === 0 ? loaded : undefined
   } catch { checkpoint = undefined }
+
+  const revisionContext = options.review_revision_context
+  const conceptFingerprint = stageFingerprint({
+    inputHash,
+    blueprintId: resourceBlueprint.blueprint_id,
+    stage: "concept",
+    revisionContext,
+  })
 
   let roundSemanticPlan: RoundSemanticPlan | undefined = checkpoint?.round_semantic_plan
   if (!roundSemanticPlan && options.semantic_planner) {
@@ -486,15 +723,18 @@ async function runCPipelineCore(
   })
   let concept: ConceptLessonArtifact
   try {
-    concept = checkpoint?.concept ?? await agents.concept_tutor.generate({
-      generation_spec: input.generation_spec,
-      evidence_pack: input.evidence_pack,
-      next_round_context: input.next_round_context,
-      resource_blueprint: resourceBlueprint,
-      round_semantic_plan: roundSemanticPlan,
-      generation_recovery: recoveryForAgent(input, "concept"),
-    })
-    if (!checkpoint?.concept && concept.status === "ready") {
+    const resumeConcept = canResumeStage(checkpoint, "concept", conceptFingerprint, revisionContext)
+    concept = resumeConcept
+      ? checkpoint!.concept!
+      : await agents.concept_tutor.generate({
+          generation_spec: input.generation_spec,
+          evidence_pack: input.evidence_pack,
+          next_round_context: input.next_round_context,
+          resource_blueprint: resourceBlueprint,
+          round_semantic_plan: roundSemanticPlan,
+          generation_recovery: recoveryForAgent(input, "concept"),
+        })
+    if (!resumeConcept && concept.status === "ready") {
       try {
         await options.checkpoint_store?.save({
           input_hash: inputHash,
@@ -502,6 +742,7 @@ async function runCPipelineCore(
           concept,
           metadata: checkpointMetadata,
           ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+          ...checkpointRevisionFields({ concept: conceptFingerprint }, revisionContext),
         })
       } catch { /* checkpoint is non-authoritative */ }
     }
@@ -550,13 +791,31 @@ async function runCPipelineCore(
 
   let labPair: CodeLabArtifactPair
   let assessmentPair: AssessmentArtifactPair
+  const codeLabFingerprint = stageFingerprint({
+    inputHash,
+    blueprintId: resourceBlueprint.blueprint_id,
+    stage: "code_lab",
+    revisionContext,
+    conceptArtifactId: concept.artifact_id,
+  })
+  const assessmentFingerprint = stageFingerprint({
+    inputHash,
+    blueprintId: resourceBlueprint.blueprint_id,
+    stage: "assessment",
+    revisionContext,
+    conceptArtifactId: concept.artifact_id,
+  })
   const resumedBranches = checkpoint?.stage === "branches_ready"
     && checkpoint.code_lab !== undefined
     && checkpoint.assessment !== undefined
+    && canResumeStage(checkpoint, "code_lab", codeLabFingerprint, revisionContext)
+    && canResumeStage(checkpoint, "assessment", assessmentFingerprint, revisionContext)
   const resumedCodeLab = checkpoint?.code_lab !== undefined
-    && (checkpoint.stage === "code_lab_ready" || resumedBranches)
+    && (checkpoint.stage === "code_lab_ready" || checkpoint.stage === "branches_ready")
+    && canResumeStage(checkpoint, "code_lab", codeLabFingerprint, revisionContext)
   const resumedAssessment = checkpoint?.assessment !== undefined
-    && (checkpoint.stage === "assessment_ready" || resumedBranches)
+    && (checkpoint.stage === "assessment_ready" || checkpoint.stage === "branches_ready")
+    && canResumeStage(checkpoint, "assessment", assessmentFingerprint, revisionContext)
   if (resumedBranches) {
     labPair = checkpoint!.code_lab!
     assessmentPair = checkpoint!.assessment!
@@ -627,6 +886,7 @@ async function runCPipelineCore(
             code_lab: labOutcome.value,
             metadata: checkpointMetadata,
             ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+            ...checkpointRevisionFields({ concept: conceptFingerprint, code_lab: codeLabFingerprint }, revisionContext),
           })
         } catch { /* checkpoint is non-authoritative */ }
       } else if (assessmentOutcome.status === "fulfilled" && assessmentPairReady(assessmentOutcome.value) && !resumedAssessment) {
@@ -638,6 +898,7 @@ async function runCPipelineCore(
             assessment: assessmentOutcome.value,
             metadata: checkpointMetadata,
             ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+            ...checkpointRevisionFields({ concept: conceptFingerprint, assessment: assessmentFingerprint }, revisionContext),
           })
         } catch { /* checkpoint is non-authoritative */ }
       }
@@ -675,6 +936,7 @@ async function runCPipelineCore(
             assessment: assessmentPair,
             metadata: checkpointMetadata,
             ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+            ...checkpointRevisionFields({ concept: conceptFingerprint, assessment: assessmentFingerprint }, revisionContext),
           })
         } catch { /* checkpoint is non-authoritative */ }
       }
@@ -711,6 +973,7 @@ async function runCPipelineCore(
             code_lab: labPair,
             metadata: checkpointMetadata,
             ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+            ...checkpointRevisionFields({ concept: conceptFingerprint, code_lab: codeLabFingerprint }, revisionContext),
           })
         } catch { /* checkpoint is non-authoritative */ }
       }
@@ -764,6 +1027,7 @@ async function runCPipelineCore(
         assessment: assessmentPair,
         metadata: checkpointMetadata,
         ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+        ...checkpointRevisionFields({ concept: conceptFingerprint, code_lab: codeLabFingerprint, assessment: assessmentFingerprint }, revisionContext),
       })
     } catch { /* checkpoint is non-authoritative */ }
   }
@@ -1090,11 +1354,13 @@ function checkpointIssues(
   checkpoint: CPipelineCheckpoint,
   input: CPipelineInput,
   inputHash: string,
+  expectedBlueprint?: ResourceBlueprint,
 ): string[] {
   const issues: string[] = []
   if (checkpoint.input_hash !== inputHash) issues.push("checkpoint input_hash 不一致")
   if (checkpoint.metadata) {
-    const blueprint = buildResourceBlueprint(input.generation_spec, input.evidence_pack)
+    const blueprint = expectedBlueprint
+      ?? buildResourceBlueprint(input.generation_spec, input.evidence_pack)
     if (checkpoint.metadata.spec_id !== input.generation_spec.spec_id
       || checkpoint.metadata.blueprint_id !== blueprint.blueprint_id
       || checkpoint.metadata.model_id !== input.generation_spec.versions.model_config_hash
@@ -1107,7 +1373,8 @@ function checkpointIssues(
   }
   if (checkpoint.round_semantic_plan
     && (checkpoint.round_semantic_plan.spec_id !== input.generation_spec.spec_id
-      || checkpoint.round_semantic_plan.blueprint_id !== buildResourceBlueprint(input.generation_spec, input.evidence_pack).blueprint_id)) {
+      || checkpoint.round_semantic_plan.blueprint_id !== (expectedBlueprint
+        ?? buildResourceBlueprint(input.generation_spec, input.evidence_pack)).blueprint_id)) {
     issues.push("checkpoint 语义规划依赖已失效")
   }
   if (checkpoint.stage === "semantic_plan_ready" && !checkpoint.round_semantic_plan) {

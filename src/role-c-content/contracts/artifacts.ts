@@ -240,6 +240,8 @@ export interface AssessmentItemPublic {
   variant_id: string
   display_no: number
   objective_id: string
+  /** 跨路径重规划保持稳定的测量语义键；用于按能力而不是临时 objective_id 管理结构复测。 */
+  observation_key?: string
   tier: 1 | 2 | 3
   modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
   prompt: string

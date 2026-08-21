@@ -18,6 +18,7 @@ import { stableId, type CitationRef } from "../contracts/common"
 import type { RagEvidencePack } from "../contracts/evidence-pack"
 import type { GenerationSpec } from "../contracts/generation-spec"
 import { ModelOutputValidationError } from "../contracts/model-gateway"
+import { PLATFORM_PYTHON_IMPORT_ALLOWLIST } from "../security/python-static-analyzer"
 import {
   modalityMeasuresBehavior,
   preferredModalityForBehavior,
@@ -126,6 +127,7 @@ export interface AssessmentItemPlan {
   variant_id: string
   display_no: number
   objective_id: string
+  observation_key: string
   tier: 1 | 2 | 3
   modality: AssessmentItemPublic["modality"]
   max_score: number
@@ -583,15 +585,34 @@ export function deriveCodeLabExecutionMode(
 export function freezeCodeLabExecutionContract(
   contract: ExecutionContract,
   mode: CodeLabExecutionMode,
+  taskContract?: {
+    learner_action: "recall_fact" | "implement_program" | "implement_function"
+    input_form: "function_arguments" | "stdin_lines" | "none"
+  },
 ): ExecutionContract {
   const frozen: ExecutionContract = structuredClone(contract)
+  const platformImports = new Set<string>(PLATFORM_PYTHON_IMPORT_ALLOWLIST)
   frozen.language = "python"
   frozen.execution_mode = mode
+  // Import capability is a platform-owned security boundary. The model may
+  // request modules needed by its task, but unsupported or duplicate entries
+  // never become part of the executable contract.
+  frozen.allowed_imports = [...new Set((Array.isArray(frozen.allowed_imports)
+    ? frozen.allowed_imports
+    : [])
+    .map((entry) => entry.split(".")[0]!.trim())
+    .filter((entry) => platformImports.has(entry)))]
   if (mode === "stdin_stdout") {
     delete frozen.entry_point
     // stdin_stdout 的输出就是标准输出文本，程序确定 kind=string，
     // 避免模型把"输出平均分"等写成数值语义，导致 hidden_tests[].expected 类型与输出合同错配。
     frozen.output_contract.kind = "string"
+    if (taskContract?.input_form === "none") {
+      frozen.input_contract = {
+        type: "none",
+        constraints: ["不读取标准输入；学习者只填写当前证据支持的事实文本"],
+      }
+    }
   }
   frozen.resource_limits = {
     timeout_ms: clampInt(frozen.resource_limits.timeout_ms, 100, 5000, 1000),
@@ -644,6 +665,11 @@ export function buildCodeLabObjectivePlan(
 export function validateCodeLabPublicAuthorAgainstPlan(
   payload: CodeLabPublicAuthorPayload,
   plan: CodeLabObjectivePlan[],
+  taskContract?: {
+    learner_action: "recall_fact" | "implement_program" | "implement_function"
+    learner_owned_region: "fact_literal" | "program_logic" | "function_body"
+    input_form: "function_arguments" | "stdin_lines" | "none"
+  },
 ): string[] {
   const issues: string[] = []
   if (payload.objectives.length !== plan.length) {
@@ -659,7 +685,25 @@ export function validateCodeLabPublicAuthorAgainstPlan(
         `objectives[${index}].public_test.input 必须使用 {"args": [...], "kwargs"?: {...}} 调用封装`,
       )
     }
+    if (taskContract?.learner_action === "recall_fact"
+      && !isEmptyProgramInput(entry.public_test.input)) {
+      issues.push(`objectives[${index}].public_test.input recall_fact 任务必须为空输入`)
+    }
   })
+  if (taskContract?.learner_action === "recall_fact") {
+    const executable = payload.starter_code
+      .split(/\r?\n/u)
+      .map((line) => line.replace(/#.*$/u, "").trim())
+      .filter(Boolean)
+      .join("\n")
+    if (taskContract.input_form !== "none"
+      || /\binput\s*\(|^(?:if|elif|else|for|while|match|case)\b/mu.test(executable)) {
+      issues.push("starter_code recall_fact 任务不得把输入解析、条件或循环留给学习者")
+    }
+    if (!/TODO|待填|补全/u.test(payload.starter_code)) {
+      issues.push("starter_code recall_fact 任务必须明确标出事实文本待填区")
+    }
+  }
   issues.push(...codeLabExecutionContractIssues(
     payload.execution_contract,
     "execution_contract",
@@ -672,6 +716,10 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     payload.starter_code,
   ))
   return issues
+}
+
+function isEmptyProgramInput(value: unknown): boolean {
+  return value === "" || value == null
 }
 
 export function materializeCodeLabPublicAuthorPayload(
@@ -1300,6 +1348,15 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
   return tiers.map((tier, index) => {
     const objective = assignments[index]
     const modality = modalities[index]
+    const objectiveOccurrence = assignments
+      .slice(0, index)
+      .filter((entry) => entry.objective_id === objective.objective_id)
+      .length
+    const plannedFactIds = assessmentFactIdsForItem(
+      objective.required_fact_ids,
+      tier,
+      objectiveOccurrence,
+    )
     const identity = { spec_id: spec.spec_id, index, objective_id: objective.objective_id, tier, modality }
     return {
       item_id: stableId("ITEM", identity),
@@ -1307,6 +1364,7 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
       variant_id: stableId("VARIANT", { ...identity, seed: spec.policies.seed }),
       display_no: index + 1,
       objective_id: objective.objective_id,
+      observation_key: assessmentObservationKey(objective),
       tier,
       modality,
       max_score: tier === 1 ? 1 : tier === 2 ? 2 : 4,
@@ -1320,12 +1378,41 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
             value: spec.learner_adaptation.preferred_contexts[0],
           }
         : { kind: "neutral_context" as const },
-      citations: objective.required_fact_ids.map((factId) => ({
+      citations: plannedFactIds.map((factId) => ({
         source_id: objective.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
       })),
     }
+  })
+}
+
+/**
+ * Give each item the smallest evidence surface that can support its tier.
+ * Tier 1 rotates one fact, Tier 2 may combine two, and Tier 3 may synthesize
+ * the whole target. This prevents parallel authors from all writing the same
+ * all-facts question while preserving AI-authored task content.
+ */
+export function assessmentFactIdsForItem(
+  factIds: string[],
+  tier: 1 | 2 | 3,
+  objectiveOccurrence: number,
+): string[] {
+  if (factIds.length <= 1 || tier === 3) return [...factIds]
+  const start = objectiveOccurrence % factIds.length
+  const count = tier === 1 ? 1 : Math.min(2, factIds.length)
+  return Array.from({ length: count }, (_, offset) =>
+    factIds[(start + offset) % factIds.length]!)
+}
+
+/** 同一知识来源上的同一可观察行为在路径/轮次变化后仍保持同一测量语义。 */
+export function assessmentObservationKey(objective: Pick<
+  GenerationSpec["targets"][number],
+  "source_id" | "observable_behavior"
+>): string {
+  return stableId("OBSERVATION", {
+    source_id: objective.source_id,
+    observable_behavior: objective.observable_behavior,
   })
 }
 
@@ -1456,6 +1543,12 @@ export function projectAssessmentPublicAuthorPayload(
 }
 
 /**
+ * 结构级去重的时间/数量窗口：同一 observation_key 内最近 N 条历史参与结构去重。
+ * 更早的历史（纵向复测）与跨 observation_key 的结构复用不 hard block。
+ */
+export const STRUCTURAL_NOVELTY_WINDOW = 5
+
+/**
  * Rejects a verbatim or cosmetically reformatted reuse of an already published
  * public question. Similar questions are allowed, but an objective identity
  * change cannot make an otherwise identical public task new.
@@ -1473,27 +1566,42 @@ export function validateAssessmentNovelty(
     assessmentItemSignature(item),
     `${item.form_id}:${item.item_id}`,
   ]))
-  // 任务结构签名：只换数字/列表值不算真正变式，remediate/reinforce 必须改变任务结构。
-  const priorByStructure = new Map(history.flatMap((item) => item.structure_meta
-    ? []
-    : [[assessmentStructureSignature(item), `${item.form_id}:${item.item_id}`] as const]))
+  // 旧历史没有 structure_meta 时仍按 observation_key + 最近窗口约束文本结构，
+  // 不能退回成跨所有目标、永久 hard 的统一结构门禁。
+  const priorByStructure = new Map<string, string>()
   // 结构元数据签名（GPT 评审）：模型命制时显式填写的
-  // (objective_id + operation + reasoning_pattern + representation +
-  // context_family + answer_form)。有元数据时它是判重的权威依据；
-  // 文本结构签名只作为旧题（无元数据）的辅助。
-  const priorByMeta = new Map(
-    history.flatMap((item) => {
-      const signature = item.structure_meta
-        ? assessmentNoveltyTaskSignature(item.objective_id, item.structure_meta)
-        : null
-      return signature
-        ? [[signature, `${item.form_id}:${item.item_id}`] as const]
-        : []
-    }),
-  )
+  // (operation + reasoning_pattern + representation + context_family + answer_form)。
+  // 结构级去重按 observation_key 分组 + 最近窗口：同一测量目标内、最近窗口内
+  // 的结构重复 hard；更早的历史（纵向复测）与跨 observation_key 的结构复用均允许。
+  const priorByMeta = new Map<string, string>()
+  {
+    const seenByObservation = new Map<string, number>()
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const item = history[i]!
+      const observationKey = item.observation_key ?? item.objective_id
+      const count = seenByObservation.get(observationKey) ?? 0
+      if (count >= STRUCTURAL_NOVELTY_WINDOW) continue
+      seenByObservation.set(observationKey, count + 1)
+      const identity = `${item.form_id}:${item.item_id}`
+      if (item.structure_meta) {
+        const key = `${observationKey}\u0000${assessmentNoveltyStructureSignature(item.structure_meta)}`
+        if (!priorByMeta.has(key)) priorByMeta.set(key, identity)
+      } else {
+        const key = `${observationKey}\u0000${assessmentStructureSignature(item)}`
+        if (!priorByStructure.has(key)) priorByStructure.set(key, identity)
+      }
+    }
+  }
   const currentPrompts = new Map<string, number>()
   const current = new Map<string, number>()
   const currentStructures = new Map<string, number>()
+  const currentMetaStructures = new Map<string, number>()
+  const currentPromptsByObservation: Array<{
+    index: number
+    modality: string
+    observationKey: string
+    surface: string
+  }> = []
   payload.items.forEach((item, index) => {
     const promptSignature = assessmentPromptSignature(item)
     const signature = assessmentItemSignature({
@@ -1509,13 +1617,15 @@ export function validateAssessmentNovelty(
       starter_code: item.starter_code,
     })
     const metaSignature = item.structure_meta
-      ? assessmentNoveltyTaskSignature(item.objective_id, item.structure_meta)
+      ? `${item.observation_key ?? item.objective_id}\u0000${assessmentNoveltyStructureSignature(item.structure_meta)}`
       : null
     const priorIdentity = priorByPrompt.get(promptSignature) ?? priorBySignature.get(signature)
     if (priorIdentity) {
       issues.push(`items[${index}] 与已发布题目 ${priorIdentity} 重复，必须由模型重新命制题面和任务材料`)
     }
-    const priorStructure = metaSignature ? undefined : priorByStructure.get(structureSignature)
+    const priorStructure = metaSignature
+      ? undefined
+      : priorByStructure.get(`${item.observation_key ?? item.objective_id}\u0000${structureSignature}`)
     const priorMeta = metaSignature ? priorByMeta.get(metaSignature) : undefined
     if (priorMeta && priorMeta !== priorIdentity) {
       issues.push(`items[${index}] 与已发布题目 ${priorMeta} 任务结构重复（目标/操作/推理/表示/情境/作答全部一致），必须生成新的任务变式`)
@@ -1535,21 +1645,87 @@ export function validateAssessmentNovelty(
       issues.push(`items[${index}] 与本卷 items[${sameStructureIndex}] 任务结构重复（仅数字/取值不同）`)
     }
     if (!metaSignature) currentStructures.set(structureSignature, index)
+    if (item.structure_meta) {
+      const localMetaSignature = assessmentNoveltyStructureSignature(item.structure_meta)
+      const sameMetaIndex = currentMetaStructures.get(localMetaSignature)
+      if (sameMetaIndex !== undefined && sameMetaIndex !== samePromptIndex) {
+        issues.push(`items[${index}] 与本卷 items[${sameMetaIndex}] 任务结构重复（操作/推理/表示/情境/作答全部一致）`)
+      } else {
+        currentMetaStructures.set(localMetaSignature, index)
+      }
+    }
+    const observationKey = item.observation_key ?? item.objective_id
+    const nearDuplicate = currentPromptsByObservation.find((prior) =>
+      prior.modality === item.modality
+      && prior.observationKey === observationKey
+      && assessmentPromptNearDuplicate(
+        prior.surface,
+        assessmentItemSimilaritySurface(item),
+      ))
+    if (nearDuplicate
+      && samePromptIndex === undefined
+      && sameFormIndex === undefined
+      && sameStructureIndex === undefined) {
+      issues.push(
+        `items[${index}] 与本卷 items[${nearDuplicate.index}] 题干语义结构近乎重复，不能仅改写措辞或 structure_meta`,
+      )
+    }
+    currentPromptsByObservation.push({
+      index,
+      modality: item.modality,
+      observationKey,
+      surface: assessmentItemSimilaritySurface(item),
+    })
   })
   return issues
 }
 
+function assessmentItemSimilaritySurface(item: {
+  prompt: string
+  options?: Array<{ text: string }>
+  starter_code?: string
+}): string {
+  return [
+    item.prompt,
+    ...(item.options?.map((option) => option.text) ?? []),
+    item.starter_code ?? "",
+  ].join("\n")
+}
+
 /**
- * Cross-round novelty rejects the same task family in the same context. A new
- * context, representation or answer form is a legitimate near variant; merely
- * changing literal values remains covered by the legacy surface signature.
+ * structure_meta 是模型描述，不能单独作为去重事实。这里用实际题干
+ * 的字符二元组覆盖度识别“大段相同、只换问法”的同卷近重复。
+ * 仅在同 observation + 同题型内使用，避免跨目标误伤。
  */
-function assessmentNoveltyTaskSignature(
-  objectiveId: string,
+export function assessmentPromptNearDuplicate(left: string, right: string): boolean {
+  const a = normalizeAssessmentSurface(left)
+  const b = normalizeAssessmentSurface(right)
+  if (a.length < 24 || b.length < 24) return false
+  const aGrams = characterNgrams(a, 2)
+  const bGrams = characterNgrams(b, 2)
+  if (aGrams.size === 0 || bGrams.size === 0) return false
+  let shared = 0
+  for (const gram of aGrams) if (bGrams.has(gram)) shared += 1
+  return shared / Math.min(aGrams.size, bGrams.size) >= 0.84
+}
+
+function characterNgrams(value: string, size: number): Set<string> {
+  const grams = new Set<string>()
+  for (let index = 0; index <= value.length - size; index += 1) {
+    grams.add(value.slice(index, index + size))
+  }
+  return grams
+}
+
+/**
+ * 任务结构签名（不含 objective_id）：operation + reasoning_pattern +
+ * representation + context_family + answer_form。配合 observation_key 分组，
+ * 结构级去重只在同一测量目标内生效；跨测量目标允许结构复用。
+ */
+function assessmentNoveltyStructureSignature(
   meta: AssessmentStructureMeta,
 ): string {
   return [
-    objectiveId,
     normalizeAssessmentSurface(meta.operation),
     normalizeAssessmentSurface(meta.reasoning_pattern),
     normalizeAssessmentSurface(meta.representation),
@@ -1632,6 +1808,7 @@ export function materializeAssessmentPublicAuthorPayload(
       variant_id: expected.variant_id,
       display_no: expected.display_no,
       objective_id: expected.objective_id,
+      observation_key: expected.observation_key,
       tier: expected.tier,
       modality: expected.modality,
       max_score: expected.max_score,

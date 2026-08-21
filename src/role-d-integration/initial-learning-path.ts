@@ -533,9 +533,15 @@ function selectRequiredFactIds(
         : score, 0),
   })).sort((left, right) =>
     right.score - left.score || left.index - right.index)
-  const matched = ranked.filter((fact) => fact.score > 0).slice(0, 3)
-  return (matched.length > 0 ? matched : ranked.slice(0, 1))
-    .map((fact) => fact.factId)
+  // A structured source is already B's selected teaching target.  Freezing
+  // only the top lexical match made the downstream behavior contract
+  // impossible surprisingly often: e.g. a target could require apply/create
+  // while C was allowed to see only the source's introductory definition.
+  // Keep relevance ranking for a stable order, but bind the complete set of
+  // facts returned for that selected source.  This is still a narrow,
+  // source-scoped evidence boundary and lets the C feasibility planner judge
+  // the real capability of the source instead of an accidental first fact.
+  return ranked.map((fact) => fact.factId)
 }
 
 function extractIdentifierTerms(text: string): string[] {

@@ -162,7 +162,6 @@ export function validateAssessmentPublicSecureSeparation(
     const suitePublicValue = linkedPublicItems.length > 0
       ? linkedPublicItems
       : publicPayload.items
-    const suitePublicText = JSON.stringify(suitePublicValue)
     const suitePublicStrings = assessmentLearnerStrings(suitePublicValue)
     const suiteLearnerText = suitePublicStrings.join("\n")
     if (publicText.includes(suite.test_suite_id)) {
@@ -198,9 +197,14 @@ export function validateAssessmentPublicSecureSeparation(
           `公开测评包含隐藏测试 ${test.test_id} 的输入值`,
         ))
       }
-      if (hasPrivateCase && containsExpectedSecret(
+      // A hidden expected value is not secret by itself: many legitimate tasks
+      // publicly describe the output domain or even a possible output. It is a
+      // hidden-case leak only when one learner-visible surface discloses the
+      // private input and its expected result together. The exact hidden-input
+      // check above remains independently blocking.
+      if (hasPrivateCase && containsPrivateCasePair(
         suitePublicStrings,
-        suitePublicText,
+        test.input,
         test.expected,
       )) {
         issues.push(issue(
@@ -212,6 +216,16 @@ export function validateAssessmentPublicSecureSeparation(
     }
   }
   return { ok: issues.length === 0, issues }
+}
+
+function containsPrivateCasePair(
+  publicStrings: string[],
+  input: unknown,
+  expected: unknown,
+): boolean {
+  return publicStrings.some((text) =>
+    containsValueSecret([text], text, input)
+      && containsExpectedSecret([text], text, expected))
 }
 
 function collectStrings(value: unknown): string[] {

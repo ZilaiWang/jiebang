@@ -124,6 +124,14 @@ describe("freezeCodeLabExecutionContract（确定性字段冻结）", () => {
     expect(frozen.input_contract.constraints).toEqual(["输入一行文本"])
     expect(frozen.output_contract.constraints).toEqual(["输出一行文本"])
   })
+
+  test("平台在 schema 校验前移除非法和重复的导入能力", () => {
+    const frozen = freezeCodeLabExecutionContract({
+      ...modelContract,
+      allowed_imports: ["sys", "math", "math.sqrt", "os", "statistics"],
+    }, "stdin_stdout")
+    expect(frozen.allowed_imports).toEqual(["math", "statistics"])
+  })
 })
 
 describe("explicitFunctionTask 门禁：教学讲解不被误杀", () => {
@@ -185,6 +193,24 @@ describe("explicitFunctionTask 门禁：教学讲解不被误杀", () => {
       plan,
     )
     expect(issues.filter((i) => i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH"))).toEqual([])
+  })
+
+  test("recall_fact 只允许空输入的事实文本待填区", () => {
+    const contract = {
+      learner_action: "recall_fact" as const,
+      learner_owned_region: "fact_literal" as const,
+      input_form: "none" as const,
+    }
+    const invalid = payloadWith("根据输入关键词选择输出。")
+    invalid.starter_code = "keyword = input()\n# TODO: 补全 if/elif\n"
+    expect(validateCodeLabPublicAuthorAgainstPlan(invalid, plan, contract).some((issue) =>
+      issue.includes("recall_fact"))).toBe(true)
+
+    const valid = payloadWith("只将 TODO 处替换为证据中的事实短句。")
+    valid.execution_contract.input_contract = { type: "none", constraints: [] }
+    valid.starter_code = "answer = \"TODO: 填写事实\"\nprint(answer)\n"
+    valid.objectives[0]!.public_test.input = ""
+    expect(validateCodeLabPublicAuthorAgainstPlan(valid, plan, contract)).toEqual([])
   })
 })
 

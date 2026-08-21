@@ -28,24 +28,26 @@ export interface CodeLabModelInput {
     }>
     misconceptions: NonNullable<CodeLabRequest["concept_artifact"]["payload"]>["misconceptions"]
   }
-  next_round_context?: CodeLabRequest["next_round_context"] & {
-    teaching_strategy?: "reduce_load" | "same_difficulty_new_variant" | "hold_current_path"
+  upstream: {
+    next_round_context?: CodeLabRequest["next_round_context"] & {
+      teaching_strategy?: "reduce_load" | "same_difficulty_new_variant" | "hold_current_path"
+    }
+    revision_objections?: CodeLabRequest["revision_objections"]
+    external_revision_round?: CodeLabRequest["external_revision_round"]
+    resource_blueprint?: {
+      blueprint_id: string
+      spec_id: string
+      cross_artifact_contract: NonNullable<CodeLabRequest["resource_blueprint"]>["cross_artifact_contract"]
+      quality_requirement: NonNullable<CodeLabRequest["resource_blueprint"]>["quality_requirement"]
+      code_lab: NonNullable<CodeLabRequest["resource_blueprint"]>["code_lab"]
+      objectives: Array<Pick<
+        NonNullable<CodeLabRequest["resource_blueprint"]>["objectives"][number],
+        "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "code_lab"
+      >>
+    }
+    round_semantic_plan?: CodeLabRequest["round_semantic_plan"]
+    generation_recovery?: CodeLabRequest["generation_recovery"]
   }
-  revision_objections?: CodeLabRequest["revision_objections"]
-  external_revision_round?: CodeLabRequest["external_revision_round"]
-  resource_blueprint?: {
-    blueprint_id: string
-    spec_id: string
-    cross_artifact_contract: NonNullable<CodeLabRequest["resource_blueprint"]>["cross_artifact_contract"]
-    quality_requirement: NonNullable<CodeLabRequest["resource_blueprint"]>["quality_requirement"]
-    code_lab: NonNullable<CodeLabRequest["resource_blueprint"]>["code_lab"]
-    objectives: Array<Pick<
-      NonNullable<CodeLabRequest["resource_blueprint"]>["objectives"][number],
-      "objective_id" | "source_id" | "observable_behavior" | "required_fact_ids" | "code_lab"
-    >>
-  }
-  round_semantic_plan?: CodeLabRequest["round_semantic_plan"]
-  generation_recovery?: CodeLabRequest["generation_recovery"]
 }
 
 /** Builds the model-visible lab context without learner identity or answer-bearing quiz seeds. */
@@ -55,12 +57,20 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
     request.generation_spec.targets.map((target) => target.objective_id),
   )
   const targetSources = new Set(request.generation_spec.path_node.target_source_ids)
+  const requiredFactsBySource = new Map(
+    request.generation_spec.targets.map((target) => [
+      target.source_id,
+      new Set(target.required_fact_ids),
+    ] as const),
+  )
   const evidence = request.evidence_pack.results
     .filter((item) => targetSources.has(item.source_id))
     .map((item) => ({
       source_id: item.source_id,
       title: item.title,
-      facts: item.facts.map((fact) => ({ ...fact })),
+      facts: item.facts
+        .filter((fact) => requiredFactsBySource.get(item.source_id)?.has(fact.fact_id))
+        .map((fact) => ({ ...fact })),
     }))
 
   const payload = request.concept_artifact.payload
@@ -109,13 +119,14 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
       objective_summaries: objectiveSummaries,
       misconceptions: structuredClone(payload?.misconceptions ?? []),
     },
-    next_round_context: nextRoundContext,
-    revision_objections: request.revision_objections
-      ? structuredClone(request.revision_objections)
-      : undefined,
-    external_revision_round: request.external_revision_round,
-    resource_blueprint: request.resource_blueprint
-      ? {
+    upstream: {
+      next_round_context: nextRoundContext,
+      revision_objections: request.revision_objections
+        ? structuredClone(request.revision_objections)
+        : undefined,
+      external_revision_round: request.external_revision_round,
+      resource_blueprint: request.resource_blueprint
+        ? {
           blueprint_id: request.resource_blueprint.blueprint_id,
           spec_id: request.resource_blueprint.spec_id,
           cross_artifact_contract: structuredClone(request.resource_blueprint.cross_artifact_contract),
@@ -128,14 +139,15 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
             required_fact_ids: [...objective.required_fact_ids],
             code_lab: structuredClone(objective.code_lab),
           })),
-        }
-      : undefined,
-    round_semantic_plan: request.round_semantic_plan
-      ? structuredClone(request.round_semantic_plan)
-      : undefined,
-    generation_recovery: request.generation_recovery
-      ? structuredClone(request.generation_recovery)
-      : undefined,
+          }
+        : undefined,
+      round_semantic_plan: request.round_semantic_plan
+        ? structuredClone(request.round_semantic_plan)
+        : undefined,
+      generation_recovery: request.generation_recovery
+        ? structuredClone(request.generation_recovery)
+        : undefined,
+    },
   }
 }
 

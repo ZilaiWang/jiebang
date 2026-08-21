@@ -78,7 +78,7 @@ describe("Role C model semantic fact audit", () => {
   test("audits one complete artifact in a single structured model call", async () => {
     const gateway = new AuditGateway({
       results: [{
-        review_block_id: "assessment:assessment_item:ITEM-1",
+        block_index: 0,
         verdict: "supported",
         reason: "题目可仅根据引用事实判断。",
         unsupported_text: [],
@@ -90,8 +90,15 @@ describe("Role C model semantic fact audit", () => {
     expect(gateway.requests[0]).toMatchObject({
       task: "role-c.fact-audit.semantic-artifact",
       temperature: 0,
-      input: { artifact_id: "ASSESSMENT-1" },
+      input: {
+        artifact_id: "ASSESSMENT-1",
+        blocks: [expect.objectContaining({ block_index: 0 })],
+      },
     })
+    expect(gateway.requests[0].output_schema.properties.results.items.required)
+      .toContain("block_index")
+    expect(gateway.requests[0].output_schema.properties.results.items.required)
+      .not.toContain("review_block_id")
     expect(result).toEqual([expect.objectContaining({ verdict: "supported" })])
   })
 
@@ -105,7 +112,7 @@ describe("Role C model semantic fact audit", () => {
   test("keeps an unlocated unsupported verdict blocked without failing the pipeline contract", async () => {
     const gateway = new AuditGateway({
       results: [{
-        review_block_id: "assessment:assessment_item:ITEM-1",
+        block_index: 0,
         verdict: "unsupported",
         reason: "题目增加了引用事实没有的结论。",
         unsupported_text: [],
@@ -122,7 +129,7 @@ describe("Role C model semantic fact audit", () => {
   test("normalizes a pass verdict that still lists unsupported text to a safe rejection", async () => {
     const gateway = new AuditGateway({
       results: [{
-        review_block_id: "assessment:assessment_item:ITEM-1",
+        block_index: 0,
         verdict: "supported",
         reason: "主体内容基本符合事实。",
         unsupported_text: ["随机遍历"],
@@ -138,7 +145,7 @@ describe("Role C model semantic fact audit", () => {
   test("canonicalizes harmless structured-output variations from the provider", async () => {
     const gateway = new AuditGateway({
       results: [{
-        review_block_id: "assessment:assessment_item:ITEM-1",
+        block_index: 0,
         verdict: "SUPPORTED",
         reason: "题目可仅根据引用事实判断。",
         unsupported_text: null,

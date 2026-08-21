@@ -12,6 +12,24 @@ export interface CPipelineCheckpoint {
   round_semantic_plan?: RoundSemanticPlan
   code_lab?: CodeLabArtifactPair
   assessment?: AssessmentArtifactPair
+  /**
+   * 外审修订身份。外审修订轮（revision_round > 0）只有携带该上下文
+   * 且 instruction_hash 匹配的检查点才能恢复目标阶段；缺失时 fail-closed。
+   */
+  revision_context?: {
+    revision_round: number
+    instruction_hash: string
+  }
+  /**
+   * 每阶段指纹（storage 1.1）。外审修订轮按阶段独立判断能否恢复，
+   * 从而只让"被修订指令影响"的阶段失效，其他阶段照常复用。
+   */
+  stage_fingerprints?: {
+    semantic_plan?: string
+    concept?: string
+    code_lab?: string
+    assessment?: string
+  }
   metadata?: {
     spec_id: string
     blueprint_id: string
@@ -58,7 +76,7 @@ export class InMemoryPipelineCheckpointStore implements CPipelineCheckpointStore
 }
 
 interface StoredCheckpointEnvelope {
-  storage_version: "1.0"
+  storage_version: "1.0" | "1.1"
   input_hash: string
   checkpoint_hash: string
   checkpoint: CPipelineCheckpoint
@@ -74,7 +92,7 @@ export class AtomicFilePipelineCheckpointStore implements CPipelineCheckpointSto
     const path = this.pathFor(inputHash)
     try {
       const envelope = JSON.parse(await readFile(path, "utf8")) as StoredCheckpointEnvelope
-      if (envelope.storage_version !== "1.0"
+      if ((envelope.storage_version !== "1.0" && envelope.storage_version !== "1.1")
         || envelope.input_hash !== inputHash
         || envelope.checkpoint.input_hash !== inputHash
         || envelope.checkpoint_hash !== contentHash(envelope.checkpoint)) {
@@ -96,7 +114,7 @@ export class AtomicFilePipelineCheckpointStore implements CPipelineCheckpointSto
     const finalPath = this.pathFor(checkpoint.input_hash)
     const temporaryPath = `${finalPath}.tmp-${process.pid}-${Date.now()}`
     const envelope: StoredCheckpointEnvelope = {
-      storage_version: "1.0",
+      storage_version: checkpoint.stage_fingerprints || checkpoint.revision_context ? "1.1" : "1.0",
       input_hash: checkpoint.input_hash,
       checkpoint_hash: contentHash(checkpoint),
       checkpoint,

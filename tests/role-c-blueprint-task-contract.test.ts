@@ -52,6 +52,7 @@ function makeSpec(
 
 const K018 = { source_id: "K018", title: "成绩统计器综合项目", fact: "成绩统计项目可综合练习列表、循环和函数。" }
 const K013 = { source_id: "K013", title: "函数定义与调用", fact: "def 用于定义函数。" }
+const K014 = { source_id: "K014", title: "函数参数与返回值", fact: "return 用于返回函数结果。" }
 const K009 = { source_id: "K009", title: "列表", fact: "列表可用于保存多个有序元素。" }
 
 describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据关键词猜）", () => {
@@ -60,14 +61,27 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     const bp = buildResourceBlueprint(spec, evidence)
     expect(bp.code_lab.task_contract.task_kind).toBe("stdin_stdout_program")
     expect(bp.code_lab.task_contract.execution_mode).toBe("stdin_stdout")
+    expect(bp.code_lab.task_contract.learner_action).toBe("implement_program")
     expect(bp.code_lab.task_contract.primary_objective_id).toBe("OBJ-K018")
   })
 
-  test("函数专题（函数定义与调用）→ callable_function", () => {
+  test("只有函数定义/调用证据时不强加返回值合同", () => {
     const { spec, evidence } = makeSpec([K013])
+    const bp = buildResourceBlueprint(spec, evidence)
+    expect(bp.code_lab.task_contract.task_kind).toBe("stdin_stdout_program")
+    expect(bp.code_lab.task_contract.execution_mode).toBe("stdin_stdout")
+    expect(bp.code_lab.task_contract.learner_action).toBe("recall_fact")
+    expect(bp.code_lab.task_contract.learner_owned_region).toBe("fact_literal")
+    expect(bp.code_lab.task_contract.input_form).toBe("none")
+    expect(bp.code_lab.task_contract.output_constraint).toContain("空 stdin")
+  })
+
+  test("参数与返回值专题 → callable_function", () => {
+    const { spec, evidence } = makeSpec([K014])
     const bp = buildResourceBlueprint(spec, evidence)
     expect(bp.code_lab.task_contract.task_kind).toBe("callable_function")
     expect(bp.code_lab.task_contract.execution_mode).toBe("function")
+    expect(bp.code_lab.task_contract.learner_action).toBe("implement_function")
   })
 
   test("综合项目主任务 + 函数支撑证据仍按 primary（K018）决定为 stdin_stdout", () => {
@@ -113,7 +127,7 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     const forward = buildResourceBlueprint(forwardSpec, forwardEvidence)
     expect(forward.code_lab.task_contract).toEqual(reversed.code_lab.task_contract)
 
-    // 标记 K013 为 primary → callable_function（本轮确实在教函数）
+    // 标记 K013 为 primary，但它没有参数/返回值证据 → 不强加 function ABI
     const { spec: fnSpec, evidence: fnEvidence } = makeSpec(
       [K018, K013],
       "intermediate",
@@ -121,7 +135,7 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     )
     const fn = buildResourceBlueprint(fnSpec, fnEvidence)
     expect(fn.code_lab.task_contract.primary_objective_id).toBe("OBJ-K013")
-    expect(fn.code_lab.task_contract.execution_mode).toBe("function")
+    expect(fn.code_lab.task_contract.execution_mode).toBe("stdin_stdout")
   })
 
   test("任务契约完整字段：程序入口/输入形式/输出形式/判题调用方式/输出约束与 task_kind 一致", () => {
@@ -133,7 +147,7 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     expect(stdin.code_lab.task_contract.grading_invocation).toBe("feed_stdin_compare_stdout")
     expect(stdin.code_lab.task_contract.output_constraint).toContain("比较 stdout")
 
-    const { spec: fnSpec, evidence: fnEvidence } = makeSpec([K013])
+    const { spec: fnSpec, evidence: fnEvidence } = makeSpec([K014])
     const fn = buildResourceBlueprint(fnSpec, fnEvidence)
     expect(fn.code_lab.task_contract.input_form).toBe("function_arguments")
     expect(fn.code_lab.task_contract.output_form).toBe("return_value")
