@@ -46,4 +46,23 @@ describe("Python curriculum tree", () => {
     expect(spec.mapped_source_ids).toEqual(expect.arrayContaining(["K007", "K009", "K018"]))
     expect(spec.goal_text).toBe("我想学会遍历成绩列表并完成成绩统计程序")
   })
+
+  test("maps file reading and line-count goals to the available file knowledge", () => {
+    const spec = resolveLearningGoalSpec({
+      mode: "custom_goal",
+      custom_goal: "学习 Python 文件读写并完成文本行数统计程序",
+    })
+
+    expect(spec.mapped_source_ids).toEqual(expect.arrayContaining(["K015", "PY024"]))
+  })
+
+  test("does not confuse splitting code into files with basic file I/O", () => {
+    const spec = resolveLearningGoalSpec({
+      mode: "custom_goal",
+      custom_goal: "把程序分文件并设计自定义模块",
+    })
+
+    expect(spec.mapped_source_ids).toContain("PY027")
+    expect(spec.mapped_source_ids).not.toContain("K015")
+  })
 })
