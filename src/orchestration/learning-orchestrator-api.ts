@@ -163,23 +163,48 @@ export function createLearningOrchestratorApiHandler(
         const exitCode = await proc.exited
         clearTimeout(timer)
         if (exitCode !== 0) {
-          // 尝试启动 Docker Desktop
-          steps.push("Docker 引擎未运行，尝试启动…")
+          // 尝试启动 Docker Desktop（仅在确认没有实例运行时才启动，
+          // 否则 Start-Process 会触发单实例重启，把已运行的引擎关掉再初始化）
+          steps.push("Docker 引擎未运行，检查 Docker Desktop 进程…")
+          let desktopAlreadyRunning = false
           try {
-            const ps = Bun.spawn(["powershell", "-Command", "Start-Process 'Docker Desktop' -WindowStyle Hidden"], { stdout: "pipe", stderr: "pipe" })
-            await ps.exited
-            steps.push("已发送启动指令，等待引擎就绪…")
-            // 等待最多 30 秒
-            for (let i = 0; i < 30; i++) {
+            const tl = Bun.spawn(["powershell", "-Command", "Get-Process 'Docker Desktop' -ErrorAction SilentlyContinue | Select-Object -First 1"], { stdout: "pipe", stderr: "pipe" })
+            const tlt = setTimeout(() => tl.kill(), 5000)
+            const tlOut = await tl.exited
+            clearTimeout(tlt)
+            const tlText = await new Response(tl.stdout).text()
+            desktopAlreadyRunning = tlOut === 0 && tlText.trim().length > 0
+          } catch { desktopAlreadyRunning = false }
+          if (desktopAlreadyRunning) {
+            steps.push("Docker Desktop 已在运行，仅等待引擎就绪（不重复启动，避免触发重启）")
+          } else {
+            try {
+              const ps = Bun.spawn(["powershell", "-Command", "Start-Process 'Docker Desktop' -WindowStyle Hidden"], { stdout: "pipe", stderr: "pipe" })
+              await ps.exited
+              steps.push("已发送启动指令，等待引擎就绪…")
+            } catch { steps.push("无法自动启动 Docker Desktop") }
+          }
+          // 等待最多 30 秒
+          for (let i = 0; i < 30; i++) {
               await new Promise(r => setTimeout(r, 2000))
               const check = Bun.spawn(["docker", "info"], { stdout: "pipe", stderr: "pipe" })
               const ct = setTimeout(() => check.kill(), 3000)
               const ec = await check.exited
               clearTimeout(ct)
-              if (ec === 0) { steps.push(`引擎就绪（${(i+1)*2}秒）`); break }
+              if (ec === 0) {
+                steps.push(`引擎就绪（${(i+1)*2}秒）`)
+                // Docker Desktop 冷启动时引擎可能瞬时可用但 WSL2 后端尚未稳定，
+                // 等待 6 秒稳定窗口后再次确认，避免把瞬时状态当成完成
+                await new Promise(r => setTimeout(r, 6000))
+                const confirm = Bun.spawn(["docker", "info"], { stdout: "pipe", stderr: "pipe" })
+                const ct2 = setTimeout(() => confirm.kill(), 3000)
+                const cec = await confirm.exited
+                clearTimeout(ct2)
+                if (cec === 0) { steps.push("稳定确认通过"); break }
+                steps.push("引擎波动，继续等待…")
+              }
             }
-          } catch { steps.push("无法自动启动 Docker Desktop") }
-        }
+          }
         // 重新检查状态
         const finalCheck = Bun.spawn(["docker", "info"], { stdout: "pipe", stderr: "pipe" })
         const ft = setTimeout(() => finalCheck.kill(), 5000)
