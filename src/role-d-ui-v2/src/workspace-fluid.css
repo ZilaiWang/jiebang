@@ -11,6 +11,16 @@
 .hero-illustration { position: absolute; z-index: 1; left: 0; right: 0; top: 0; bottom: -10px; width: 100%; overflow: visible; }
 .hero-cat-illustration { width: 100%; height: 105%; object-fit: contain; object-position: right bottom; display: block; border-radius: 0; filter: drop-shadow(0 20px 40px rgba(109,85,183,.2)); }
 
+/* 指标泡泡：并排横放右下角 */
+.metric-bubbles { position: absolute; z-index: 6; right: 2%; bottom: 6%; display: flex; flex-direction: row; align-items: flex-end; gap: 14px; pointer-events: none; }
+.metric-bubble { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 104px; height: 104px; border-radius: 50%; color: #fff; border: 2px solid rgba(255,255,255,.85); box-shadow: 0 8px 18px rgba(80,100,170,.16); animation: bubbleFloat 5s ease-in-out infinite; }
+.metric-bubble strong { font-size: 22px; font-weight: 850; letter-spacing: -1px; line-height: 1.05; text-shadow: 0 1px 4px rgba(60,80,150,.28); }
+.metric-bubble small { font-size: 9.5px; font-weight: 700; letter-spacing: .04em; opacity: .96; text-shadow: 0 1px 3px rgba(60,80,150,.22); }
+.bubble-violet { background: linear-gradient(160deg, rgba(148,168,238,.9), rgba(112,132,216,.88) 62%, rgba(96,116,200,.9)); animation-delay: 0s; }
+.bubble-mint { background: linear-gradient(160deg, rgba(170,198,242,.9), rgba(132,162,222,.88) 62%, rgba(116,146,212,.9)); animation-delay: .9s; }
+.bubble-blue { background: linear-gradient(160deg, rgba(196,214,248,.9), rgba(158,182,232,.88) 62%, rgba(140,166,224,.9)); animation-delay: 1.8s; }
+@keyframes bubbleFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+
 /* Floating decorations */
 .floating-decorations { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .float-star { position: absolute; color: #ffd700; font-weight: bold; text-shadow: 0 0 15px rgba(255,215,0,0.9), 0 0 30px rgba(255,215,0,0.5); animation: floatUpDown 3.5s ease-in-out infinite; }
@@ -70,5 +80,5 @@
 .confirm-switch-actions { display: flex; gap: 12px; padding-top: 16px; border-top: 1px solid #e5edf5; }
 .confirm-switch-actions button { flex: 1; justify-content: center; }
 @keyframes galaxy-turn { to { transform:rotate(360deg); } } @keyframes galaxy-node { 50% { transform:rotate(var(--angle)) translateX(126px) rotate(calc(-1 * var(--angle))) scale(1.12); } }
-@media(max-width:1020px){.home-bento{grid-template-columns:1fr}.mastery-island{min-height:300px}.learning-galaxy{display:block}.home-value-river{grid-template-columns:1fr}.home-value-river article+article::before{left:8%;right:8%;top:0;bottom:auto;width:auto;height:1px}.fluid-hero{clip-path:none;border-radius:7px 45px 7px 45px}.hero-illustration{width:70%;opacity:0.6}.hero-copy{max-width:100%}}
-@media(max-width:700px){.learning-galaxy{display:none}.fluid-hero{min-height:480px}.hero-illustration{width:100%;opacity:0.25}.hero-copy{max-width:100%}.home-bento .plan-manager{border-radius:7px 30px}.mastery-island{border-radius:38px 7px}.home-value-river{border-radius:30px 7px}.home-value-river article{padding:22px}.user-switcher-backdrop{padding:12px}.user-switcher-backdrop .user-popover{border-radius:6px 30px}}
+@media(max-width:1020px){.metric-bubble{width:108px;height:108px}.metric-bubble strong{font-size:22px}.metric-bubble small{font-size:9px}.home-bento{grid-template-columns:1fr}.mastery-island{min-height:300px}.learning-galaxy{display:block}.home-value-river{grid-template-columns:1fr}.home-value-river article+article::before{left:8%;right:8%;top:0;bottom:auto;width:auto;height:1px}.fluid-hero{clip-path:none;border-radius:7px 45px 7px 45px}.hero-illustration{width:70%;opacity:0.6}.hero-copy{max-width:100%}}
+@media(max-width:700px){.metric-bubbles{display:none}.learning-galaxy{display:none}.fluid-hero{min-height:480px}.hero-illustration{width:100%;opacity:0.25}.hero-copy{max-width:100%}.home-bento .plan-manager{border-radius:7px 30px}.mastery-island{border-radius:38px 7px}.home-value-river{border-radius:30px 7px}.home-value-river article{padding:22px}.user-switcher-backdrop{padding:12px}.user-switcher-backdrop .user-popover{border-radius:6px 30px}}
