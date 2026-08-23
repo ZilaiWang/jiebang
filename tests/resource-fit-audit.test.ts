@@ -213,9 +213,20 @@ describe("resource_fit 进入 reviewed_release_delivery schema", () => {
           support: { scaffold_strength: 2, reading_density: "low", hint_strength: 2, starter_support: 0 },
           confidence: 0.85,
         },
-        fit: { verdict: "fit", score: 1, mismatched_dimensions: [], reason_codes: [] },
+        fit: { verdict: "fit", score: 1, mismatched_dimensions: [], reason_codes: [], dimensions: [] },
       })),
-      overall: { verdict: "fit", score: 1 },
+      overall: {
+        verdict: "fit",
+        score: 1,
+        aggregation: {
+          policy: "bottleneck_cap",
+          weighted_mean: 1,
+          weakest_kind: "assessment",
+          weakest_score: 1,
+          bottleneck_margin: 0.08,
+          final_score: 1,
+        },
+      },
     }
     const result = validateRoleCSchemaFragment(
       "reviewed_release_delivery.schema.json",

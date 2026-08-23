@@ -8,6 +8,8 @@ import {
   RESOURCE_FIT_POLICY_VERSION,
   type ArtifactResourceFit,
   type ChallengeVector,
+  type ResourceFitAggregation,
+  type ResourceFitDimension,
   type ResourceFitKind,
   type ResourceFitReport,
   type ResourceFitVerdict,
@@ -73,6 +75,18 @@ export function buildResourceFitReport(input: {
   const lab = input.entries.find((entry) => entry.kind === "code_lab")?.fit.score ?? 0
   const assessment = input.entries.find((entry) => entry.kind === "assessment")?.fit.score ?? 0
   const overallScore = overallFitScoreV2({ lesson, lab, assessment })
+  // 公开聚合口径（改进方案6 第一节）：加权平均、最弱资源、瓶颈封顶后的总分，
+  // 让前端能明确展示"加权平均 77 · 最弱资源 正式测评 57 · 瓶颈保护后 66"。
+  const weightedMean = lesson * 0.30 + lab * 0.35 + assessment * 0.35
+  const weakest = [...input.entries].sort((left, right) => left.fit.score - right.fit.score)[0]!
+  const aggregation: ResourceFitAggregation = {
+    policy: "bottleneck_cap",
+    weighted_mean: Math.round(weightedMean * 1000) / 1000,
+    weakest_kind: weakest.kind,
+    weakest_score: weakest.fit.score,
+    bottleneck_margin: 0.08,
+    final_score: Math.round(overallScore * 1000) / 1000,
+  }
   return {
     schema_version: "1.0",
     run_id: input.run_id,
@@ -83,6 +97,7 @@ export function buildResourceFitReport(input: {
     overall: {
       verdict: overallVerdict(input.entries),
       score: Math.round(overallScore * 1000) / 1000,
+      aggregation,
     },
   }
 }
@@ -375,6 +390,18 @@ function computeFit(
     score,
     mismatched_dimensions: mismatched,
     reason_codes: reasons,
+    // raw target/observed/gap 调试输出（改进方案6 第一节：让分数可解释）。
+    dimensions: dimensions.map((dimension): ResourceFitDimension => ({
+      name: dimension.name,
+      family: dimension.family,
+      applicable: dimension.applicable,
+      target: dimension.target,
+      observed: dimension.observed,
+      signed_gap: dimension.observed - dimension.target,
+      weight: dimension.weight,
+      tolerance: dimension.tolerance,
+      basis: dimension.basis,
+    })),
   }
 }
 

@@ -46,17 +46,25 @@ describe("resource-fit 契约：术语分层与向量拆分", () => {
   })
 
   test("resourceFitReportHash 对相同内容稳定，对变化敏感", () => {
+    const aggregation = {
+      policy: "bottleneck_cap" as const,
+      weighted_mean: 0.9,
+      weakest_kind: "assessment" as const,
+      weakest_score: 0.8,
+      bottleneck_margin: 0.08,
+      final_score: 0.88,
+    }
     const base = {
       run_id: "RUN-1",
       spec_id: "SPEC-1",
       profile_ref: { profile_id: "p1", profile_version: "v1", profile_content_hash: "h1" },
       policy_version: RESOURCE_FIT_POLICY_VERSION,
       resources: [] as never[],
-      overall: { verdict: "fit" as const, score: 1 },
+      overall: { verdict: "fit" as const, score: 1, aggregation },
     }
     expect(resourceFitReportHash(base)).toBe(resourceFitReportHash(base))
     expect(resourceFitReportHash(base)).not.toBe(
-      resourceFitReportHash({ ...base, overall: { verdict: "too_hard" as const, score: 0.5 } }),
+      resourceFitReportHash({ ...base, overall: { verdict: "too_hard" as const, score: 0.5, aggregation } }),
     )
   })
 

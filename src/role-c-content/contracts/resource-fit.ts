@@ -40,6 +40,20 @@ export type ResourceFitVerdict = "fit" | "too_easy" | "too_hard" | "uncertain"
 
 export type ResourceFitKind = "concept_lesson" | "code_lab" | "assessment"
 
+/** 单个适配维度的 raw 调试输出（target/observed/gap），便于排查分数来源。 */
+export interface ResourceFitDimension {
+  name: string
+  family: "challenge" | "support"
+  applicable: boolean
+  target: number
+  observed: number
+  /** observed - target；正值偏难、负值偏易。 */
+  signed_gap: number
+  weight: number
+  tolerance: number
+  basis: Array<{ feature: string; value: number | string; source_ref?: string }>
+}
+
 export interface ArtifactResourceFit {
   artifact_id: string
   kind: ResourceFitKind
@@ -59,7 +73,21 @@ export interface ArtifactResourceFit {
     score: number
     mismatched_dimensions: string[]
     reason_codes: string[]
+    /** 每个维度的 target/observed/gap 调试输出（改进方案6 第一节：让分数可解释）。 */
+    dimensions: ResourceFitDimension[]
   }
+}
+
+/** 总分聚合口径（改进方案6 第一节：公开 66 的来源，而不是让用户猜）。 */
+export interface ResourceFitAggregation {
+  policy: "arithmetic_mean" | "weighted_mean" | "bottleneck_cap"
+  /** 三类资源加权平均（讲义 0.30 / 实验 0.35 / 测评 0.35）。 */
+  weighted_mean: number
+  weakest_kind: ResourceFitKind
+  weakest_score: number
+  /** bottleneck_cap 时给最弱资源留的裕量。 */
+  bottleneck_margin?: number
+  final_score: number
 }
 
 export interface ResourceFitReport {
@@ -76,6 +104,7 @@ export interface ResourceFitReport {
   overall: {
     verdict: ResourceFitVerdict
     score: number
+    aggregation: ResourceFitAggregation
   }
 }
 
@@ -174,6 +203,17 @@ export function emptyResourceFitReport(input: {
     profile_ref: input.profile_ref,
     policy_version: RESOURCE_FIT_POLICY_VERSION,
     resources: [],
-    overall: { verdict: "uncertain", score: 0 },
+    overall: {
+      verdict: "uncertain",
+      score: 0,
+      aggregation: {
+        policy: "bottleneck_cap",
+        weighted_mean: 0,
+        weakest_kind: "assessment",
+        weakest_score: 0,
+        bottleneck_margin: 0.08,
+        final_score: 0,
+      },
+    },
   }
 }

@@ -115,6 +115,13 @@ export interface ResourceMatchView {
   resources: ResourceFitEntry[]
   /** 报告是否属于当前产物（run_id + artifact_id 一致）。 */
   fresh: boolean
+  /** 聚合口径（改进方案6 第一节：加权平均 / 最弱资源 / 瓶颈保护后）。 */
+  aggregation?: {
+    weightedMean: number
+    weakestKind: "concept_lesson" | "code_lab" | "assessment"
+    weakestScore: number
+    finalScore: number
+  }
 }
 
 /** 官方字段存在时使用 C 的 resource_fit 结论；否则回退到 D 侧展示估算。 */
@@ -151,6 +158,14 @@ export function resourceMatchView(session: any, resource: any, assessment?: any)
         ? entry.fit.reason_codes.map(reasonCodeLabel)
         : [],
     }))
+    const aggregation = official.overall.aggregation
+      ? {
+          weightedMean: Math.round(Number(official.overall.aggregation.weighted_mean) * 100),
+          weakestKind: official.overall.aggregation.weakest_kind,
+          weakestScore: Math.round(Number(official.overall.aggregation.weakest_score) * 100),
+          finalScore: Math.round(Number(official.overall.aggregation.final_score) * 100),
+        }
+      : undefined
     return {
       source: "official",
       score,
@@ -167,6 +182,7 @@ export function resourceMatchView(session: any, resource: any, assessment?: any)
       overallVerdict,
       resources,
       fresh,
+      aggregation,
     }
   }
 
