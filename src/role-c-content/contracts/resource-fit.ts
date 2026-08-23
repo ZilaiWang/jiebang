@@ -79,7 +79,7 @@ export interface ResourceFitReport {
   }
 }
 
-export const RESOURCE_FIT_POLICY_VERSION = "resource-fit-v1"
+export const RESOURCE_FIT_POLICY_VERSION = "resource-fit-v2"
 
 /**
  * 把历史 DifficultyVector（挑战+支持混在一个向量里）拆成方向统一的两个向量。

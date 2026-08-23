@@ -797,27 +797,26 @@ function ContentReviewCard({ session }: { session: PublicSessionFixture }) {
 }
 
 function resourceFitBasisText(entry: ResourceFitEntry): string {
-  const basis = entry.verdict === "fit" ? "与实测一致" : "与实测存在差异"
-  const confidence = entry.observed.confidence ? `，置信度 ${Math.round(entry.observed.confidence * 100)}%` : ""
-  const reasons = entry.reasonCodes.length ? ` · ${entry.reasonCodes.join("；")}` : ""
-  return `目标 ${basis}（审核分 ${Math.round(entry.score * 100)}/100${confidence}）${reasons}`
+  const basis = entry.verdict === "fit" ? "与目标一致" : "与目标存在差异"
+  const reasons = entry.reasonLabels.length ? ` · ${entry.reasonLabels.join("；")}` : ""
+  return `目标 ${basis}（结构适配指数 ${Math.round(entry.score * 100)}/100）${reasons}`
 }
 
 function ResourceMatchCard({ session, resource, assessment, compact = false }: { session: PublicSessionFixture; resource: any; assessment?: AssessmentPayload; compact?: boolean }) {
   const match = resourceMatchView(session, resource, assessment)
   const ringStyle = { "--match-score": `${match.score * 3.6}deg` } as React.CSSProperties
   const resourceKindLabel = (kind: string) => ({ concept_lesson: "定制讲义", code_lab: "代码实验", assessment: "正式测评" } as Record<string, string>)[kind] ?? kind
-  const verdictLabel = (verdict: string) => ({ fit: "匹配", too_hard: "偏难", too_easy: "偏易", unclear: "未判定" } as Record<string, string>)[verdict] ?? verdict
-  return <article className={`resource-match-card ${compact ? "is-compact" : ""} is-${match.source}`} aria-label="本轮资源匹配指数">
-    <header><span><Sparkles size={15} /> 本轮资源匹配指数</span><em>{match.label}</em></header>
+  const verdictLabel = (verdict: string) => ({ fit: "匹配", too_hard: "偏难", too_easy: "偏易", uncertain: "未判定" } as Record<string, string>)[verdict] ?? verdict
+  return <article className={`resource-match-card ${compact ? "is-compact" : ""} is-${match.source}`} aria-label="本轮结构适配指数">
+    <header><span><Sparkles size={15} /> 本轮结构适配指数</span><em>{match.label}</em></header>
     <div className="resource-match-score" style={ringStyle}><div><strong>{match.score}</strong><small>/ 100</small></div></div>
-    <div className="resource-match-summary"><b>{match.label}</b><p>{match.source === "official" ? `C 资源难度审核：${match.overallVerdict === "fit" ? "整体匹配" : match.overallVerdict === "too_hard" ? "整体偏难" : match.overallVerdict === "too_easy" ? "整体偏易" : "未判定"}` : "讲义与正式测评面向当前画像的页面展示指数"}</p></div>
+    <div className="resource-match-summary"><b>{match.label}</b><p>{match.source === "official" ? `规则估计 · ${match.overallVerdict === "fit" ? "整体匹配" : match.overallVerdict === "too_hard" ? "整体偏难" : match.overallVerdict === "too_easy" ? "整体偏易" : "未判定"}` : "讲义与正式测评面向当前画像的页面展示指数"}</p></div>
     {match.source === "official" && match.resources.length
       ? <div className="resource-fit-list">{match.resources.map((entry) => <div className={`resource-fit-row is-${entry.verdict}`} key={entry.artifactId}>
           <div className="resource-fit-kind"><b>{resourceKindLabel(entry.kind)}</b><em>{verdictLabel(entry.verdict)}</em></div>
           <div className="resource-fit-meter"><i style={{ width: `${Math.round(entry.score * 100)}%` }} /></div>
           <span className="resource-fit-score">{Math.round(entry.score * 100)}</span>
-          {entry.mismatchedDimensions.length ? <small className="resource-fit-note">需关注：{entry.mismatchedDimensions.join("、")}</small> : <small className="resource-fit-note ok">全部维度匹配</small>}
+          {entry.mismatchedDimensions.length ? <small className="resource-fit-note">需关注：{entry.reasonLabels.join("、")}</small> : <small className="resource-fit-note ok">未发现显著维度偏差</small>}
         </div>)}</div>
       : <dl>
           <div><dt>学习目标覆盖</dt><dd>{match.matchedObjectiveCount} / {match.objectiveCount || "--"}<span>{match.objectiveScore}分</span></dd></div>
@@ -841,24 +840,43 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const [tab, setTab] = useState<LessonTab>("lesson")
   const [sideTab, setSideTab] = useState<SideTab>("hint")
   const [activeSection, setActiveSection] = useState("prerequisite")
+  const [visitedSections, setVisitedSections] = useState<Set<string>>(new Set())
   const [matchOpen, setMatchOpen] = useState(false)
   const [code, setCode] = useState(lab?.starter_code ?? "")
   const [lastExecutedCode, setLastExecutedCode] = useState<string | null>(null)
+  const lessonArtifactId = activeSession.learning_resources.concept_lesson?.artifact_id
   useEffect(() => {
     setCode(lab?.starter_code ?? "")
     setLastExecutedCode(null)
   }, [activeSession.round_no, activeSession.learning_resources.code_lab?.payload?.lab_id])
+  // 切到新讲义时清空已读记录（按 artifact 身份隔离，不带旧讲义的进度）。
+  useEffect(() => {
+    setVisitedSections(new Set())
+    setActiveSection("prerequisite")
+  }, [lessonArtifactId])
   if (!lesson) return <BlockedResourceState session={activeSession} busy={busy} onRetry={() => void retry()} onRestart={reset} title="互动学习资源未通过可信发布" />
   const sections = lesson ? lessonOutline(lesson) : []
-  return <div className="lesson-page"><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮资源匹配指数"><Sparkles size={14} />资源匹配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
+  const visibleSectionCount = sections.filter((section) => section.visible).length
+  const readingProgress = visibleSectionCount === 0
+    ? 0
+    : Math.round((visitedSections.size / visibleSectionCount) * 100)
+  // 已读 = 主动点击目录访问；滚动仅更新高亮（activeSection），不记为已读。
+  const handleSectionClick = (id: string) => {
+    setActiveSection(id)
+    setVisitedSections((prev) => (prev.has(id) ? prev : new Set([...prev, id])))
+  }
+  const handleSectionScroll = (id: string) => {
+    setActiveSection(id)
+  }
+  return <div className="lesson-page"><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮结构适配指数"><Sparkles size={14} />结构适配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
     <div className="lesson-layout">
-      <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { setActiveSection(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>当前内容结构</span><div><i style={{ width: "58%" }} /></div><small>由 C 公开字段直接渲染</small></div></aside>
+      <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { handleSectionClick(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>阅读进度</span><div><i style={{ width: `${readingProgress}%` }} /></div><small>已读 {visitedSections.size} / {visibleSectionCount} 节</small></div></aside>
       <section className="lesson-main"><div className="lesson-tabs" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => setTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => setTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => setTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
-        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={setActiveSection} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
+        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
       </section>
       <aside className="lesson-side"><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</aside>
           </div>
-          {matchOpen ? <Modal title="本轮资源匹配指数" subtitle="C 官方 resource_fit 资源难度适配结论" onClose={() => setMatchOpen(false)}><ResourceMatchCard session={activeSession} resource={lesson} assessment={activeSession.assessment?.payload} /></Modal> : null}
+          {matchOpen ? <Modal title="本轮结构适配指数" subtitle="规则估计 · 尚未校准" onClose={() => setMatchOpen(false)}><ResourceMatchCard session={activeSession} resource={lesson} assessment={activeSession.assessment?.payload} /></Modal> : null}
   </div>
 }
 

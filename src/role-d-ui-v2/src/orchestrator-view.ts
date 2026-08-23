@@ -75,20 +75,6 @@ export function collaborationDrawerView(session: any): CollaborationDrawerView {
   }
 }
 
-export interface ResourceMatchView {
-  score: number
-  label: "高度匹配" | "基本匹配" | "需要关注" | "等待审核"
-  objectiveScore: number
-  levelScore: number
-  reviewScore: number | null
-  learnerLevel: string
-  resourceLevel: string
-  objectiveCount: number
-  matchedObjectiveCount: number
-  reviewLabel: string
-  note: string
-}
-
 /**
  * D-side display index only. It uses public session fields and must not be
  * presented as the competition's B/C difficulty-fit accuracy metric.
@@ -103,14 +89,17 @@ export interface ResourceFitEntry {
   kind: "concept_lesson" | "code_lab" | "assessment"
   target: ResourceFitDimensionPair
   observed: ResourceFitDimensionPair & { confidence?: number }
-  verdict: "fit" | "too_hard" | "too_easy" | "unclear"
+  verdict: "fit" | "too_hard" | "too_easy" | "uncertain"
   score: number
   mismatchedDimensions: string[]
   reasonCodes: string[]
+  /** 中文维度解释（由 reason_codes 映射），替代未校准的原始置信度。 */
+  reasonLabels: string[]
 }
 
 export interface ResourceMatchView {
   source: "official" | "fallback"
+  /** 结构适配指数（0-100），非比赛"适配准确率"。 */
   score: number
   label: "高度匹配" | "基本匹配" | "需要关注" | "等待审核"
   objectiveScore: number
@@ -122,17 +111,20 @@ export interface ResourceMatchView {
   matchedObjectiveCount: number
   reviewLabel: string
   note: string
-  overallVerdict?: string
+  overallVerdict?: "fit" | "too_hard" | "too_easy" | "uncertain"
   resources: ResourceFitEntry[]
+  /** 报告是否属于当前产物（run_id + artifact_id 一致）。 */
+  fresh: boolean
 }
 
 /** 官方字段存在时使用 C 的 resource_fit 结论；否则回退到 D 侧展示估算。 */
 export function resourceMatchView(session: any, resource: any, assessment?: any): ResourceMatchView {
   const official = session?.resource_fit
-  if (official && Array.isArray(official.resources) && official.overall) {
+  const fresh = isCurrentResourceFit(session)
+  if (official && Array.isArray(official.resources) && official.overall && fresh) {
     const overallScore = Number(official.overall.score)
     const score = Number.isFinite(overallScore) ? Math.round(overallScore * 100) : 0
-    const overallVerdict = String(official.overall.verdict ?? "unclear")
+    const overallVerdict = toVerdict(official.overall.verdict)
     const hasMismatch = official.resources.some((entry: any) =>
       entry.fit?.verdict === "too_hard" || entry.fit?.verdict === "too_easy")
     const label = overallVerdict === "fit" && !hasMismatch
@@ -150,14 +142,14 @@ export function resourceMatchView(session: any, resource: any, assessment?: any)
       observed: {
         challenge: entry.observed?.challenge ?? {},
         support: entry.observed?.support ?? {},
-        confidence: Number(entry.observed?.confidence) || undefined,
       },
-      verdict: entry.fit?.verdict === "too_hard" || entry.fit?.verdict === "too_easy" || entry.fit?.verdict === "fit"
-        ? entry.fit.verdict
-        : "unclear",
+      verdict: toVerdict(entry.fit?.verdict),
       score: Number(entry.fit?.score) || 0,
       mismatchedDimensions: Array.isArray(entry.fit?.mismatched_dimensions) ? entry.fit.mismatched_dimensions : [],
       reasonCodes: Array.isArray(entry.fit?.reason_codes) ? entry.fit.reason_codes : [],
+      reasonLabels: Array.isArray(entry.fit?.reason_codes)
+        ? entry.fit.reason_codes.map(reasonCodeLabel)
+        : [],
     }))
     return {
       source: "official",
@@ -170,10 +162,11 @@ export function resourceMatchView(session: any, resource: any, assessment?: any)
       resourceLevel: "C 官方资源难度",
       objectiveCount: 0,
       matchedObjectiveCount: 0,
-      reviewLabel: "C 资源难度审核已公开",
-      note: "展示 C 公开的 resource_fit 资源难度适配结论（目标 vs 实测 + 审核评分）。",
+      reviewLabel: "规则估计 · 尚未校准",
+      note: "本轮结构适配指数（resource-fit 规则估计的目标 vs 实测接近度），不是比赛要求的适配准确率。",
       overallVerdict,
       resources,
+      fresh,
     }
   }
 
@@ -221,7 +214,74 @@ export function resourceMatchView(session: any, resource: any, assessment?: any)
     reviewLabel,
     note: "页面展示指数，依据当前公开字段估算；不是官方难度适配率。",
     resources: [],
+    fresh,
   }
+}
+
+/** 统一 verdict 契约：后端 "uncertain" 不得被改写成 "unclear"。 */
+function toVerdict(value: unknown): "fit" | "too_hard" | "too_easy" | "uncertain" {
+  return value === "too_hard" || value === "too_easy" || value === "fit"
+    ? value
+    : "uncertain"
+}
+
+/**
+ * 报告是否属于当前产物（严格模式）：报告与三类 artifact 的 C 子运行一致；三类资源齐全；
+ * 且报告里的每个 artifact_id 都指向当前已发布资源。
+ * 防止下一轮资源更新后短暂显示上一轮的分数。
+ */
+export function isCurrentResourceFit(session: any): boolean {
+  const report = session?.resource_fit
+  if (!report) return false
+  const concept = session?.learning_resources?.concept_lesson
+  const lab = session?.learning_resources?.code_lab
+  const assessment = session?.assessment
+  const conceptId = concept?.artifact_id
+  const labId = lab?.artifact_id
+  const assessmentId = assessment?.artifact_id
+  // 三类资源必须齐全。
+  if (!conceptId || !labId || !assessmentId) return false
+  // session.run_id 是主 Agent 根运行；resource_fit.run_id 是当前 C 子运行。
+  // 因此应与三个发布 artifact 的 run_id 核对，不能拿它和根运行直接比较。
+  const artifactRunIds = [concept?.run_id, lab?.run_id, assessment?.run_id]
+  if (!report.run_id || artifactRunIds.some((runId) => !runId || runId !== report.run_id)) {
+    return false
+  }
+  const currentIds = new Set<string>([conceptId, labId, assessmentId])
+  const resources = Array.isArray(report.resources) ? report.resources : []
+  // 报告必须覆盖全部三类资源，且每个 artifact_id 都在当前资源里。
+  if (resources.length !== 3) return false
+  const reportIds = new Set(resources.map((entry: any) => entry?.artifact_id).filter(Boolean))
+  return reportIds.size === 3
+    && [...currentIds].every((artifactId) => reportIds.has(artifactId))
+}
+
+const REASON_CODE_LABELS: Record<string, string> = {
+  scaffold_strength: "支架强度偏离目标",
+  hint_strength: "提示强度偏离目标",
+  starter_support: "起始代码完成度偏离目标",
+  reading_density: "阅读密度偏离目标",
+  domain_complexity: "领域复杂度偏离目标",
+  cognitive_demand: "认知需求偏离目标",
+  reasoning_steps: "推理步骤数偏离目标",
+  code_complexity: "代码复杂度偏离目标",
+  prerequisite_load: "先修知识负载偏离目标",
+  transfer_distance: "迁移距离偏离目标",
+  boundary_condition_density: "边界条件密度偏离目标",
+  task_composition: "任务组合复杂度偏离目标",
+}
+
+/** 将 reason_code 映射为可解释的中文描述，替代未校准的固定置信度。 */
+function reasonCodeLabel(code: string): string {
+  // reason_code 形如 `starter_support_1.3_vs_target_3`，用最长前缀匹配维度名，
+  // 而不是 split("_")[0]（那会把 starter_support 解析成 starter）。
+  let best = ""
+  for (const dimension of Object.keys(REASON_CODE_LABELS)) {
+    if (code === dimension || code.startsWith(`${dimension}_`)) {
+      if (dimension.length > best.length) best = dimension
+    }
+  }
+  return best ? REASON_CODE_LABELS[best]! : `维度「${code.split("_")[0]}」存在偏差`
 }
 
 export function finalFeedbackAction(session: any): { label: string; ready: boolean } | null {

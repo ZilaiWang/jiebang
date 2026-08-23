@@ -47,7 +47,7 @@ import {
   CODE_LAB_EXECUTION_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_PUBLIC_SAFETY_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_STARTER_REPAIR_SYSTEM_PROMPT,
-  CONCEPT_SEGMENT_SYSTEM_PROMPT,
+  CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
   STAGED_AUTHOR_PROMPT_VERSION,
   ROLE_C_PROMPT_MANIFEST_VERSION,
   stagedRepairPrompt,
@@ -55,6 +55,12 @@ import {
 import { isTrustedExpectedDerivationIssue, validateCodeLabDraftStructure, validateCodeLabPublicStage } from "../validators/code-lab-validator"
 import { validateAssessmentDraftStructure, validateAssessmentPublicStage } from "../validators/assessment-validator"
 import { validateConceptLesson } from "../validators/concept-validator"
+import {
+  buildConceptSectionPlansForSegment,
+  materializeConceptSegmentV2,
+  validateConceptSegmentV2AgainstPlans,
+  type ConceptSegmentAuthorPayloadV2,
+} from "../planning/concept-section-plan"
 import {
   getRoleCModelOutputSchema,
   getRoleCModelOutputSchemaFragment,
@@ -69,7 +75,6 @@ import {
   buildCodeLabSecurePlan,
   buildLabIdentity,
   applyCodeLabExecutionRepairPatch,
-  materializeConceptSegmentAuthorPayload,
   materializeAssessmentSecureAuthorPayload,
   materializeAssessmentPublicAuthorPayload,
   projectAssessmentPublicAuthorPayload,
@@ -85,7 +90,7 @@ import {
   normalizeCodeLabSecure,
   patchExpectedFromReferenceFailures,
   normalizeCodeLabSecureAuthorPayloadLenient,
-  normalizeConceptSegmentAuthorPayloadLenient,
+  normalizeConceptSegment,
   splitConceptRequest,
   validateAssessmentPublicAuthorAgainstPlan,
   validateAssessmentNovelty,
@@ -96,7 +101,6 @@ import {
   validateCodeLabPublicAuthorAgainstPlan,
   validateCodeLabSecureAuthorAgainstPlan,
   validateCodeLabSecureAgainstPlan,
-  validateConceptSegmentAuthorAgainstRequest,
   deriveCodeLabExecutionMode,
   freezeCodeLabExecutionContract,
   type CodeLabExecutionRepairPatch,
@@ -105,7 +109,6 @@ import {
   type AssessmentSecureAuthorPayload,
   type AssessmentPublicAuthorPayload,
   type AssessmentItemPlan,
-  type ConceptSegmentAuthorPayload,
 } from "./staged-generation"
 import { fastModelPolicy } from "../../model-runtime"
 
@@ -264,21 +267,36 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const segments = splitConceptRequest(request, this.conceptGroupSize)
     const payloads = await mapWithConcurrency(segments, this.conceptConcurrency, async (segment) => {
       const modelInput = buildConceptTutorModelInput(segment)
-      const authored = await this.generateStage<ConceptSegmentAuthorPayload>({
-        task: "role-c.concept-tutor.segment",
-        system_prompt: CONCEPT_SEGMENT_SYSTEM_PROMPT,
+      const sectionPlans = buildConceptSectionPlansForSegment(segment)
+      const sectionPlanContract = sectionPlans.map((plan) => ({
+        objective_id: plan.objective_id,
+        mode: plan.mode,
+        slots: plan.slots,
+      }))
+      const materialize = (payload: ConceptSegmentAuthorPayloadV2) =>
+        normalizeConceptSegment(
+          segment,
+          materializeConceptSegmentV2(segment, payload, sectionPlans),
+        )
+      const authored = await this.generateStage<ConceptSegmentAuthorPayloadV2>({
+        task: "role-c.concept-tutor.segment-v2",
+        system_prompt: CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
         input: {
           ...modelInput,
+          staged_contract: {
+            objective_ids: segment.generation_spec.targets.map((target) => target.objective_id),
+            section_plan: sectionPlanContract,
+          },
           segment: {
             index: segment.segment_index,
             count: segment.segment_count,
             objective_ids: segment.generation_spec.targets.map((target) => target.objective_id),
           },
         },
-        output_schema_id: "role_c_concept_segment_author_payload_v1",
+        output_schema_id: "role_c_concept_segment_author_payload_v2",
         output_schema: fragment(
           "concept_lesson_payload.schema.json",
-          "/$defs/author_payload",
+          "/$defs/author_payload_v2",
         ),
         temperature: this.conceptTemperature,
         max_tokens: this.conceptSegmentMaxTokens,
@@ -294,27 +312,20 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         validate: (payload) => {
           const schema = validateRoleCSchemaFragment(
             "concept_lesson_payload.schema.json",
-            "/$defs/author_payload",
+            "/$defs/author_payload_v2",
             payload,
           )
           if (!schema.ok) return validationIssues(schema)
-          const lenientAuthor = normalizeConceptSegmentAuthorPayloadLenient(payload)
-          const planIssues = validateConceptSegmentAuthorAgainstRequest(
-            segment,
-            lenientAuthor,
-          )
-          if (planIssues.length > 0) return planIssues
+          const issues = validateConceptSegmentV2AgainstPlans(payload, sectionPlans)
+          if (issues.length > 0) return issues
           return validationIssues(validateConceptLesson({
-            payload: materializeConceptSegmentAuthorPayload(segment, lenientAuthor),
+            payload: materialize(payload),
             spec: segment.generation_spec,
             evidence: segment.evidence_pack,
           }))
         },
       })
-      return materializeConceptSegmentAuthorPayload(
-        segment,
-        normalizeConceptSegmentAuthorPayloadLenient(authored),
-      )
+      return materialize(authored)
     })
     const payload = mergeConceptSegments(request, payloads)
     const validation = validateConceptLesson({

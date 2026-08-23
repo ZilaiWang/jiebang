@@ -3,7 +3,7 @@ import { resourceMatchView } from "./orchestrator-view"
 
 const officialResourceFit = {
   schema_version: "1.0",
-  policy_version: "resource-fit-v1",
+  policy_version: "resource-fit-v2",
   profile_ref: { profile_id: "PROFILE-ac49f9b7" },
   resources: [
     {
@@ -31,10 +31,23 @@ const officialResourceFit = {
   overall: { verdict: "too_hard", score: 0.944 },
 }
 
+const currentResources = {
+  concept_lesson: { artifact_id: "ART-1", run_id: "RUN-C-1" },
+  code_lab: { artifact_id: "ART-2", run_id: "RUN-C-1" },
+}
+const currentAssessment = { artifact_id: "ART-3", run_id: "RUN-C-1" }
+
 describe("resource match display view (official resource_fit)", () => {
   test("prefers the official C resource_fit fields over the D-side estimate", () => {
-    const view = resourceMatchView({ resource_fit: officialResourceFit }, {}, undefined)
+    const session = {
+      run_id: "RUN-1",
+      resource_fit: { ...officialResourceFit, run_id: "RUN-C-1" },
+      learning_resources: currentResources,
+      assessment: currentAssessment,
+    }
+    const view = resourceMatchView(session, {}, undefined)
     expect(view.source).toBe("official")
+    expect(view.fresh).toBe(true)
     expect(view.score).toBe(94)
     expect(view.label).toBe("需要关注")
     expect(view.resources).toHaveLength(3)
@@ -45,6 +58,55 @@ describe("resource match display view (official resource_fit)", () => {
     expect(view.resources[1].mismatchedDimensions).toContain("starter_support")
     expect(view.resources[1].reasonCodes).toContain("starter_support_1.3_vs_target_3")
     expect(view.overallVerdict).toBe("too_hard")
+    expect(view.reviewLabel).toBe("规则估计 · 尚未校准")
+  })
+
+  test("stale resource_fit (artifact mismatch) falls back instead of showing last round score", () => {
+    const session = {
+      run_id: "RUN-1",
+      resource_fit: { ...officialResourceFit, run_id: "RUN-C-1" },
+      learning_resources: {
+        concept_lesson: { artifact_id: "NEW-ART-1", run_id: "RUN-C-1" }, // 已更新的下一轮资源
+        code_lab: { artifact_id: "NEW-ART-2", run_id: "RUN-C-1" },
+      },
+      assessment: { artifact_id: "NEW-ART-3", run_id: "RUN-C-1" },
+    }
+    const view = resourceMatchView(session, {}, undefined)
+    expect(view.source).toBe("fallback")
+    expect(view.fresh).toBe(false)
+  })
+
+  test("stale resource_fit (run mismatch) falls back", () => {
+    const session = {
+      run_id: "RUN-ROOT",
+      resource_fit: { ...officialResourceFit, run_id: "RUN-C-OLD" },
+      learning_resources: {
+        concept_lesson: { artifact_id: "ART-1", run_id: "RUN-C-NEW" },
+        code_lab: { artifact_id: "ART-2", run_id: "RUN-C-NEW" },
+      },
+      assessment: { artifact_id: "ART-3", run_id: "RUN-C-NEW" },
+    }
+    const view = resourceMatchView(session, {}, undefined)
+    expect(view.source).toBe("fallback")
+  })
+
+  test("三个条目重复引用同一 artifact 时不视为当前完整报告", () => {
+    const duplicated = {
+      ...officialResourceFit,
+      run_id: "RUN-1",
+      resources: officialResourceFit.resources.map((entry) => ({
+        ...entry,
+        artifact_id: "ART-1",
+      })),
+    }
+    const view = resourceMatchView({
+      run_id: "RUN-1",
+      resource_fit: { ...duplicated, run_id: "RUN-C-1" },
+      learning_resources: currentResources,
+      assessment: currentAssessment,
+    }, {}, undefined)
+    expect(view.source).toBe("fallback")
+    expect(view.fresh).toBe(false)
   })
 
   test("falls back to the D-side estimate when the official field is absent", () => {

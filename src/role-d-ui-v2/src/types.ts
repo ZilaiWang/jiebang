@@ -149,8 +149,8 @@ export interface PublicSessionFixture {
   }
   rag_result?: unknown
   learning_resources: {
-    concept_lesson?: { payload: LessonPayload; citations: Citation[]; status: string }
-    code_lab?: { payload: CodeLabPayload; citations: Citation[]; status: string }
+    concept_lesson?: { artifact_id?: string; payload: LessonPayload; citations: Citation[]; status: string }
+    code_lab?: { artifact_id?: string; payload: CodeLabPayload; citations: Citation[]; status: string }
   }
   adaptation?: {
     adaptation_action: "remediate" | "reinforce" | "advance"
