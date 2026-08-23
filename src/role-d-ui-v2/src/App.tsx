@@ -566,6 +566,11 @@ function HomeDashboard({ user, mastered, providerConfigured, onNewPlan, onEnterP
       <div className="hero-copy"><span className="eyebrow"><Sparkles size={15} /> 欢迎回到 <span className="brand-art">KnowBalance</span></span><h1>Hello, <em>{user?.name ?? "新同学"}</em></h1><p className="hero-slogan"><span className="brand-art slogan-art">八位 Agent</span> 同心协作，<br/>&nbsp;&nbsp;&nbsp;&nbsp;让每次学习都有<span className="brand-art slogan-art">专属节奏</span>。</p><div className="hero-facts"><span><CalendarClock size={16} /> {user ? `每周 ${user.weeklyHours} 小时` : "正在建立档案"}</span><span><GraduationCap size={16} /> {user ? pythonLevelLabel(user.pythonLevel) : "认识你的起点"}</span><span className={providerConfigured ? "fact-ready" : "fact-warning"}><Settings2 size={16} /> {providerConfigured ? "通用模型已就绪" : "API待配置"}</span></div></div>
       <div className="hero-illustration" aria-hidden="true">
         <img src={learningCatIllustration} alt="KnowBalance 学习伙伴" className="hero-cat-illustration" />
+        <div className="metric-bubbles">
+          <div className="metric-bubble bubble-violet"><strong>＜5%</strong><small>知识谬误率</small></div>
+          <div className="metric-bubble bubble-mint"><strong>≥85%</strong><small>难度适配率</small></div>
+          <div className="metric-bubble bubble-blue"><strong>≥90%</strong><small>知识点覆盖率</small></div>
+        </div>
         <div className="floating-decorations">
           <span className="float-star star-1">✦</span>
           <span className="float-star star-2">✧</span>
