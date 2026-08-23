@@ -13,6 +13,7 @@ export { conceptTutorRepairPrompt } from "./concept-tutor/repair.prompt"
 export {
   STAGED_AUTHOR_PROMPT_VERSION,
   CONCEPT_SEGMENT_SYSTEM_PROMPT,
+  CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
 } from "./concept-tutor/staged.prompt"
 
 // ── Code Lab（代码实验） ──

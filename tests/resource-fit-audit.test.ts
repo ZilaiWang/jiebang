@@ -109,8 +109,41 @@ describe("resource-fit-audit：生成后实际难度估计与匹配判定", () =
         objective_coverage: [], used_evidence: [],
       } as never,
     })
-    expect(entry.observed.challenge.transfer_distance).toBe(2)
+    expect(entry.observed.challenge.transfer_distance).toBe(1)
     expect(entry.fit.mismatched_dimensions).not.toContain("transfer_distance")
+  })
+
+  test("相同 Tier 规划下，直接识别题与构造题产生不同的实际认知观测", () => {
+    const payload = (prompt: string, modality: "mcq" | "code", operation: string) => ({
+      form_id: `f-${operation}`, title: "t", objective_ids: ["O1"],
+      items: [{
+        item_id: `item-${operation}`, family_id: "fam", variant_id: "v",
+        display_no: 1, objective_id: "O1", tier: 2 as const, modality,
+        prompt, max_score: 10, citations: [],
+        structure_meta: {
+          operation,
+          reasoning_pattern: operation === "construct_solution" ? "multi_step" : "direct_identification",
+          representation: modality === "code" ? "code" : "text",
+          context_family: "direct",
+          answer_form: modality === "code" ? "code" : "single_choice",
+        },
+      }],
+      submission_policy: { max_attempts: 1, formative: false },
+      routing: { anchor_item_ids: [], rules: [] },
+      objective_coverage: [], used_evidence: [],
+    })
+    const direct = auditResourceFit({
+      artifact_id: "direct", kind: "assessment", target: TARGET_ASSESSMENT,
+      payload: payload("直接识别正确事实", "mcq", "recognize_fact") as never,
+    })
+    const construction = auditResourceFit({
+      artifact_id: "construction", kind: "assessment", target: TARGET_ASSESSMENT,
+      payload: payload("编写代码完成程序", "code", "construct_solution") as never,
+    })
+    expect(construction.observed.challenge.cognitive_demand)
+      .toBeGreaterThan(direct.observed.challenge.cognitive_demand)
+    expect(construction.observed.challenge.reasoning_steps)
+      .toBeGreaterThan(direct.observed.challenge.reasoning_steps)
   })
 
   test("支持明显不足时按具体维度判偏难，不再被挑战侧最大值掩盖", () => {
@@ -167,7 +200,7 @@ describe("resource_fit 进入 reviewed_release_delivery schema", () => {
       run_id: "R1",
       spec_id: "S1",
       profile_ref: { profile_id: "p1", profile_version: "v1", profile_content_hash: "h1" },
-      policy_version: "resource-fit-v1",
+      policy_version: "resource-fit-v2",
       resources: ["concept_lesson", "code_lab", "assessment"].map((kind, index) => ({
         artifact_id: `a${index + 1}`,
         kind,

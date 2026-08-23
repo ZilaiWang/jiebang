@@ -59,6 +59,8 @@ export interface CPipelineResult {
   status: "ready" | "blocked" | "failed"
   state: CPipelineState
   generation_spec: GenerationSpec
+  /** 本轮真正执行过的容量调整后蓝图，供最终资源审计复用。 */
+  resource_blueprint?: ResourceBlueprint
   public_artifacts: {
     concept_lesson?: ConceptLessonArtifact
     code_lab?: CodeLabPublicArtifact
@@ -1284,6 +1286,7 @@ async function runCPipelineCore(
     status: "ready",
     state,
     generation_spec: input.generation_spec,
+    resource_blueprint: resourceBlueprint,
     public_artifacts: publicArtifacts,
     secure_refs: secureRefs,
     alignment_report: alignmentReport,

@@ -266,6 +266,128 @@
       },
       "additionalProperties": false
     },
+    "author_payload_v2": {
+      "type": "object",
+      "required": [
+        "title",
+        "objectives"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "objective_id",
+              "sections",
+              "micro_check",
+              "hints"
+            ],
+            "properties": {
+              "objective_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sections": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "slot_id",
+                    "heading",
+                    "body",
+                    "steps",
+                    "code"
+                  ],
+                  "properties": {
+                    "slot_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "heading": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "micro_check": {
+                "type": "object",
+                "required": [
+                  "prompt",
+                  "options",
+                  "answer",
+                  "explanation"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "options": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "answer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "explanation": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              },
+              "hints": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "citation": {
       "type": "object",
       "required": [

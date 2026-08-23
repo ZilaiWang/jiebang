@@ -28,6 +28,10 @@ import {
   normalizeGroundedClaimText,
 } from "../validators/claim-grounding"
 import type { CodeLabRequest, ConceptTutorRequest, PriorAssessmentItem } from "../agents/types"
+import {
+  buildAssessmentPresentationPlan,
+  validateAssessmentPresentationBalance,
+} from "../planning/assessment-presentation"
 
 export interface ConceptSegmentRequest extends ConceptTutorRequest {
   segment_index: number
@@ -143,6 +147,18 @@ export interface AssessmentItemPlan {
     kind: "preferred_context" | "neutral_context"
     value?: string
   }
+  /**
+   * 题目表现形式（改进方案5 第九节）：确定性分配，整卷完整场景题控制在 ~35%。
+   * direct_fact 直接问定义/规则；scenario_transfer 才允许完整生活场景。
+   */
+  presentation_mode?:
+    | "direct_fact"
+    | "minimal_context"
+    | "code_trace"
+    | "error_diagnosis"
+    | "comparison"
+    | "scenario_transfer"
+    | "construction"
 }
 
 /** Public question semantics before stable IDs, scoring, routing and citations are attached. */
@@ -340,9 +356,8 @@ export function materializeConceptSegmentAuthorPayload(
       fact_id: factId,
       relation: "supports" as const,
     }))
-    const loneFact = target.required_fact_ids.length === 1
-      ? facts.get(`${target.source_id}:${target.required_fact_ids[0]}`)?.trim()
-      : undefined
+    const targetFacts = target.required_fact_ids.map((factId) =>
+      facts.get(`${target.source_id}:${factId}`) ?? "")
     const claims = (kind: string) => citations.map((citation, factIndex) => ({
       claim_id: stableId("CONCEPT-CLAIM", {
         ...identity,
@@ -357,32 +372,26 @@ export function materializeConceptSegmentAuthorPayload(
     const workedExampleId = stableId("CONCEPT-EXAMPLE", identity)
     const checkId = stableId("CONCEPT-CHECK", identity)
     const summaryId = stableId("CONCEPT-SUMMARY", identity)
+    // 改进方案5：不再因为只有一条事实就把模型写的 explanation/example/summary
+    // 整体替换成固定模板。模型输出通过后续事实审核才可发布；只有空输出才回退。
     explanationBlocks.push({
       block_id: explanationId,
       block_type: "paragraph",
-      text: loneFact
-        ? `本目标先准确理解一条核心事实：${loneFact}理解时保留这条事实的原意，不增加证据未说明的用途、领域或边界。`
-        : authored.explanation.trim(),
+      text: authored.explanation.trim() || deterministicFactFallback(targetFacts),
       claims: claims("explanation"),
     })
     workedExamples.push({
       block_id: workedExampleId,
       block_type: "paragraph",
-      text: loneFact
-        ? `辨认练习：将“${loneFact}”与当前目标对应起来，并只根据这条事实判断表述是否一致。`
-        : authored.worked_example.trim(),
+      text: authored.worked_example.trim() || deterministicFactFallback(targetFacts),
       claims: claims("worked-example"),
     })
     misconceptions.push({
       misconception_tag: stableId("CONCEPT-MISCONCEPTION", identity),
-      // A lone evidence fact has no supported comparison surface. In that
-      // case, materialize the misconception as a direct fact-level
-      // misunderstanding instead of allowing the model to invent concrete
-      // domains, APIs or mechanisms merely to make the example vivid.
-      explanation: evidenceBoundedMisconception(
-        target.required_fact_ids.map((factId) =>
-          facts.get(`${target.source_id}:${factId}`) ?? ""),
-      ),
+      // 改进方案5：模型写的 misconception 通过定向校验后被采用；只有空/复制模板时回退。
+      explanation: validateMisconceptionAgainstFacts(authored.misconception, targetFacts)
+        ? authored.misconception.trim()
+        : evidenceBoundedMisconception(targetFacts),
       objective_id: target.objective_id,
       citations: structuredClone(citations),
     })
@@ -419,7 +428,7 @@ export function materializeConceptSegmentAuthorPayload(
     summary.push({
       block_id: summaryId,
       block_type: "paragraph",
-      text: loneFact ?? authored.summary.trim(),
+      text: authored.summary.trim() || deterministicFactFallback(targetFacts),
       claims: claims("summary"),
     })
     objectiveCoverage.push({
@@ -451,6 +460,32 @@ function evidenceBoundedMisconception(facts: string[]): string {
     `纠正：当前可确认的事实是：${groundedFacts.join("；")}`,
     "自查：只依据这些事实判断，不添加证据未给出的条件、用途或例子。",
   ].join("\n")
+}
+
+/**
+ * 判断模型写的 misconception 是否可被采用（改进方案5 第六节第 5 条）。
+ * 只有空输出、或模型偷懒复制了统一 fallback 模板时才拒绝，改用确定性 fallback；
+ * 否则保留模型针对具体知识点写的误区，让不同知识点有真实差异。
+ * 判断模型写的误区是否有实质内容、且至少锚定一条当前事实（提及事实核心词）。
+ * 这是"定向可用性"校验：拦截空输出、复制模板、以及完全脱离事实的臆造；
+ * 误区与事实的最终语义一致性仍由后续 fact audit 把关（本函数不承诺语义校验）。
+ */
+function validateMisconceptionAgainstFacts(misconception: string, facts: string[]): boolean {
+  const text = misconception.trim()
+  if (text.length < 4) return false
+  if (text.includes("否认下面某条事实") || text.includes("擅自把它扩大")) return false
+  // 误区必须锚定至少一条事实的核心词（长度 >= 2 的非停用词），否则视为脱离事实的臆造。
+  const contentWords = facts.flatMap((fact) => fact
+    .split(/[，。！？；、：""''（）()\s]/u)
+    .flatMap((segment) => segment.match(/[\u4e00-\u9fa5A-Za-z0-9]{2,}/g) ?? []))
+  if (contentWords.length === 0) return true
+  return contentWords.some((word) => text.includes(word))
+}
+
+/** 空输出的确定性事实回退：直接给出事实原意，而不是三句固定模板。 */
+function deterministicFactFallback(facts: string[]): string {
+  const grounded = facts.map((fact) => fact.trim()).filter(Boolean)
+  return grounded.length > 0 ? grounded.join("；") : ""
 }
 
 export function mergeConceptSegments(
@@ -1345,7 +1380,8 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
   const modalities = buildAssessmentModalities(spec, tiers)
 
   const assignments = assignObjectives(spec, modalities)
-  return tiers.map((tier, index) => {
+  const preferredContexts = spec.learner_adaptation?.preferred_contexts ?? []
+  const baseItems = tiers.map((tier, index) => {
     const objective = assignments[index]
     const modality = modalities[index]
     const objectiveOccurrence = assignments
@@ -1372,17 +1408,39 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
         objective.observable_behavior,
         modality,
       ),
-      context_strategy: spec.learner_adaptation?.preferred_contexts?.[0]
-        ? {
-            kind: "preferred_context" as const,
-            value: spec.learner_adaptation.preferred_contexts[0],
-          }
-        : { kind: "neutral_context" as const },
       citations: plannedFactIds.map((factId) => ({
         source_id: objective.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
       })),
+    }
+  })
+  // 题目表现形式：确定性分配场景额度，避免每道题都套同一个 preferred context。
+  const presentationPlan = buildAssessmentPresentationPlan(
+    baseItems.map((item) => ({
+      item_id: item.item_id,
+      family_id: item.family_id,
+      variant_id: item.variant_id,
+      display_no: item.display_no,
+      objective_id: item.objective_id,
+      observation_key: item.observation_key,
+      tier: item.tier,
+      modality: item.modality,
+      max_score: item.max_score,
+      citations: item.citations,
+      cognitive_operation: item.cognitive_operation,
+      context_strategy: { kind: "neutral_context" as const },
+    })),
+    preferredContexts,
+  )
+  return baseItems.map((item, index) => {
+    const presentation = presentationPlan[index]!
+    return {
+      ...item,
+      presentation_mode: presentation.mode,
+      context_strategy: presentation.mode === "scenario_transfer" && presentation.context
+        ? { kind: "preferred_context" as const, value: presentation.context }
+        : { kind: "neutral_context" as const },
     }
   })
 }
@@ -1840,6 +1898,16 @@ export function validateAssessmentPublicAgainstPlan(
     issues.push(`items 数量应为 ${plan.length}，实际 ${payload.items.length}`)
     return issues
   }
+  const presentationPlan = plan.map((item) => ({
+    item_id: item.item_id,
+    mode: item.presentation_mode ?? "minimal_context",
+    ...(item.context_strategy.kind === "preferred_context" && item.context_strategy.value
+      ? { context: item.context_strategy.value }
+      : {}),
+    variation_axis: "operation" as const,
+  }))
+  issues.push(...validateAssessmentPresentationBalance(payload, presentationPlan)
+    .map((entry) => `[${entry.code}] ${entry.path} ${entry.message}`))
   payload.items.forEach((item, index) => {
     const expected = plan[index]
     if (item.modality !== expected.modality) {

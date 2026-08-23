@@ -23,6 +23,7 @@ export interface ObjectiveSupportPlan {
     | "fact_negation"
     | "recognition_check"
     | "procedure_trace"
+    | "explicit_comparison"
     | "normative_task"
   >
   artifact_support: {
@@ -73,6 +74,7 @@ const PROCESS_PATTERN = /步骤|顺序|先.*后|然后|接着|遍历|循环|迭�
 const RULE_PATTERN = /规则|如果.*(?:那么|则)|输入.*(?:输出|结果)|返回(?:值|结果)|换算|计算|逐项|每次/i
 const BOUNDARY_PATTERN = /边界|约束|不能|不允许|错误|异常|越界|冲突|限制|上限|下限/i
 const CODE_PATTERN = /函数|def |程序|接口|合同|参数|调用|返回|print|input|lambda/i
+const COMPARISON_PATTERN = /相比|区别|不同于|相同点|共同点|两者|二者|分别|而不是|与.{0,12}不同/u
 
 export function supportedBehaviorsFor(facts: Array<{ content: string }>): ObservableBehavior[] {
   const text = facts.map((fact) => fact.content).join("\n")
@@ -102,6 +104,9 @@ export function assessObjectiveSupport(input: {
 
   const allowedMoves = ["direct_paraphrase", "direct_instance", "fact_negation", "recognition_check"] as ObjectiveSupportPlan["allowed_content_moves"]
   if (supported.includes("trace")) allowedMoves.push("procedure_trace")
+  if (COMPARISON_PATTERN.test(input.facts.map((fact) => fact.content).join("\n"))) {
+    allowedMoves.push("explicit_comparison")
+  }
   if (supported.includes("create") || supported.includes("apply")) allowedMoves.push("normative_task")
 
   const concept: ObjectiveSupportPlan["artifact_support"]["concept"] = input.facts.length === 0

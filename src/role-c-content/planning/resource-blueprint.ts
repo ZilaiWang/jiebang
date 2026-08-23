@@ -4,6 +4,8 @@ import type { RagEvidencePack } from "../contracts/evidence-pack"
 import { adaptationDefaults, type GenerationSpec } from "../contracts/generation-spec"
 import type { AssessmentBlueprint } from "../contracts/profile-adapter"
 import type { AssessmentCapacityPlan } from "./assessment-capacity"
+import { assessObjectiveSupport } from "./artifact-feasibility"
+import { conceptModeForSupport } from "./concept-section-plan"
 import {
   splitDifficultyVector,
   type ChallengeVector,
@@ -30,8 +32,8 @@ export interface ResourceBlueprintObjective {
   concept: {
     /** Stable objective order. Provider-specific batching is intentionally separate. */
     sequence_index: number
-    /** Evidence-density mode constrains how much semantic expansion is safe. */
-    mode: "normal" | "sparse_safe"
+    /** 讲义创作模式（改进方案5 第六节）：由事实内容与数量决定，比 sparse_safe 更细。 */
+    mode: "definition_only" | "guided_explanation" | "procedural" | "comparative"
     required_parts: Array<"explanation" | "worked_example" | "misconception" | "micro_check" | "hints" | "summary">
     prerequisite_source_ids: string[]
   }
@@ -194,7 +196,8 @@ export function buildResourceBlueprint(
   const taskContract = decideCodeLabTaskContract(spec, evidence)
   const crossArtifactContract = buildCrossArtifactContract()
   const qualityRequirement = decideQualityRequirement(assessmentSpec, codeObjectivePlan.length)
-  const difficultyPlan = buildDifficultyPlan(spec)
+  // 容量缩减后，目标难度必须来自实际执行的 assessment blueprint。
+  const difficultyPlan = buildDifficultyPlan(assessmentSpec)
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
       entry.objective_id === target.objective_id)!
@@ -204,10 +207,12 @@ export function buildResourceBlueprint(
       .map((fact) => fact.content.trim())
       .filter(Boolean)
     const conceptMode: ResourceBlueprintObjective["concept"]["mode"] =
-      targetFactTexts.length <= 3
-        || targetFactTexts.join("\n").length < 280
-        ? "sparse_safe"
-        : "normal"
+      conceptModeForObjective(
+        target.observable_behavior,
+        targetFactTexts,
+        target.required_fact_ids.map((factId) => ({ source_id: target.source_id, fact_id: factId })),
+        target.objective_id,
+      )
     return {
       objective_id: target.objective_id,
       source_id: target.source_id,
@@ -329,6 +334,8 @@ export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPla
   const concept: ResourceDifficultyPlanEntry = {
     challenge_target: {
       ...challenge,
+      // 讲义比测评低一档。target 由教学设计决定，observed 由真实内容决定，
+      // 二者独立比较；不为配合估算器下限而抬高目标（否则会掩盖估算器问题）。
       cognitive_demand: clamp5(challenge.cognitive_demand - 1),
       reasoning_steps: clamp5(challenge.reasoning_steps - 1),
       code_complexity: clamp5(challenge.code_complexity - 1),
@@ -387,6 +394,31 @@ export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPla
 
 function clamp5(value: number): number {
   return Math.max(0, Math.min(5, Math.round(value * 10) / 10))
+}
+
+/**
+ * 由事实内容与数量决定讲义创作模式（改进方案5 第六节）。
+ * 不再用单一的 facts.length <= 3 判断 sparse_safe：
+ *  - comparative：证据明确描述对比/区别 → 允许比较
+ *  - procedural：证据含步骤/顺序/执行 → 允许过程拆解
+ *  - definition_only：事实极少且无过程/对比 → 只讲定义与识别
+ *  - guided_explanation：事实充足 → 分层解释 + 直接实例 + 误区
+ */
+function conceptModeForObjective(
+  behavior: string,
+  factTexts: string[],
+  factRefs: Array<{ source_id: string; fact_id: string }>,
+  objectiveId: string,
+): "definition_only" | "guided_explanation" | "procedural" | "comparative" {
+  // 复用 feasibility 的证据能力判断（单一权威），不再用关键词判断，避免
+  // "可行性说只有定义能力，Blueprint 却认为能讲过程"的冲突。
+  const support = assessObjectiveSupport({
+    objective_id: objectiveId,
+    observable_behavior: behavior as never,
+    fact_refs: factRefs,
+    facts: factTexts.map((content) => ({ content })),
+  })
+  return conceptModeForSupport(support, factTexts.length)
 }
 
 function buildCrossArtifactContract(): ResourceBlueprint["cross_artifact_contract"] {

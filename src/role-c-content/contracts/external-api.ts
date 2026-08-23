@@ -326,12 +326,13 @@ function reviewedRelease(pipeline: ReviewedCPipelineResult): {
 
 /**
  * 对通过审核的三个真实 artifact 生成 Resource Fit Report。
- * target 来自 generation_spec 的 difficulty_plan（三类资源各自的目标难度）；
+ * target 优先来自流水线实际执行过的容量调整后 ResourceBlueprint；
  * observed 由确定性结构特征估计；再对比得到 fit verdict。
  */
 function buildResourceFit(pipeline: ReviewedCPipelineResult): ResourceFitReport {
   const spec = pipeline.generation_spec
-  const difficultyPlan = buildDifficultyPlan(spec)
+  const difficultyPlan = pipeline.resource_blueprint?.difficulty_plan
+    ?? buildDifficultyPlan(spec)
   const reviewed = assertReviewedReadyPipeline(pipeline, { error_prefix: "ROLE_C_D_FIT" })
   const entries = ([
     { kind: "concept_lesson" as const, artifact: reviewed.artifacts[0] },

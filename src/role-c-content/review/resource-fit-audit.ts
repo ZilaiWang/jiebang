@@ -14,6 +14,11 @@ import {
   type SupportProfile,
 } from "../contracts/resource-fit"
 import type { ResourceDifficultyPlanEntry } from "../planning/resource-blueprint"
+import {
+  computeWeightedFit,
+  overallFitScoreV2,
+  type FitDimensionMeasurement,
+} from "../planning/resource-fit-v2"
 
 /**
  * Resource Difficulty Audit（规则可测 + 语义可补充）。
@@ -38,7 +43,7 @@ const CLAMP = (value: number) => Math.max(0, Math.min(5, Math.round(value * 10) 
 
 export function auditResourceFit(input: ResourceFitAuditInput): ArtifactResourceFit {
   const observed = estimateObserved(input.kind, input.payload)
-  const fit = computeFit(observed, input.target)
+  const fit = computeFit(input.kind, observed, input.target)
   return {
     artifact_id: input.artifact_id,
     kind: input.kind,
@@ -63,9 +68,11 @@ export function buildResourceFitReport(input: {
     throw new Error("RESOURCE_FIT_REQUIRES_THREE_ARTIFACT_KINDS")
   }
   const scores = input.entries.map((entry) => entry.fit.score)
-  const overallScore = scores.length === 0
-    ? 0
-    : scores.reduce((sum, score) => sum + score, 0) / scores.length
+  // Resource Fit v2 overall：加权 + weakest 上限，防止某资源被另两个高分掩盖。
+  const lesson = input.entries.find((entry) => entry.kind === "concept_lesson")?.fit.score ?? 0
+  const lab = input.entries.find((entry) => entry.kind === "code_lab")?.fit.score ?? 0
+  const assessment = input.entries.find((entry) => entry.kind === "assessment")?.fit.score ?? 0
+  const overallScore = overallFitScoreV2({ lesson, lab, assessment })
   return {
     schema_version: "1.0",
     run_id: input.run_id,
@@ -97,7 +104,11 @@ function estimateObserved(kind: ResourceFitKind, payload: unknown): Observed {
 function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
   const codeBlocks = payload.explanation_blocks.filter((block) => "block_type" in block && block.block_type === "code").length
     + payload.worked_examples.filter((block) => "block_type" in block && block.block_type === "code").length
-  const workedSteps = payload.worked_examples.reduce((sum, block) => sum + ("steps" in block ? (block as { steps?: unknown[] }).steps?.length ?? 1 : 1), 0)
+  const workedSteps = payload.worked_examples.reduce((sum, block) => {
+    const text = learnerVisibleBlockText(block)
+    const explicitSteps = text.split(/\r?\n/u).filter((line) => /^\s*(?:\d+[.)、]|[-*])\s+/u.test(line)).length
+    return sum + Math.max(1, explicitSteps)
+  }, 0)
   const misconceptionDepth = payload.misconceptions.length
   const hintCount = payload.hint_ladders.reduce((sum, ladder) => sum + ladder.hints.length, 0)
   const microCheckCount = payload.micro_checks.length
@@ -172,23 +183,24 @@ function estimateCodeLab(payload: CodeLabPublicPayload): Observed {
 
 function estimateAssessment(payload: AssessmentPublicPayload): Observed {
   const items = payload.items
-  const tier3 = items.filter((item) => item.tier === 3).length
-  const tier2 = items.filter((item) => item.tier === 2).length
-  const hardModalities = items.filter((item) => item.modality === "code" || item.modality === "trace").length
+  const itemDemands = items.map(assessmentItemDemand)
   const distinctOperations = new Set(items.map((item) => item.structure_meta?.operation).filter(Boolean)).size
-  // Context diversity is a form-level novelty feature, not cumulative transfer
-  // demand for one learner response. Use the hardest planned tier instead.
-  const transferDistance = items.some((item) => item.tier === 3)
-    ? 2
-    : items.some((item) => item.tier === 2)
-      ? 1
-      : 0
+  const cognitiveDemand = itemDemands.length === 0
+    ? 0
+    : itemDemands.reduce((sum, item) => sum + item.cognitive, 0) / itemDemands.length
+  const reasoningSteps = itemDemands.length === 0
+    ? 0
+    : Math.max(...itemDemands.map((item) => item.reasoning))
+  const transferDistance = itemDemands.length === 0
+    ? 0
+    : Math.max(...itemDemands.map((item) => item.transfer))
 
   return {
     challenge: {
       domain_complexity: CLAMP(1 + payload.objective_ids.length * 0.5),
-      cognitive_demand: CLAMP(1 + tier2 * 0.5 + tier3),
-      reasoning_steps: CLAMP(hardModalities + tier3),
+      // observed 读取真实题面/题型/结构元数据，不再由 Tier 数量复制 target。
+      cognitive_demand: CLAMP(cognitiveDemand),
+      reasoning_steps: CLAMP(reasoningSteps),
       code_complexity: CLAMP(items.filter((item) => item.modality === "code").length),
       prerequisite_load: CLAMP(Math.max(0,
         new Set(payload.used_evidence.map((entry) => entry.source_id)).size - 1,
@@ -204,6 +216,46 @@ function estimateAssessment(payload: AssessmentPublicPayload): Observed {
     },
     confidence: 0.9,
   }
+}
+
+function assessmentItemDemand(item: AssessmentPublicPayload["items"][number]): {
+  cognitive: number
+  reasoning: number
+  transfer: number
+} {
+  const meta = item.structure_meta
+  const surface = [
+    item.prompt,
+    item.starter_code ?? "",
+    meta?.operation ?? "",
+    meta?.reasoning_pattern ?? "",
+    meta?.answer_form ?? "",
+  ].join(" ").toLocaleLowerCase()
+  const direct = /直接|识别|判断|正误|single|fact|recall/u.test(surface)
+  const multistep = /多步|链式|综合|compose|推导|逐步|trace|追踪/u.test(surface)
+  const diagnosis = /诊断|纠错|debug|错误原因|修正/u.test(surface)
+  const construction = item.modality === "code" || /构造|实现|编写|construction/u.test(surface)
+  const cognitive = construction
+    ? 4
+    : diagnosis || multistep || item.modality === "trace"
+      ? 3
+      : direct
+        ? 1
+        : 2
+  const reasoning = construction
+    ? 4
+    : multistep || diagnosis || item.modality === "trace"
+      ? 3
+      : direct
+        ? 1
+        : 2
+  const context = meta?.context_family?.trim().toLocaleLowerCase() ?? ""
+  const transfer = !context || context === "direct"
+    ? 0
+    : /迁移|综合|transfer/u.test(surface)
+      ? 2
+      : 1
+  return { cognitive, reasoning, transfer }
 }
 
 function estimateStarterSupport(starterCode: string): number {
@@ -239,19 +291,33 @@ function readingDensity(textLength: number, blockCount: number): SupportProfile[
 
 // ── fit 判定 ──
 
-function computeFit(observed: Observed, target: ResourceDifficultyPlanEntry): ArtifactResourceFit["fit"] {
+function computeFit(
+  kind: ResourceFitKind,
+  observed: Observed,
+  target: ResourceDifficultyPlanEntry,
+): ArtifactResourceFit["fit"] {
   const mismatched: string[] = []
   const reasons: string[] = []
   const hardSignals: string[] = []
   const easySignals: string[] = []
-  const gaps: number[] = []
+  const dimensions: FitDimensionMeasurement[] = []
 
   for (const dimension of CHALLENGE_DIMENSIONS) {
     const targetValue = target.challenge_target[dimension]
     if (targetValue === undefined) continue
     const observedValue = observed.challenge[dimension] ?? 0
     const gap = observedValue - targetValue
-    gaps.push(Math.abs(gap))
+    dimensions.push({
+      name: dimension,
+      family: "challenge",
+      target: targetValue,
+      observed: observedValue,
+      applicable: challengeDimensionApplicable(kind, dimension, targetValue, observedValue),
+      weight: 1,
+      tolerance: 2,
+      direction: "higher_is_harder",
+      basis: [{ feature: dimension, value: observedValue }],
+    })
     if (Math.abs(gap) <= 1) continue
     mismatched.push(dimension)
     reasons.push(`${dimension}_${observedValue}_vs_target_${targetValue}`)
@@ -259,18 +325,41 @@ function computeFit(observed: Observed, target: ResourceDifficultyPlanEntry): Ar
   }
 
   for (const dimension of SUPPORT_DIMENSIONS) {
-    const gap = observed.support[dimension] - target.support_target[dimension]
-    gaps.push(Math.abs(gap))
+    const targetValue = target.support_target[dimension]
+    const observedValue = observed.support[dimension]
+    const gap = observedValue - targetValue
+    dimensions.push({
+      name: dimension,
+      family: "support",
+      target: targetValue,
+      observed: observedValue,
+      applicable: supportDimensionApplicable(kind, dimension),
+      weight: 1,
+      tolerance: 2,
+      direction: "higher_is_more_supportive",
+      basis: [{ feature: dimension, value: observedValue }],
+    })
     if (Math.abs(gap) <= 1.5) continue
     mismatched.push(dimension)
-    reasons.push(`${dimension}_${observed.support[dimension]}_vs_target_${target.support_target[dimension]}`)
+    reasons.push(`${dimension}_${observedValue}_vs_target_${targetValue}`)
     // 支持不足会让资源偏难；支持过强会让资源偏易。
     ;(gap < 0 ? hardSignals : easySignals).push(dimension)
   }
 
   const readingGap = readingSupport(observed.support.reading_density)
     - readingSupport(target.support_target.reading_density)
-  gaps.push(Math.abs(readingGap))
+  dimensions.push({
+    name: "reading_density",
+    family: "support",
+    target: readingSupport(target.support_target.reading_density),
+    observed: readingSupport(observed.support.reading_density),
+    // 阅读密度对三类公开资源都适用；即使完全匹配也应作为真实适用维度计入。
+    applicable: true,
+    weight: 1,
+    tolerance: 2,
+    direction: "higher_is_more_supportive",
+    basis: [{ feature: "reading_density", value: observed.support.reading_density }],
+  })
   if (Math.abs(readingGap) > 1) {
     mismatched.push("reading_density")
     reasons.push(`reading_density_${observed.support.reading_density}_vs_target_${target.support_target.reading_density}`)
@@ -278,7 +367,8 @@ function computeFit(observed: Observed, target: ResourceDifficultyPlanEntry): Ar
   }
 
   const verdict = fitVerdict(hardSignals.length, easySignals.length, observed.confidence)
-  const score = fitScore(gaps)
+  // Resource Fit v2：只统计适用维度，penalty = (gap/tolerance)² × weight。
+  const score = computeWeightedFit(dimensions)
 
   return {
     verdict,
@@ -286,6 +376,28 @@ function computeFit(observed: Observed, target: ResourceDifficultyPlanEntry): Ar
     mismatched_dimensions: mismatched,
     reason_codes: reasons,
   }
+}
+
+function challengeDimensionApplicable(
+  kind: ResourceFitKind,
+  dimension: typeof CHALLENGE_DIMENSIONS[number],
+  target: number,
+  observed: number,
+): boolean {
+  if (["domain_complexity", "cognitive_demand", "reasoning_steps", "prerequisite_load"].includes(dimension)) {
+    return true
+  }
+  if (kind === "concept_lesson" && dimension === "code_complexity") return target !== 0 || observed !== 0
+  return target !== 0 || observed !== 0
+}
+
+function supportDimensionApplicable(
+  kind: ResourceFitKind,
+  dimension: typeof SUPPORT_DIMENSIONS[number],
+): boolean {
+  if (kind === "assessment") return false
+  if (kind === "concept_lesson" && dimension === "starter_support") return false
+  return true
 }
 
 const CHALLENGE_DIMENSIONS = [
@@ -305,13 +417,6 @@ function fitVerdict(hardCount: number, easyCount: number, confidence: number): R
   if (hardCount > 0) return "too_hard"
   if (easyCount > 0) return "too_easy"
   return "fit"
-}
-
-function fitScore(gaps: number[]): number {
-  const meanNormalizedGap = gaps.length === 0
-    ? 1
-    : gaps.reduce((sum, gap) => sum + Math.min(1, gap / 5), 0) / gaps.length
-  return Math.round(Math.max(0, 1 - meanNormalizedGap) * 1000) / 1000
 }
 
 function overallVerdict(entries: ArtifactResourceFit[]): ResourceFitVerdict {

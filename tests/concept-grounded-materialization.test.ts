@@ -46,7 +46,8 @@ describe("concept lesson grounded materialization", () => {
       summary: lesson.summary,
     })
     expect(factualText).toContain("逐条阅读指令的助手")
-    expect(factualText).toContain("否认下面某条事实")
+    // 改进方案5：模型写的 misconception 通过定向校验后被保留，不再被统一 fallback 覆盖。
+    expect(factualText).toContain("所有任务只能使用 Python")
     expect(factualText).toContain("‘通用编程语言’与给出的事实一致")
     expect(factualText).toContain("Python 是一种通用编程语言")
     expect(factualText).toContain("Python 程序通常由解释器执行")
@@ -90,14 +91,17 @@ describe("concept lesson grounded materialization", () => {
       }],
     })
 
-    expect(lesson.misconceptions[0]?.explanation).toContain("Python 是一种通用编程语言")
-    expect(lesson.misconceptions[0]?.explanation).not.toContain("数据分析")
-    expect(lesson.misconceptions[0]?.explanation).not.toContain("网页开发")
+    // 改进方案5：单条事实不再触发固定模板覆盖，模型写的 explanation/worked_example/summary 被保留。
+    expect(lesson.misconceptions[0]?.explanation).toContain("Python 只用于数据分析")
     expect(lesson.explanation_blocks[0] && "text" in lesson.explanation_blocks[0]
       ? lesson.explanation_blocks[0].text
-      : "").not.toContain("认识 Python")
+      : "").toContain("认识 Python")
     expect(lesson.worked_examples[0] && "text" in lesson.worked_examples[0]
       ? lesson.worked_examples[0].text
-      : "").toContain("只根据这条事实")
+      : "").toContain("辨认这条定义")
+    // factual claims 仍然被程序冻结为事实原文。
+    expect(lesson.summary[0] && "text" in lesson.summary[0]
+      ? lesson.summary[0].text
+      : "").toContain("Python 是通用编程语言")
   })
 })
