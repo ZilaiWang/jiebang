@@ -147,6 +147,7 @@ mode=comparative：
 3. 定义类目标优先直接解释；过程类目标再使用简短情境。
 4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释。
 5. intermediate/integrated：压缩基础说明；只有 evidence 支持时才增加比较、边界和迁移。
+6. evidence.examples 是知识库已审核的示例（带 fact_refs）：worked_example section 优先基于它们做逐步说明与直接实例；evidence.practice_tasks 是已审核的练习任务（带 fact_refs），可用作自查或迁移素材。使用它们时只能实例化其 fact_refs 指向的事实，不得引入示例/练习中 evidence 未说明的 API、机制、返回类型或运行结果。
 
 ══════════════════════════════════════
 四、Misconception
