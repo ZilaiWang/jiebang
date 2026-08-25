@@ -26,6 +26,7 @@ import {
 import {
   claimTextMatchesFact,
   normalizeGroundedClaimText,
+  visibleTeachingTextExpressesFact,
 } from "../validators/claim-grounding"
 import type { CodeLabRequest, ConceptTutorRequest, PriorAssessmentItem } from "../agents/types"
 import {
@@ -2425,11 +2426,9 @@ function anchorRenderedClaim(block: RenderBlock): void {
   if (!("claims" in block) || block.block_type === "code") return
   const rendered = renderedTextForAnchor(block)
   const missing = unique(block.claims.map((claim) => claim.text).filter((claimText) =>
-    !normalizeGroundedClaimText(rendered).includes(
-      normalizeGroundedClaimText(claimText),
-    )))
+    !visibleTeachingTextExpressesFact(rendered, claimText)))
   if (missing.length === 0) return
-  const anchor = `证据事实：${missing.join("；")}`
+  const anchor = missing.join("；")
   if (block.block_type === "paragraph" || block.block_type === "callout") {
     block.text = `${block.text.trim()}\n${anchor}`
     return
@@ -2475,7 +2474,7 @@ function anchorMisconceptionEvidence(
         : []
     }))
     if (missing.length > 0) {
-      misconception.explanation = `${misconception.explanation.trim()}\n证据事实：${missing.join("；")}`
+      misconception.explanation = `${misconception.explanation.trim()}\n${missing.join("；")}`
     }
   }
 }
