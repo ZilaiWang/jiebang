@@ -30,3 +30,28 @@ export function claimTextMatchesFact(claimText: string, factText: string): boole
   const fact = normalizeGroundedClaimText(factText)
   return claim.length > 0 && fact.length > 0 && claim === fact
 }
+
+/**
+ * 教学叙述的有限词汇覆盖检查。
+ *
+ * Claim 仍必须由 claimTextMatchesFact 做严格等价校验；本函数只用于
+ * 学习者可见的 narrative explanation，允许调整语序或使用指代，
+ * 但不做开放式语义推断。
+ */
+export function visibleTeachingTextExpressesFact(text: string, factText: string): boolean {
+  const rendered = normalizeGroundedClaimText(text)
+  const fact = normalizeGroundedClaimText(factText)
+  if (!rendered || !fact) return false
+  if (rendered.includes(fact)) return true
+  // 短事实信息量太少，模糊匹配容易产生假阳性。
+  if (fact.length < 8) return false
+
+  const latinTerms = fact.match(/[a-z][a-z0-9_.-]*/gu) ?? []
+  if (latinTerms.some((term) => !rendered.includes(term))) return false
+
+  const factCharacters = [...new Set(Array.from(fact))]
+  const matchedCharacters = factCharacters.filter((character) => rendered.includes(character))
+  return matchedCharacters.length >= 8
+    && matchedCharacters.length / factCharacters.length >= 0.68
+    && rendered.length >= Math.ceil(fact.length * 0.75)
+}

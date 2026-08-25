@@ -1,7 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { materializeConceptSegmentAuthorPayload } from "../src/role-c-content/providers/staged-generation"
+import {
+  claimTextMatchesFact,
+  visibleTeachingTextExpressesFact,
+} from "../src/role-c-content/validators/claim-grounding"
 
 describe("concept lesson grounded materialization", () => {
+  test("只对教学叙述允许有限语序重组，严格 Claim 仍不接受自由改写", () => {
+    const fact = "Python 程序通常由解释器执行。"
+    const teachingText = "写好 Python 程序后，它的运行通常离不开解释器。"
+    expect(visibleTeachingTextExpressesFact(teachingText, fact)).toBe(true)
+    expect(claimTextMatchesFact(teachingText, fact)).toBe(false)
+    expect(visibleTeachingTextExpressesFact("今天开始学习 Python 基础知识。", fact)).toBe(false)
+  })
+
   test("keeps authored teaching prose while freezing factual claims and citations", () => {
     const lesson = materializeConceptSegmentAuthorPayload({
       generation_spec: {

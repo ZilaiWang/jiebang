@@ -36,6 +36,29 @@ describe("改进方案5 第六节：讲义 Section Plan", () => {
     }
   })
 
+  test("大事实集拆成多个有界连续讲解单元", () => {
+    const factIds = Array.from({ length: 12 }, (_, index) => `F${String(index + 1).padStart(3, "0")}`)
+    const plan = buildConceptSectionPlan({
+      objective_id: "O1", observable_behavior: "recognize",
+      fact_ids: factIds, support: support({ factCount: factIds.length }),
+    })
+    const explanationSlots = plan.slots.filter((slot) => slot.kind === "fact_explanation")
+    expect(explanationSlots.map((slot) => slot.fact_ids)).toEqual([
+      ["F001", "F002", "F003"],
+      ["F004", "F005", "F006"],
+      ["F007", "F008", "F009"],
+      ["F010", "F011", "F012"],
+    ])
+    expect(explanationSlots.every((slot) => slot.fact_ids.length <= 3)).toBe(true)
+    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.fact_ids).toEqual([
+      "F001", "F002", "F003",
+    ])
+    expect(plan.slots.find((slot) => slot.kind === "recap")?.fact_ids).toEqual([
+      "F001", "F002", "F003",
+    ])
+    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.max_sentences).toBe(6)
+  })
+
   test("未允许 procedure_trace 时不得生成 procedure_steps slot", () => {
     const plan = buildConceptSectionPlan({
       objective_id: "O1", observable_behavior: "explain",

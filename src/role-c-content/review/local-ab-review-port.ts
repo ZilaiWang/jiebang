@@ -12,7 +12,10 @@ import type {
   TeachingAuditResult,
 } from "../../role-b-profile/teaching-audit/types"
 import { stableId } from "../contracts/common"
-import { normalizeGroundedClaimText } from "../validators/claim-grounding"
+import {
+  normalizeGroundedClaimText,
+  visibleTeachingTextExpressesFact,
+} from "../validators/claim-grounding"
 import { extractReviewBlocks } from "./extract-review-blocks"
 import { agentForReviewArtifact } from "./revision-mapper"
 import { resolveFindingDisposition } from "./disposition-resolver"
@@ -517,7 +520,9 @@ function auditEvidenceAnchoredBlocks(
       const key = `${citation.source_id}:${citation.fact_id}`
       const fact = facts.get(key)
       if (!fact) missingFacts.push({ key, kind: "missing_citation" })
-      else if (!rendered.includes(normalizeGroundedClaimText(fact))) {
+      else if (block.surface_kind === "narrative_explanation"
+        ? !visibleTeachingTextExpressesFact(block.text, fact)
+        : !rendered.includes(normalizeGroundedClaimText(fact))) {
         missingFacts.push({ key, kind: "missing_anchor" })
       }
     }

@@ -59,6 +59,7 @@ import {
   buildConceptSectionPlansForSegment,
   materializeConceptSegmentV2,
   validateConceptSegmentV2AgainstPlans,
+  validateConceptVisibleFactCoverage,
   type ConceptSegmentAuthorPayloadV2,
 } from "../planning/concept-section-plan"
 import {
@@ -318,6 +319,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           if (!schema.ok) return validationIssues(schema)
           const issues = validateConceptSegmentV2AgainstPlans(payload, sectionPlans)
           if (issues.length > 0) return issues
+          const visibleCoverageIssues = validateConceptVisibleFactCoverage(
+            segment,
+            payload,
+            sectionPlans,
+          )
+          if (visibleCoverageIssues.length > 0) return visibleCoverageIssues
           return validationIssues(validateConceptLesson({
             payload: materialize(payload),
             spec: segment.generation_spec,
