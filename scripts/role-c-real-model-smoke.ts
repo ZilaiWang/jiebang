@@ -3,10 +3,12 @@ import { loadKnowledgeBase } from "../src/knowledge/loader"
 import { retrieveKnowledge } from "../src/rag/retriever"
 import { buildRagRequest } from "../src/role-b-profile/rag-bridge"
 import type { LearnerProfile } from "../src/role-b-profile/types"
+import { PublicQualityGateError } from "../src/role-c-content/quality/candidate-tournament"
 import {
   adaptLearnerProfile,
   adaptRagResult,
   buildGenerationSpec,
+  buildResourceBlueprint,
   createRoleCModelGatewayFromEnv,
   defineLearningPathNode,
   generateConceptLesson,
@@ -20,6 +22,7 @@ import {
 
 const configPath = resolve(process.cwd(), ".env.role-c.local")
 const usage: Array<Record<string, unknown>> = []
+const candidateSelections: Array<Record<string, unknown>> = []
 const selectedAgents = parseAgentSelection(process.argv.slice(2))
 
 const profile: LearnerProfile = {
@@ -48,10 +51,20 @@ try {
     },
   })
   const ragRequest = buildRagRequest(profile)
-  const rag = await retrieveKnowledge({ query: ragRequest.query, learnerLevel: profile.level, topK: 5 })
+  const rawPath = await Bun.file("examples/role-c-content/learning_path_node_score_project.json").json()
+  const rag = await retrieveKnowledge({
+    query: ragRequest.query,
+    learnerLevel: profile.level,
+    topK: 5,
+    intent: {
+      target_source_ids: rawPath.target_source_ids,
+      prerequisite_source_ids: rawPath.prerequisite_source_ids,
+      focus_terms: profile.weak_concepts,
+      resource_needs: ["fact", "example", "practice_task"],
+    },
+  })
   const kb = await loadKnowledgeBase()
   const evidence = adaptRagResult(rag, { kb_version: kb.version, rag_version: "rule-rag-0.1" })
-  const rawPath = await Bun.file("examples/role-c-content/learning_path_node_score_project.json").json()
   const path = defineLearningPathNode({
     node_id: rawPath.node_id,
     target_source_ids: rawPath.target_source_ids,
@@ -72,13 +85,18 @@ try {
     seed: 42,
   })
   if (!built.ok) throw new Error(`SPEC_BLOCKED:${built.code}:${built.errors.join(";")}`)
+  const resourceBlueprint = buildResourceBlueprint(built.spec, evidence)
 
   const providerOptions = modelBackedProviderOptionsFromEnv(env)
+  providerOptions.candidate_selection_sink = (selection) => {
+    candidateSelections.push(structuredClone(selection))
+  }
   if (process.argv.includes("--no-repair")) providerOptions.max_repair_attempts = 0
   const provider = new ModelBackedRoleCContentProvider(gateway, providerOptions)
   const conceptRequest = {
     generation_spec: built.spec,
     evidence_pack: evidence,
+    resource_blueprint: resourceBlueprint,
   }
   const authorResults: Record<string, unknown> = {}
   let allValid = true
@@ -116,6 +134,7 @@ try {
     generation_spec: built.spec,
     evidence_pack: evidence,
     concept_artifact: upstreamConcept,
+    resource_blueprint: resourceBlueprint,
   }
   if (selectedAgents.has("code-lab")) {
     const attempt = await capture(() => provider.generateCodeLab(labRequest))
@@ -133,6 +152,7 @@ try {
     generation_spec: built.spec,
     evidence_pack: evidence,
     concept_artifact: upstreamConcept,
+    resource_blueprint: resourceBlueprint,
   }
   if (selectedAgents.has("assessment")) {
     const attempt = await capture(() => provider.generateAssessment(assessmentRequest))
@@ -162,6 +182,7 @@ try {
     upstream_fixture: modelConcept?.status === "ready" ? "validated_model_concept" : "validated_deterministic_concept",
     publication_boundary: "Drafts were not marked execution/answer verified; ready publication still requires the isolated Docker runner.",
     usage,
+    candidate_selections: candidateSelections,
   }
   console.log(JSON.stringify(result, null, 2))
   if (!allValid) process.exitCode = 1
@@ -171,6 +192,7 @@ try {
     config_file: configPath,
     error: error instanceof Error ? `${error.name}: ${error.message}` : "unknown error",
     usage,
+    candidate_selections: candidateSelections,
   }, null, 2))
   process.exitCode = 1
 }
@@ -233,5 +255,9 @@ function failedAttempt(error: unknown) {
     schema_and_semantic_validation: "not_reached",
     error: error instanceof Error ? `${error.name}: ${error.message}` : "unknown error",
     ...(error instanceof ModelOutputValidationError ? { issues: error.issues.slice(0, 30) } : {}),
+    ...(error instanceof PublicQualityGateError ? {
+      generation_failures: error.generation_failures,
+      candidate_evaluations: error.evaluations,
+    } : {}),
   }
 }

@@ -11,13 +11,61 @@ export interface ExecutionBudgetSnapshot extends ExecutionBudgetLimits {
   used_transport_retries: number
 }
 
+export interface RoleCContentBudgetWorkload {
+  objective_count: number
+  assessment_item_count: number
+  public_candidate_count: 1 | 2 | 3
+  max_internal_repairs?: number
+  max_external_revisions?: number
+}
+
 /**
- * One reviewed Role C candidate can use up to twenty calls when staged
- * authoring, one targeted repair per stage, and three semantic artifact audits
- * are all exercised. Two external revisions mean at most three candidates.
- * The budget is a hard safety ceiling; successful workflows stop far earlier.
+ * Derive the hard call ceiling from the actual Role C authoring workload.
+ *
+ * Public authoring is a candidate tournament: every objective/assessment item
+ * may author several candidates, and every candidate can consume the initial
+ * call plus targeted repairs.  The former fixed ceiling (60) predated that
+ * architecture and could abort an otherwise healthy five-item assessment.
+ * This ceiling is deliberately conservative; normal runs stop as soon as an
+ * eligible winner passes and the workflow deadline remains the time boundary.
  */
-export const ROLE_C_CONTENT_MODEL_CALL_BUDGET = 20 * 3
+export function roleCContentModelCallBudget(input: RoleCContentBudgetWorkload): number {
+  const objectiveCount = positiveCount(input.objective_count)
+  const assessmentItemCount = positiveCount(input.assessment_item_count)
+  const candidateCount = input.public_candidate_count
+  const authorAttempts = 1 + nonNegativeCount(input.max_internal_repairs ?? 2)
+  const reviewedReleases = 1 + nonNegativeCount(input.max_external_revisions ?? 2)
+
+  const conceptCalls = objectiveCount * candidateCount * authorAttempts
+  const codeLabCalls = candidateCount * authorAttempts + authorAttempts
+  const assessmentCalls = assessmentItemCount * candidateCount * authorAttempts + authorAttempts
+  // One independent batch critic per concept segment, code lab, and assessment item.
+  const candidateCriticCalls = objectiveCount + 1 + assessmentItemCount
+  // One semantic plan and up to two semantic passes per public artifact.
+  const planningAndAuditCalls = 1 + 3 * 2
+  const callsPerReviewedRelease = conceptCalls
+    + codeLabCalls
+    + assessmentCalls
+    + candidateCriticCalls
+    + planningAndAuditCalls
+
+  return callsPerReviewedRelease * reviewedReleases
+}
+
+/** Standard one-objective, five-item, three-candidate reviewed workflow. */
+export const ROLE_C_CONTENT_MODEL_CALL_BUDGET = roleCContentModelCallBudget({
+  objective_count: 1,
+  assessment_item_count: 5,
+  public_candidate_count: 3,
+})
+
+function positiveCount(value: number): number {
+  return Number.isInteger(value) && value > 0 ? value : 1
+}
+
+function nonNegativeCount(value: number): number {
+  return Number.isInteger(value) && value >= 0 ? value : 0
+}
 
 export class ModelExecutionBudgetExceededError extends Error {
   constructor(readonly reason: "DEADLINE" | "MODEL_CALLS" | "TRANSPORT_RETRIES") {

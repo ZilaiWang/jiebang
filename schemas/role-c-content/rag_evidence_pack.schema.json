@@ -16,6 +16,7 @@
     "rag_version": { "type": "string", "minLength": 1 },
     "retrieval_context": { "$ref": "#/$defs/retrieval_context" },
     "objective_coverage": { "type": "array", "items": { "$ref": "#/$defs/objective_coverage" } },
+    "evidence_sufficiency": { "$ref": "#/$defs/evidence_sufficiency" },
     "results": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/result" } }
   },
   "allOf": [
@@ -27,6 +28,19 @@
   ],
   "additionalProperties": false,
   "$defs": {
+    "evidence_sufficiency": {
+      "type": "object",
+      "required": ["ok", "missing_source_ids", "missing_fact_ids", "missing_misconception_ids", "worked_example_count", "counterexample_count"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "missing_source_ids": { "type": "array", "items": { "type": "string" } },
+        "missing_fact_ids": { "type": "array", "items": { "type": "string" } },
+        "missing_misconception_ids": { "type": "array", "items": { "type": "string" } },
+        "worked_example_count": { "type": "integer", "minimum": 0 },
+        "counterexample_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "retrieval_context": {
       "type": "object",
       "required": ["request_id", "request_hash", "retrieval_mode", "focus_objective_ids", "resource_needs"],
@@ -128,6 +142,10 @@
         "examples": { "type": "array", "items": { "$ref": "#/$defs/example" } },
         "practice_tasks": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "quiz_seeds": { "type": "array", "items": { "$ref": "#/$defs/quiz_seed" } },
+        "misconceptions": { "type": "array", "items": { "type": "object" } },
+        "worked_examples": { "type": "array", "items": { "type": "object" } },
+        "counterexamples": { "type": "array", "items": { "type": "string" } },
+        "assessment_constraints": { "type": "array", "items": { "type": "string" } },
         "source_file": { "type": "string", "minLength": 1 },
         "retrieval_trace": { "$ref": "#/$defs/retrieval_trace" }
       },

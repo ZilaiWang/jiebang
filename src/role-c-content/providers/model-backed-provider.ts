@@ -112,6 +112,18 @@ import {
   type AssessmentItemPlan,
 } from "./staged-generation"
 import { fastModelPolicy } from "../../model-runtime"
+import { buildLearningDesignSpecV2 } from "../planning/learning-design-spec-v2"
+import { runPublicCandidateTournament } from "../quality/candidate-tournament"
+import {
+  candidateIdentity,
+  evaluatePublicAuthorCandidate,
+} from "../quality/public-candidate-quality"
+import type { CandidateSelectionResult, PublicArtifactKind, PublicCandidateEvaluation } from "../quality/contracts"
+import { reviewPublicCandidatesWithModel } from "../quality/model-candidate-critic"
+import {
+  validateAssessmentPairValidity,
+  validateAssessmentPublicValidity,
+} from "../quality/assessment-validity"
 
 export interface ModelBackedProviderOptions {
   /** Staged is the production path; monolithic remains available for compatibility and benchmarks. */
@@ -131,6 +143,14 @@ export interface ModelBackedProviderOptions {
   assessment_max_tokens?: number
   assessment_public_max_tokens?: number
   assessment_secure_max_tokens?: number
+  /** Public semantic alternatives; secure answers/reference solutions always remain one candidate. */
+  public_candidate_count?: 1 | 2 | 3
+  candidate_selection_sink?: (input: {
+    task: string
+    winner_candidate_id: string
+    evaluations: PublicCandidateEvaluation[]
+    rejected_generation_count: number
+  }) => void | Promise<void>
   stage_failure_diagnostic_sink?: (diagnostic: SafeStageFailureDiagnostic) => void | Promise<void>
 }
 
@@ -234,6 +254,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
   private readonly assessmentMaxTokens: number
   private readonly assessmentPublicMaxTokens: number
   private readonly assessmentSecureMaxTokens: number
+  private readonly publicCandidateCount: 1 | 2 | 3
+  private readonly candidateSelectionSink?: ModelBackedProviderOptions["candidate_selection_sink"]
   private readonly stageFailureDiagnosticSink?: (diagnostic: SafeStageFailureDiagnostic) => void | Promise<void>
 
   constructor(
@@ -255,6 +277,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     this.assessmentMaxTokens = options.assessment_max_tokens ?? 8_000
     this.assessmentPublicMaxTokens = positiveInteger(options.assessment_public_max_tokens, 4_500, "assessment_public_max_tokens")
     this.assessmentSecureMaxTokens = positiveInteger(options.assessment_secure_max_tokens, 5_500, "assessment_secure_max_tokens")
+    this.publicCandidateCount = candidateCount(options.public_candidate_count)
+    this.candidateSelectionSink = options.candidate_selection_sink
     this.stageFailureDiagnosticSink = options.stage_failure_diagnostic_sink
   }
 
@@ -279,59 +303,95 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           segment,
           materializeConceptSegmentV2(segment, payload, sectionPlans),
         )
-      const authored = await this.generateStage<ConceptSegmentAuthorPayloadV2>({
-        task: "role-c.concept-tutor.segment-v2",
-        system_prompt: CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
-        input: {
-          ...modelInput,
-          staged_contract: {
-            objective_ids: segment.generation_spec.targets.map((target) => target.objective_id),
-            section_plan: sectionPlanContract,
+      const learningDesign = buildLearningDesignSpecV2({
+        spec: segment.generation_spec,
+        evidence: segment.evidence_pack,
+        assessment_plan: segment.generation_spec.assessment_blueprint
+          ? buildAssessmentItemPlan(segment.generation_spec, segment.evidence_pack)
+          : [],
+      })
+      const tournament = await runPublicCandidateTournament<ConceptSegmentAuthorPayloadV2>({
+        candidate_count: this.publicCandidateCount,
+        generate: (variantIndex) => this.generateStage<ConceptSegmentAuthorPayloadV2>({
+          task: "role-c.concept-tutor.segment-v2",
+          system_prompt: CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
+          input: {
+            ...modelInput,
+            learning_design: learningDesign,
+            candidate_context: publicCandidateContext("concept_lesson", variantIndex),
+            staged_contract: {
+              objective_ids: segment.generation_spec.targets.map((target) => target.objective_id),
+              section_plan: sectionPlanContract,
+            },
+            segment: {
+              index: segment.segment_index,
+              count: segment.segment_count,
+              objective_ids: segment.generation_spec.targets.map((target) => target.objective_id),
+            },
           },
-          segment: {
-            index: segment.segment_index,
-            count: segment.segment_count,
-            objective_ids: segment.generation_spec.targets.map((target) => target.objective_id),
-          },
-        },
-        output_schema_id: "role_c_concept_segment_author_payload_v2",
-        output_schema: fragment(
-          "concept_lesson_payload.schema.json",
-          "/$defs/author_payload_v2",
-        ),
-        temperature: this.conceptTemperature,
-        max_tokens: this.conceptSegmentMaxTokens,
-        idempotency_identity: {
-          spec_id: segment.generation_spec.spec_id,
-          evidence_ref: segment.generation_spec.evidence_ref,
-          prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
-          model_config_hash: this.gateway.model_config_hash,
-          seed: segment.generation_spec.policies.seed,
-        },
-        max_repairs: maxRepairs,
-        diagnostic_sink: this.stageFailureDiagnosticSink,
-        validate: (payload) => {
-          const schema = validateRoleCSchemaFragment(
+          output_schema_id: "role_c_concept_segment_author_payload_v2",
+          output_schema: fragment(
             "concept_lesson_payload.schema.json",
             "/$defs/author_payload_v2",
-            payload,
-          )
-          if (!schema.ok) return validationIssues(schema)
-          const issues = validateConceptSegmentV2AgainstPlans(payload, sectionPlans)
-          if (issues.length > 0) return issues
-          const visibleCoverageIssues = validateConceptVisibleFactCoverage(
-            segment,
-            payload,
-            sectionPlans,
-          )
-          if (visibleCoverageIssues.length > 0) return visibleCoverageIssues
-          return validationIssues(validateConceptLesson({
-            payload: materialize(payload),
-            spec: segment.generation_spec,
-            evidence: segment.evidence_pack,
-          }))
-        },
+          ),
+          temperature: Math.max(this.conceptTemperature, 0.3),
+          max_tokens: this.conceptSegmentMaxTokens,
+          idempotency_identity: {
+            spec_id: segment.generation_spec.spec_id,
+            evidence_ref: segment.generation_spec.evidence_ref,
+            prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+            model_config_hash: this.gateway.model_config_hash,
+            seed: segment.generation_spec.policies.seed,
+            variant_index: variantIndex,
+          },
+          max_repairs: maxRepairs,
+          diagnostic_sink: this.stageFailureDiagnosticSink,
+          validate: (payload) => {
+            const schema = validateRoleCSchemaFragment(
+              "concept_lesson_payload.schema.json",
+              "/$defs/author_payload_v2",
+              payload,
+            )
+            if (!schema.ok) return validationIssues(schema)
+            const issues = validateConceptSegmentV2AgainstPlans(payload, sectionPlans)
+            if (issues.length > 0) return issues
+            const visibleCoverageIssues = validateConceptVisibleFactCoverage(
+              segment,
+              payload,
+              sectionPlans,
+            )
+            if (visibleCoverageIssues.length > 0) return visibleCoverageIssues
+            return validationIssues(validateConceptLesson({
+              payload: materialize(payload),
+              spec: segment.generation_spec,
+              evidence: segment.evidence_pack,
+            }))
+          },
+        }),
+        evaluate: (payload, variantIndex) => evaluatePublicAuthorCandidate({
+          candidate_id: candidateIdentity("concept_lesson", payload, variantIndex),
+          artifact_kind: "concept_lesson",
+          payload,
+          learning_design: learningDesign,
+          minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.07,
+        }),
+        review: (entries) => reviewPublicCandidatesWithModel({
+          gateway: this.gateway,
+          task: "role-c.concept-tutor.segment-v2",
+          artifact_kind: "concept_lesson",
+          candidates: entries,
+          evidence: modelInput.evidence,
+          contract: {
+            targets: modelInput.contract.targets,
+            section_plan: sectionPlanContract,
+          },
+        }),
+        on_rejected: (evaluations, rejectedGenerationCount) => this.recordRejectedCandidates(
+          "role-c.concept-tutor.segment-v2", evaluations, rejectedGenerationCount,
+        ),
       })
+      await this.recordCandidateSelection("role-c.concept-tutor.segment-v2", tournament)
+      const authored = tournament.winner
       return materialize(authored)
     })
     const payload = mergeConceptSegments(request, payloads)
@@ -366,11 +426,21 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     // 不得静默用于生产。
     const executionMode = taskContract?.execution_mode
       ?? deriveCodeLabExecutionMode(request)
-    const publicAuthor = await this.generateStage<CodeLabPublicAuthorPayload>({
+    const learningDesign = request.resource_blueprint?.learning_design
+      ?? buildLearningDesignSpecV2({
+        spec: request.generation_spec,
+        evidence: request.evidence_pack,
+        assessment_plan: buildAssessmentItemPlan(request.generation_spec, request.evidence_pack),
+      })
+    const publicTournament = await runPublicCandidateTournament<CodeLabPublicAuthorPayload>({
+      candidate_count: this.publicCandidateCount,
+      generate: (variantIndex) => this.generateStage<CodeLabPublicAuthorPayload>({
       task: "role-c.code-lab.public",
       system_prompt: CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
       input: {
         ...modelInput,
+        learning_design: learningDesign,
+        candidate_context: publicCandidateContext("code_lab", variantIndex),
         staged_contract: {
           lab_id: identity.lab_id,
           objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
@@ -398,13 +468,14 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         "code_lab_draft.schema.json",
         "/$defs/public_author_payload",
       ),
-      temperature: this.codeLabTemperature,
+      temperature: Math.max(this.codeLabTemperature, 0.2),
       max_tokens: this.codeLabPublicMaxTokens,
       idempotency_identity: {
         spec_id: request.generation_spec.spec_id,
         concept_artifact_id: request.concept_artifact.artifact_id,
         stage: "public",
         prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+        variant_index: variantIndex,
       },
       max_repairs: maxRepairs,
       diagnostic_sink: this.stageFailureDiagnosticSink,
@@ -438,7 +509,32 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         )
         return validationIssues(validateCodeLabPublicStage(request, normalized))
       },
+      }),
+      evaluate: (payload, variantIndex) => evaluatePublicAuthorCandidate({
+        candidate_id: candidateIdentity("code_lab", payload, variantIndex),
+        artifact_kind: "code_lab",
+        payload,
+        learning_design: learningDesign,
+        minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.05,
+      }),
+      review: (entries) => reviewPublicCandidatesWithModel({
+        gateway: this.gateway,
+        task: "role-c.code-lab.public",
+        artifact_kind: "code_lab",
+        candidates: entries,
+        evidence: modelInput.evidence,
+        contract: {
+          targets: modelInput.contract.targets,
+          task_contract: taskContract,
+          objective_plan: objectivePlan,
+        },
+      }),
+      on_rejected: (evaluations, rejectedGenerationCount) => this.recordRejectedCandidates(
+        "role-c.code-lab.public", evaluations, rejectedGenerationCount,
+      ),
     })
+    await this.recordCandidateSelection("role-c.code-lab.public", publicTournament)
+    const publicAuthor = publicTournament.winner
     const normalizedPublicAuthor = normalizeCodeLabPublicAuthorPayload(
       publicAuthor,
     )
@@ -476,7 +572,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       },
       output_schema_id: "role_c_code_lab_secure_author_payload_v1",
       output_schema: fragment("code_lab_draft.schema.json", "/$defs/secure_author_payload"),
-      temperature: this.codeLabTemperature,
+      temperature: 0,
       max_tokens: this.codeLabSecureMaxTokens,
       idempotency_identity: {
         spec_id: request.generation_spec.spec_id,
@@ -774,6 +870,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       plan,
       request.prior_assessment_items ?? [],
     )
+    const learningDesign = request.resource_blueprint?.learning_design
+      ?? buildLearningDesignSpecV2({
+        spec: request.generation_spec,
+        evidence: request.evidence_pack,
+        assessment_plan: plan,
+      })
     // Author each public item against only its own frozen citations.  A
     // monolithic form prompt exposed every target fact to every question and
     // repeatedly produced hidden cross-objective dependencies (for example a
@@ -821,7 +923,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               }
             : undefined,
         }
-        return this.generateStage<AssessmentPublicAuthorPayload>({
+        const itemTournament = await runPublicCandidateTournament<AssessmentPublicAuthorPayload>({
+          candidate_count: this.publicCandidateCount,
+          generate: (variantIndex) => this.generateStage<AssessmentPublicAuthorPayload>({
           task: "role-c.tiered-evaluator.public-item",
           system_prompt: ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
           input: {
@@ -831,6 +935,13 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             },
             evidence: itemEvidence,
             upstream: itemUpstream,
+            learning_design: {
+              ...learningDesign,
+              objectives: learningDesign.objectives.filter((entry) => entry.objective_id === itemPlan.objective_id),
+              lesson_sequence: learningDesign.lesson_sequence.filter((entry) => entry.objective_id === itemPlan.objective_id),
+              assessment_plan: [itemPlan],
+            },
+            candidate_context: publicCandidateContext("assessment", variantIndex),
             staged_contract: {
               form_id: formId,
               objective_ids: [itemPlan.objective_id],
@@ -844,8 +955,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           output_schema_id: "role_c_assessment_public_author_payload_v1",
           output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
           temperature: (request.prior_assessment_items?.length ?? 0) > 0
-            ? Math.max(this.assessmentTemperature, 0.6)
-            : this.assessmentTemperature,
+            ? Math.max(this.assessmentTemperature, 0.5)
+            : Math.max(this.assessmentTemperature, 0.25),
           max_tokens: Math.min(this.assessmentPublicMaxTokens, 2_400),
           idempotency_identity: {
             spec_id: request.generation_spec.spec_id,
@@ -853,6 +964,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             stage: "public-item",
             item_id: itemPlan.item_id,
             prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+            variant_index: variantIndex,
           },
           max_repairs: maxRepairs,
           diagnostic_sink: this.stageFailureDiagnosticSink,
@@ -876,12 +988,46 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               [itemPlan],
               formId,
             )
-            return validateAssessmentNovelty(
-              materialized,
-              request.prior_assessment_items ?? [],
-            )
+            return [
+              ...validateAssessmentNovelty(
+                materialized,
+                request.prior_assessment_items ?? [],
+              ),
+              ...validateAssessmentPublicValidity(materialized, [itemPlan])
+                .map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
+            ]
           },
+          }),
+          evaluate: (payload, variantIndex) => evaluatePublicAuthorCandidate({
+            candidate_id: candidateIdentity("assessment", payload, variantIndex),
+            artifact_kind: "assessment",
+            payload,
+            learning_design: {
+              ...learningDesign,
+              objectives: learningDesign.objectives.filter((entry) => entry.objective_id === itemPlan.objective_id),
+              lesson_sequence: learningDesign.lesson_sequence.filter((entry) => entry.objective_id === itemPlan.objective_id),
+              assessment_plan: [itemPlan],
+            },
+            assessment_plan: [itemPlan],
+            minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.08,
+          }),
+          review: (entries) => reviewPublicCandidatesWithModel({
+            gateway: this.gateway,
+            task: "role-c.tiered-evaluator.public-item",
+            artifact_kind: "assessment",
+            candidates: entries,
+            evidence: itemEvidence,
+            contract: {
+              target: itemTarget,
+              item_plan: itemPlan,
+            },
+          }),
+          on_rejected: (evaluations, rejectedGenerationCount) => this.recordRejectedCandidates(
+            "role-c.tiered-evaluator.public-item", evaluations, rejectedGenerationCount,
+          ),
         })
+        await this.recordCandidateSelection("role-c.tiered-evaluator.public-item", itemTournament)
+        return itemTournament.winner
       },
     )
     let publicAuthorPayload: AssessmentPublicAuthorPayload = {
@@ -902,6 +1048,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         normalizedPublic,
         request.prior_assessment_items ?? [],
       ),
+      ...validateAssessmentPublicValidity(normalizedPublic, plan)
+        .map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
     ]
     // Single-item authoring is parallel, so an item cannot observe the prose
     // independently authored for its siblings. Perform one form-level
@@ -916,6 +1064,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         system_prompt: ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
         input: {
           ...modelInput,
+          learning_design: learningDesign,
+          candidate_context: publicCandidateContext("assessment", repairAttempt % 3),
           staged_contract: {
             form_id: formId,
             objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
@@ -963,6 +1113,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedPublic,
           request.prior_assessment_items ?? [],
         ),
+        ...validateAssessmentPublicValidity(normalizedPublic, plan)
+          .map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
       ]
     }
     if (composedPublicIssues.length > 0) {
@@ -978,6 +1130,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
         upstream: assessmentUpstreamWithoutHistory(modelInput.upstream),
+        learning_design: learningDesign,
         public_payload: normalizedPublic,
         staged_contract: {
           form_id: formId,
@@ -987,7 +1140,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       },
       output_schema_id: "role_c_assessment_secure_author_payload_v1",
       output_schema: fragment("assessment_draft.schema.json", "/$defs/secure_author_payload"),
-      temperature: this.assessmentTemperature,
+      temperature: 0,
       max_tokens: this.assessmentSecureMaxTokens,
       idempotency_identity: {
         spec_id: request.generation_spec.spec_id,
@@ -1013,10 +1166,17 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedAuthor,
         )
         const normalized = normalizeAssessmentPair(request.generation_spec, normalizedPublic, secure)
-        return validationIssues(validateAssessmentDraftStructure(request, {
+        return [
+          ...validationIssues(validateAssessmentDraftStructure(request, {
           public_draft: { payload: normalized.public_payload },
           secure_draft: { payload: normalized.secure_payload },
-        }))
+          })),
+          ...validateAssessmentPairValidity(
+            normalized.public_payload,
+            normalized.secure_payload,
+            plan,
+          ).map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
+        ]
       },
     })
     const normalizedSecureAuthorPayload = normalizeAssessmentSecureAuthorPayload(
@@ -1497,6 +1657,31 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       }))
     }
     throw new ModelOutputValidationError(stage.task, issues)
+  }
+
+  private async recordCandidateSelection<T>(
+    task: string,
+    result: CandidateSelectionResult<T>,
+  ): Promise<void> {
+    await this.candidateSelectionSink?.({
+      task,
+      winner_candidate_id: result.winner_evaluation.candidate_id,
+      evaluations: structuredClone(result.evaluations),
+      rejected_generation_count: result.rejected_generation_count,
+    })
+  }
+
+  private async recordRejectedCandidates(
+    task: string,
+    evaluations: PublicCandidateEvaluation[],
+    rejectedGenerationCount: number,
+  ): Promise<void> {
+    await this.candidateSelectionSink?.({
+      task,
+      winner_candidate_id: "none",
+      evaluations: structuredClone(evaluations),
+      rejected_generation_count: rejectedGenerationCount,
+    })
   }
 
   private async generateAssessmentNoveltyRepair<T>(
@@ -2031,19 +2216,29 @@ export function conservativeCodeLabPublicSafetyPatch(
       prior.starter_code,
       prior.execution_contract,
     ),
-    instruction_texts: prior.instructions.map((_, index) =>
-      `按执行合同完成第 ${index + 1} 个目标，保持规定的输入与输出形式，核心实现由学习者补全。`),
-    public_test_descriptions: prior.public_tests.map((_, index) =>
-      `公开测试 ${index + 1}：检查实现是否满足题目的可观察行为。`),
-    public_test_expected_behaviors: prior.public_tests.map(() =>
-      "结果应符合执行合同和题目中的输出约束。"),
-    hint_texts: prior.hint_ladders.map(() => [
-      "先明确输入、输出和需要处理的步骤。",
-      "选择合适的控制结构，将核心处理保留在 TODO 位置。",
-      "逐项对照公开测试检查边界、顺序和返回形式。",
-    ]),
-    reflection_questions: prior.reflection_questions.map(() =>
-      "你的实现如何满足输入、输出和边界约束？"),
+    // 泄漏只发生在 starter/reference 等价时，不应把已经通过公开质量审核的
+    // instruction、测试说明、提示和反思题一起降级为通用模板。
+    instruction_texts: prior.instructions.map((block) =>
+      "text" in block && typeof block.text === "string"
+        ? block.text
+        : "完成题目要求的学习者代码区域。"),
+    public_test_descriptions: prior.public_tests.map((test, index) =>
+      typeof test.description === "string"
+        ? test.description
+        : `公开测试 ${index + 1}：检查实现是否满足题目的可观察行为。`),
+    public_test_expected_behaviors: prior.public_tests.map((test) =>
+      typeof test.expected_behavior === "string"
+        ? test.expected_behavior
+        : "结果应符合执行合同和题目中的输出约束。"),
+    hint_texts: prior.hint_ladders.map((ladder) =>
+      ladder.hints.map((hint, index) => typeof hint.text === "string"
+        ? hint.text
+        : [
+            "先明确输入、输出和需要处理的步骤。",
+            "将核心处理保留在 TODO 位置。",
+            "逐项对照公开测试检查结果。",
+          ][index]!) as [string, string, string]),
+    reflection_questions: [...prior.reflection_questions],
   }
 }
 
@@ -2060,6 +2255,18 @@ function minimalSafeStarter(
   priorStarter: string,
   contract: CodeLabPublicPayload["execution_contract"],
 ): string {
+  const recallFact = contract.execution_mode === "stdin_stdout"
+    && contract.input_contract.type === "none"
+    && (contract.output_contract.constraints ?? []).some((entry) =>
+      /事实文本|替换\s*TODO|只需替换/u.test(entry))
+  if (recallFact) {
+    return [
+      "# TODO: 只替换引号内的占位文本，保留变量和输出语句",
+      "fact_text = \"TODO：填写题目要求的事实文本\"",
+      "print(fact_text)",
+      "",
+    ].join("\n")
+  }
   const entryPoint = contract.entry_point?.trim()
   const signature = entryPoint
     ? priorStarter.split(/\r?\n/).find((line) =>
@@ -2604,6 +2811,41 @@ function positiveInteger(value: number | undefined, fallback: number, name: stri
   const selected = value ?? fallback
   if (!Number.isSafeInteger(selected) || selected < 1) throw new Error(`${name} 必须是正整数`)
   return selected
+}
+
+function candidateCount(value: ModelBackedProviderOptions["public_candidate_count"]): 1 | 2 | 3 {
+  return value ?? 1
+}
+
+function publicCandidateContext(kind: PublicArtifactKind, variantIndex: number): {
+  candidate_id: string
+  variant_index: number
+  design_emphasis: string
+  diversity_rule: string
+} {
+  const emphases: Record<PublicArtifactKind, string[]> = {
+    concept_lesson: [
+      "先建立清晰心智模型，再用直接实例和误区对比推进",
+      "以问题驱动的解释组织内容，并在关键步骤安排即时检查",
+      "以渐退式 worked example 组织讲解，最后改变表示方式做迁移",
+    ],
+    code_lab: [
+      "采用真实但紧凑的任务分解，starter 只保留必要脚手架",
+      "围绕典型误区设计公开自查，提示从方向到局部线索逐级展开",
+      "改变输入组织或实现路径，突出边界行为与反思价值",
+    ],
+    assessment: [
+      "直接测量冻结构念，干扰项对应真实误区且长度结构均衡",
+      "改变认知操作与表示方式，避免复述讲义或代码实验",
+      "高阶题改变任务结构形成迁移，同时控制无关阅读负担",
+    ],
+  }
+  return {
+    candidate_id: `${kind}-candidate-${variantIndex + 1}`,
+    variant_index: variantIndex,
+    design_emphasis: emphases[kind][variantIndex] ?? emphases[kind][0]!,
+    diversity_rule: "与同轮其他候选在教学组织或认知操作上实质不同；不得只换名称、数字、句序或场景词。",
+  }
 }
 
 function stageTokenCeiling(task: string, configured: number): number {

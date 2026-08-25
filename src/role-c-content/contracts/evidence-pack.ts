@@ -1,5 +1,6 @@
 import type { ObjectiveEvidenceCoverage, RagResult, RagResultItem, RetrievalContext } from "../../rag/retriever"
 import type { KnowledgeDifficulty } from "../../knowledge/types"
+import type { KnowledgeMisconception, KnowledgeWorkedExample } from "../../knowledge/types"
 import { C_SCHEMA_VERSION, stableId, type EvidenceRef, type SchemaVersion } from "./common"
 import type { LearningPathNode } from "./profile-adapter"
 
@@ -53,6 +54,11 @@ export interface RagEvidenceItem {
   examples: EvidenceExample[]
   practice_tasks: string[]
   quiz_seeds: EvidenceQuizSeed[]
+  /** Teaching-oriented evidence; still source-bound and answer-free after projection. */
+  misconceptions?: KnowledgeMisconception[]
+  worked_examples?: KnowledgeWorkedExample[]
+  counterexamples?: string[]
+  assessment_constraints?: string[]
   source_file: string
   retrieval_trace: EvidenceRetrievalTrace
 }
@@ -70,6 +76,7 @@ export interface RagEvidencePack {
   results: RagEvidenceItem[]
   retrieval_context?: RetrievalContext
   objective_coverage?: ObjectiveEvidenceCoverage[]
+  evidence_sufficiency?: RagResult["evidence_sufficiency"]
 }
 
 /** Answer-free projection that may cross C's public boundary. */
@@ -94,6 +101,9 @@ export function projectPublicRagEvidencePack(
       : undefined,
     objective_coverage: pack.objective_coverage
       ? structuredClone(pack.objective_coverage)
+      : undefined,
+    evidence_sufficiency: pack.evidence_sufficiency
+      ? structuredClone(pack.evidence_sufficiency)
       : undefined,
     results: pack.results.map(({ quiz_seeds: _quizSeeds, ...item }) =>
       structuredClone(item)),
@@ -184,6 +194,9 @@ export function adaptRagResult(result: RagResult, options: AdaptRagResultOptions
     objective_coverage: result.objective_coverage
       ? structuredClone(result.objective_coverage)
       : undefined,
+    evidence_sufficiency: result.evidence_sufficiency
+      ? structuredClone(result.evidence_sufficiency)
+      : undefined,
     results: normalizedResults,
   }
 }
@@ -218,6 +231,10 @@ function normalizeResultItem(item: RagResultItem): RagEvidenceItem {
       source_id: quiz.sourceId,
       fact_id: quiz.factId,
     })),
+    misconceptions: structuredClone(item.misconceptions ?? []),
+    worked_examples: structuredClone(item.workedExamples ?? []),
+    counterexamples: [...(item.counterexamples ?? [])],
+    assessment_constraints: [...(item.assessmentConstraints ?? [])],
     source_file: item.file,
     retrieval_trace: {
       matched_keywords: [...item.retrievalTrace.matchedKeywords],

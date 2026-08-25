@@ -12,6 +12,7 @@
     "match_status": { "enum": ["strong", "weak", "no_match"] },
     "retrieval_context": { "type": "object" },
     "objective_coverage": { "type": "array" },
+    "evidence_sufficiency": { "$ref": "#/definitions/evidenceSufficiency" },
     "results": {
       "type": "array",
       "items": {
@@ -52,7 +53,12 @@
                 "factId": { "type": "string", "pattern": "^F[0-9]{3}$" },
                 "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
                 "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
-                "content": { "type": "string" }
+                "content": { "type": "string" },
+                "scope": { "type": "array", "items": { "type": "string" } },
+                "exceptions": { "type": "array", "items": { "type": "string" } },
+                "prerequisites": { "type": "array", "items": { "type": "string" } },
+                "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+                "authority": { "enum": ["curriculum", "official_documentation", "reviewed_reference"] }
               }
             }
           },
@@ -87,6 +93,16 @@
               }
             }
           },
+          "misconceptions": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/misconception" }
+          },
+          "workedExamples": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/workedExample" }
+          },
+          "counterexamples": { "type": "array", "items": { "type": "string" } },
+          "assessmentConstraints": { "type": "array", "items": { "type": "string" } },
           "file": { "type": "string" },
           "retrievalTrace": { "$ref": "#/definitions/retrievalTrace" },
           "retrieval_trace": { "$ref": "#/definitions/retrievalTraceJson" }
@@ -95,6 +111,19 @@
     }
   },
   "definitions": {
+    "evidenceSufficiency": {
+      "type": "object",
+      "required": ["ok", "missing_source_ids", "missing_fact_ids", "missing_misconception_ids", "worked_example_count", "counterexample_count"],
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "type": "boolean" },
+        "missing_source_ids": { "type": "array", "items": { "type": "string" } },
+        "missing_fact_ids": { "type": "array", "items": { "type": "string" } },
+        "missing_misconception_ids": { "type": "array", "items": { "type": "string" } },
+        "worked_example_count": { "type": "integer", "minimum": 0 },
+        "counterexample_count": { "type": "integer", "minimum": 0 }
+      }
+    },
     "scoreBreakdown": {
       "type": "object",
       "required": ["keyword", "title", "facts", "practiceTasks", "difficulty", "bonus"],
@@ -105,7 +134,60 @@
         "facts": { "type": "number" },
         "practiceTasks": { "type": "number" },
         "difficulty": { "type": "number" },
-        "bonus": { "type": "number" }
+        "bonus": { "type": "number" },
+        "bm25": { "type": "number" },
+        "vector": { "type": "number" },
+        "metadata": { "type": "number" },
+        "misconception": { "type": "number" }
+      }
+    },
+    "misconception": {
+      "type": "object",
+      "required": ["misconceptionId", "incorrectBelief", "diagnosticSignals", "counterexample", "correctionStrategy", "distractorTemplates", "factRefs"],
+      "additionalProperties": false,
+      "properties": {
+        "misconceptionId": { "type": "string" },
+        "incorrectBelief": { "type": "string" },
+        "diagnosticSignals": { "type": "array", "items": { "type": "string" } },
+        "counterexample": { "type": "string" },
+        "correctionStrategy": { "type": "string" },
+        "distractorTemplates": { "type": "array", "items": { "type": "string" } },
+        "factRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sourceId", "factId"],
+            "additionalProperties": false,
+            "properties": {
+              "sourceId": { "type": "string" },
+              "factId": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "workedExample": {
+      "type": "object",
+      "required": ["title", "problem", "steps", "boundaryCases", "fadingLevel"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "problem": { "type": "string" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["action", "rationale", "factIds"],
+            "additionalProperties": false,
+            "properties": {
+              "action": { "type": "string" },
+              "rationale": { "type": "string" },
+              "factIds": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "boundaryCases": { "type": "array", "items": { "type": "string" } },
+        "fadingLevel": { "type": "integer", "minimum": 0, "maximum": 3 }
       }
     },
     "retrievalTrace": {

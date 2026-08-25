@@ -15,7 +15,8 @@ export function generateQuestionBank(knowledgeBase: KnowledgeBase): QuestionBank
     schema_version: "question-bank.v1" as const,
     kb_version: knowledgeBase.version,
     generated_at: GENERATED_AT,
-    generator: "deterministic-template-v1" as const,
+    generator: "deterministic-fixture-v1" as const,
+    intended_use: "fixture_smoke_and_offline_diagnostics" as const,
     policy: {
       questions_per_source: 4 as const,
       source_fact_binding_required: true as const,

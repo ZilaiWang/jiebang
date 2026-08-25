@@ -300,6 +300,18 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       model_id: "concept-v2-test",
       model_config_hash: "MODEL-CONCEPT-V2-TEST",
       async generateStructured<T>(stage: StructuredModelRequest): Promise<T> {
+        if (stage.task.endsWith(".candidate-critic")) {
+          const candidates = (stage.input as { candidates: unknown[] }).candidates
+          return {
+            results: candidates.map((_, candidate_index) => ({
+              candidate_index,
+              groundedness: 0.95,
+              correctness: 0.95,
+              instructional_value: 0.9,
+              critical_issues: [],
+            })),
+          } as T
+        }
         captured = stage
         const contract = (stage.input as {
           staged_contract: { section_plan: Array<{ objective_id: string; slots: Array<{ slot_id: string; kind: string }> }> }

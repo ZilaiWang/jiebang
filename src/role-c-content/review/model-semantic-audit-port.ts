@@ -6,7 +6,7 @@ import type {
 } from "./types"
 import { fastModelPolicy } from "../../model-runtime"
 
-export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v8"
+export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v9"
 const SEMANTIC_AUDIT_BATCH_SIZE = 8
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -68,6 +68,7 @@ export const ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT = `你是教学内容事实审�
 2. 严禁使用你自己的常识、编程知识或对同一主题的联想补足证据。事实即使客观正确，只要 cited_facts 没有直接说明或推出，也属于 unsupported。
 3. 允许把一般事实直接实例化为新名称、数值或明确虚构对象，例如“使用 = 赋值”可支持 age = 18 是赋值示例；实例不得额外引入运算符、API、返回类型、运行顺序或底层机制。
 3a. 引用事实已经声明某个确定性计算过程时，worked example 可以自行选择有限的新输入，并展示可直接复算的中间值和正确结果。例如事实声明“用 for 循环逐项累计求和”，则 [80, 90, 70]、逐项累加以及结果 240 是该过程的直接实例，不要求证据预先列出这些数字。若计算错误，或结果依赖证据未说明的新语法/API/规则，才判为 unsupported。
+3b. 引用事实已经明确给出边界或判定规则时，可以把该规则直接代入有限实例作答，不要求 cited_facts 预先枚举实例的完整输出。例如 cited_facts 已说明“range 不包含结束值”，则对 range(1, 10, 2) 是否包含结束值 10 的判断可直接由该规则得到；不得以“证据未列出具体序列”为由判为 unsupported。只有实例需要另一条未提供的规则，或代入结论与规则冲突时才驳回。
 4. 同主题不等于支持。例如“对象可重新赋值”不能支持关于内存回收、常量、运算顺序或输出函数的结论；“支持某种操作”不能支持其返回类型、边界行为或其他操作符语义。
    同样，“进行数值计算前需要转换”只能支持转换要求，不能自行推出未转换时的具体异常、错误类型、字符串运算结果或任一表达式的运行结果。
 4a. 泛化类别不能支持未列出的具体用途、领域或技术能力。例如 cited_facts 只说“Python 是通用编程语言”，不能自行增加 Web 开发、人工智能、科学计算、游戏或自动化等任一具体领域；这些说法即使作为“常见误解”、否定句、类比或举例出现，仍是需要证据的具体专业内容。

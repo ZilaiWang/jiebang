@@ -2,6 +2,7 @@ import { MODERN_AI_KNOWLEDGE_BASE } from "./modern-ai"
 import { PYTHON_BASIC_KNOWLEDGE_BASE } from "./python-basic"
 import { PYTHON_PROGRAMMING_KNOWLEDGE_BASE } from "./python-programming"
 import type { KnowledgeBase } from "./types"
+import { hydrateKnowledgeItemV2 } from "./v2"
 
 export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
   const merged: KnowledgeBase = {
@@ -17,7 +18,7 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
       ...PYTHON_BASIC_KNOWLEDGE_BASE.items,
       ...PYTHON_PROGRAMMING_KNOWLEDGE_BASE.items,
       ...MODERN_AI_KNOWLEDGE_BASE.items,
-    ],
+    ].map(hydrateKnowledgeItemV2),
   }
   validateKnowledgeBase(merged)
   return merged

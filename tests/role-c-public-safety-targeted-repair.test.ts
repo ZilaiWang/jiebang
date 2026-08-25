@@ -12,22 +12,52 @@ describe("Role C targeted public-safety repair", () => {
     expect(shouldUseDeterministicPublicSafetyRepair(["hidden_test_id_leak"])).toBe(false)
   })
 
-  test("shortens starter, public tests and hints while preserving array identities", () => {
+  test("只清除 starter 泄漏，保留已经审核通过的公开教学内容", () => {
     const patch = conservativeCodeLabPublicSafetyPatch({
       starter_code: "def solve(values):\n    result = list(values)\n    result.append(4)\n    return result\n",
       execution_contract: { execution_mode: "function", entry_point: "solve" },
-      instructions: [{ block_id: "B1" }],
-      public_tests: [{ test_id: "P1" }],
-      hint_ladders: [{ objective_id: "O1", hints: [{}, {}, {}] }],
+      instructions: [{ block_id: "B1", text: "保留具体任务说明" }],
+      public_tests: [{ test_id: "P1", description: "测试空列表", expected_behavior: "返回空列表" }],
+      hint_ladders: [{ objective_id: "O1", hints: [
+        { text: "提示一" }, { text: "提示二" }, { text: "提示三" },
+      ] }],
       reflection_questions: ["完整写出 solve 的实现"],
     } as any)
     expect(patch.starter_code).toContain("NotImplementedError")
     expect(patch.starter_code).not.toContain("append(4)")
     expect(patch.public_test_descriptions).toHaveLength(1)
-    expect(patch.public_test_expected_behaviors).toEqual(["结果应符合执行合同和题目中的输出约束。"])
+    expect(patch.instruction_texts).toEqual(["保留具体任务说明"])
+    expect(patch.public_test_descriptions).toEqual(["测试空列表"])
+    expect(patch.public_test_expected_behaviors).toEqual(["返回空列表"])
+    expect(patch.hint_texts[0]).toEqual(["提示一", "提示二", "提示三"])
     expect(patch.hint_texts).toHaveLength(1)
     expect(patch.hint_texts[0]).toHaveLength(3)
     expect(JSON.stringify(patch)).not.toContain("append(4)")
+  })
+
+  test("recall_fact 泄漏修订保留可运行输出胶水而非退化为单行异常", () => {
+    const patch = conservativeCodeLabPublicSafetyPatch({
+      starter_code: "fact_text = \"Python 是一种通用编程语言\"\nprint(fact_text)\n",
+      execution_contract: {
+        execution_mode: "stdin_stdout",
+        input_contract: { type: "none", constraints: [] },
+        output_contract: {
+          kind: "string", type: "stdout_lines",
+          constraints: ["学习者只需替换 TODO 处的事实文本占位"],
+        },
+      },
+      instructions: [{ block_id: "B1", text: "替换事实文本" }],
+      public_tests: [{ test_id: "P1", description: "运行程序", expected_behavior: "输出事实" }],
+      hint_ladders: [{ objective_id: "O1", hints: [
+        { text: "看事实" }, { text: "替换引号" }, { text: "运行程序" },
+      ] }],
+      reflection_questions: ["为什么保留 print？"],
+    } as any)
+    expect(patch.starter_code).toContain("fact_text =")
+    expect(patch.starter_code).toContain("print(fact_text)")
+    expect(patch.starter_code).toContain("TODO")
+    expect(patch.starter_code).not.toContain("通用编程语言")
+    expect(patch.starter_code).not.toContain("NotImplementedError")
   })
 
   test("compresses assessment code public fields when secure reference leaks", () => {

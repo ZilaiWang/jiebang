@@ -45,8 +45,12 @@ describe("Role C shared resource blueprint", () => {
     expect(blueprint.assessment.item_plan.some((item) => item.modality === "code")).toBe(true)
     expect(blueprint.assessment.item_plan.every((item) => item.cognitive_operation.length > 0)).toBe(true)
     expect(blueprint.assessment.total_score).toBe(10)
-    expect(blueprint.difficulty_plan.assessment.challenge_target.transfer_distance).toBe(2)
-    expect(blueprint.difficulty_plan.assessment.challenge_target.cognitive_demand).toBeGreaterThanOrEqual(3)
+    // 本卷 Tier 3 是 code/construction，不是 scenario_transfer；构造难度进入
+    // cognitive/reasoning，不能被错误记成跨情境迁移距离。
+    expect(blueprint.assessment.item_plan.some((item) =>
+      item.tier === 3 && item.presentation_mode === "construction")).toBe(true)
+    expect(blueprint.difficulty_plan.assessment.challenge_target.transfer_distance).toBe(0)
+    expect(blueprint.difficulty_plan.assessment.challenge_target.cognitive_demand).toBeGreaterThan(2)
     expect(Object.isFrozen(blueprint)).toBe(true)
   })
 

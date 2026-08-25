@@ -39,7 +39,8 @@ export interface QuestionBank {
   bank_id: string
   kb_version: string
   generated_at: string
-  generator: "deterministic-template-v1"
+  generator: "deterministic-fixture-v1"
+  intended_use: "fixture_smoke_and_offline_diagnostics"
   policy: {
     questions_per_source: 4
     source_fact_binding_required: true

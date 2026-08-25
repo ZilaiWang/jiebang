@@ -73,6 +73,7 @@ describe("Role C model semantic fact audit", () => {
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不得仅因 cited_facts 未介绍输入输出 API")
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不能自行增加 Web 开发")
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("确定唯一正确选项")
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不得以“证据未列出具体序列”为由判为 unsupported")
   })
 
   test("audits one complete artifact in a single structured model call", async () => {

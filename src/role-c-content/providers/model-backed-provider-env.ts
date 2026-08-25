@@ -28,9 +28,10 @@ export function modelBackedProviderOptionsFromEnv(
   return {
     generation_strategy: generationStrategy(env.ROLE_C_MODEL_GENERATION_STRATEGY),
     max_repair_attempts: repairAttempts(env.ROLE_C_MODEL_MAX_REPAIR_ATTEMPTS),
-    concept_temperature: temperature(env.ROLE_C_MODEL_CONCEPT_TEMPERATURE, "ROLE_C_MODEL_CONCEPT_TEMPERATURE"),
-    code_lab_temperature: temperature(env.ROLE_C_MODEL_CODE_LAB_TEMPERATURE, "ROLE_C_MODEL_CODE_LAB_TEMPERATURE"),
-    assessment_temperature: temperature(env.ROLE_C_MODEL_ASSESSMENT_TEMPERATURE, "ROLE_C_MODEL_ASSESSMENT_TEMPERATURE"),
+    concept_temperature: temperature(env.ROLE_C_MODEL_CONCEPT_TEMPERATURE, "ROLE_C_MODEL_CONCEPT_TEMPERATURE", 0.36),
+    code_lab_temperature: temperature(env.ROLE_C_MODEL_CODE_LAB_TEMPERATURE, "ROLE_C_MODEL_CODE_LAB_TEMPERATURE", 0.28),
+    assessment_temperature: temperature(env.ROLE_C_MODEL_ASSESSMENT_TEMPERATURE, "ROLE_C_MODEL_ASSESSMENT_TEMPERATURE", 0.32),
+    public_candidate_count: candidateCount(env.ROLE_C_MODEL_PUBLIC_CANDIDATE_COUNT),
     concept_max_tokens: tokenBudget(env.ROLE_C_MODEL_CONCEPT_MAX_TOKENS, 8_000, "ROLE_C_MODEL_CONCEPT_MAX_TOKENS"),
     code_lab_max_tokens: tokenBudget(env.ROLE_C_MODEL_CODE_LAB_MAX_TOKENS, 7_000, "ROLE_C_MODEL_CODE_LAB_MAX_TOKENS"),
     assessment_max_tokens: tokenBudget(env.ROLE_C_MODEL_ASSESSMENT_MAX_TOKENS, 8_000, "ROLE_C_MODEL_ASSESSMENT_MAX_TOKENS"),
@@ -58,13 +59,19 @@ function repairAttempts(value: string | undefined): 0 | 1 | 2 {
   throw new Error("ROLE_C_MODEL_MAX_REPAIR_ATTEMPTS 只允许 0、1 或 2")
 }
 
-function temperature(value: string | undefined, name: string): number {
-  if (value === undefined || value === "") return 0
+function temperature(value: string | undefined, name: string, fallback: number): number {
+  if (value === undefined || value === "") return fallback
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) {
     throw new Error(`${name} 必须为 0..2 的数字`)
   }
   return parsed
+}
+
+function candidateCount(value: string | undefined): 1 | 2 | 3 {
+  if (value === undefined || value === "") return 3
+  if (value === "1" || value === "2" || value === "3") return Number(value) as 1 | 2 | 3
+  throw new Error("ROLE_C_MODEL_PUBLIC_CANDIDATE_COUNT 只允许 1、2 或 3")
 }
 
 function tokenBudget(value: string | undefined, fallback: number, name: string): number {

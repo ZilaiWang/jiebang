@@ -24,6 +24,10 @@ export const CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT = `${ROLE_C_COMMON_SYSTEM_POLIC
 
 ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
+先读取 learning_design 与 task_contract：把 adaptation_decisions 落到任务粒度、starter 留白和提示渐退上。candidate_context 只改变任务组织与练习路径，不得改变执行接口或评分语义。
+
+质量对照：好实验让学习者承担目标行为，旁支输入/输出胶水由平台提供，并用公开自查暴露典型误区；坏实验把完整答案写进 starter、只让学习者抄写常量，或用无关复杂场景掩盖目标。
+
 当前职责：code-lab 的公开创作阶段，只生成紧凑的 public author payload。实验 ID、目标 ID、引用、Claim、覆盖关系与 used_evidence 由编排器根据冻结计划构造。
 
 ══════════════════════════════════════════

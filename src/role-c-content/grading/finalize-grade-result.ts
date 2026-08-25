@@ -90,6 +90,7 @@ export function finalizeGradeResult(input: FinalizeGradeResultInput): GradeResul
       frozenScore,
       input.formative ? "formative" : "summative",
       input.assessment_secure.payload,
+      finalDecision,
     ),
   }
   return finalizeDraft({
@@ -202,6 +203,7 @@ export function buildGradeFeedback(
   score: FrozenScore,
   mode: GradeFeedback["mode"],
   securePayload?: AssessmentSecurePayload,
+  recommendation?: FinalLearningDecision,
 ): GradeFeedback {
   const correctCount = score.item_results.filter((item) => item.raw_score === item.max_score).length
   return {
@@ -214,7 +216,12 @@ export function buildGradeFeedback(
         item_id: item.item_id,
         feedback_code: item.feedback_code,
         message: feedbackMessage(item.feedback_code, mode, item.misconception_tags, fullScore),
-        next_step: feedbackNextStep(item.feedback_code, item.objective_id, fullScore),
+        next_step: feedbackNextStep(
+          item.feedback_code,
+          item.objective_id,
+          fullScore,
+          recommendation?.action,
+        ),
         ...(securePayload ? withRevealedAnswer(item, securePayload) : {}),
       }
     }),
@@ -280,9 +287,18 @@ function feedbackMessage(code: string, mode: GradeFeedback["mode"], misconceptio
   return mode === "formative" ? "当前作答未达到要求，建议根据提示重新推导。" : "当前作答未达到评分要求。"
 }
 
-function feedbackNextStep(code: string, objectiveId: string, fullScore: boolean): string {
+function feedbackNextStep(
+  code: string,
+  objectiveId: string,
+  fullScore: boolean,
+  action?: FinalLearningDecision["action"],
+): string {
   if (fullScore && (code === "correct" || code === "passed" || code === "rubric_graded")) {
-    return `继续完成目标 ${objectiveId} 的迁移练习。`
+    if (action === "advance") return `目标 ${objectiveId} 已达标，按本轮决策进入下一知识节点。`
+    if (action === "reinforce") return `目标 ${objectiveId} 本题已达标，使用同难度新变式继续巩固。`
+    if (action === "remediate") return `目标 ${objectiveId} 本题已达标；结合本轮其他薄弱项回看讲解与示例。`
+    if (action === "reprofile") return `目标 ${objectiveId} 本题已达标，等待画像重新确认后安排下一步。`
+    return `目标 ${objectiveId} 本题已达标，继续完成本轮其余学习任务。`
   }
   if (code === "timeout") return `针对目标 ${objectiveId} 检查终止条件与复杂度。`
   return `回到目标 ${objectiveId} 的讲解与示例，完成一次同族变式后再测。`
