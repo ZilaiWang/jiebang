@@ -5,6 +5,10 @@ import type { ConceptTutorRequest } from "../agents/types"
 import type { ObjectiveSupportPlan } from "./artifact-feasibility"
 import { assessObjectiveSupport } from "./artifact-feasibility"
 import type { ObservableBehavior } from "../contracts/profile-adapter"
+import {
+  normalizeGroundedClaimText,
+  visibleTeachingTextExpressesFact,
+} from "../validators/claim-grounding"
 
 /**
  * 讲义 Section Plan（改进方案5 第六节）。
@@ -56,6 +60,16 @@ export interface ConceptSectionPlan {
   slots: ConceptSectionSlot[]
 }
 
+const MAX_FACTS_PER_EXPLANATION_SLOT = 3
+
+function chunkFactIds(factIds: string[]): string[][] {
+  const chunks: string[][] = []
+  for (let index = 0; index < factIds.length; index += MAX_FACTS_PER_EXPLANATION_SLOT) {
+    chunks.push(factIds.slice(index, index + MAX_FACTS_PER_EXPLANATION_SLOT))
+  }
+  return chunks
+}
+
 function slot(
   kind: ConceptSectionSlot["kind"],
   overrides: Partial<ConceptSectionSlot> & { fact_ids: string[] },
@@ -95,26 +109,29 @@ export function buildConceptSectionPlan(input: {
   const { fact_ids } = input
   const mode = conceptModeForSupport(input.support, fact_ids.length)
 
+  const factGroups = chunkFactIds(fact_ids)
+  const primaryFactGroup = factGroups[0] ?? []
+
   const commonSlots: ConceptSectionSlot[] = [
     slot("overview", {
-      fact_ids,
+      fact_ids: fact_ids.slice(0, 1),
       allowed_moves: ["direct_paraphrase", "plain_language_explanation"],
       min_sentences: 1,
       max_sentences: 2,
       allowed_block_types: ["paragraph"],
     }),
-    slot("fact_explanation", {
-      fact_ids,
+    ...factGroups.map((group) => slot("fact_explanation", {
+      fact_ids: group,
       allowed_moves: ["direct_paraphrase", "plain_language_explanation", "direct_instance"],
       min_sentences: 2,
-      max_sentences: 5,
+      max_sentences: Math.max(4, group.length * 2 + 1),
       allowed_block_types: ["paragraph", "callout"],
-    }),
+    })),
   ]
 
   const modeSlots: ConceptSectionSlot[] = mode === "procedural"
     ? [slot("procedure_steps", {
-        fact_ids,
+        fact_ids: primaryFactGroup,
         allowed_moves: ["procedure_trace", "direct_instance"],
         min_sentences: 1,
         max_sentences: 6,
@@ -122,29 +139,29 @@ export function buildConceptSectionPlan(input: {
       })]
     : mode === "comparative"
       ? [slot("comparison", {
-          fact_ids,
+          fact_ids: primaryFactGroup,
           allowed_moves: ["explicit_comparison", "direct_instance"],
           min_sentences: 2,
           max_sentences: 6,
           allowed_block_types: ["comparison", "paragraph"],
         })]
       : [slot("guided_example", {
-          fact_ids,
+          fact_ids: primaryFactGroup,
           allowed_moves: ["direct_instance", "recognition_check"],
           min_sentences: 1,
-          max_sentences: 4,
+          max_sentences: Math.max(4, primaryFactGroup.length * 2),
           allowed_block_types: ["paragraph", "code"],
         })]
 
   const misconceptionSlot = slot("misconception", {
-    fact_ids,
+    fact_ids: fact_ids.slice(0, 1),
     allowed_moves: ["fact_negation"],
     min_sentences: 2,
     max_sentences: 4,
     allowed_block_types: ["callout"],
   })
   const recapSlot = slot("recap", {
-    fact_ids,
+    fact_ids: primaryFactGroup,
     allowed_moves: ["direct_paraphrase"],
     min_sentences: 1,
     max_sentences: 3,
@@ -288,6 +305,103 @@ export function validateConceptSectionStructure(input: {
     if (section.steps.length > 0 && planned.kind !== "procedure_steps") {
       issues.push(`section ${section.slot_id} 仅 procedure_steps 可返回 steps`)
     }
+    const sentences = splitTeachingSentences(section.body)
+    if (sentences.length < planned.min_sentences) {
+      issues.push(
+        `section ${section.slot_id} 至少需要 ${planned.min_sentences} 个有效句子，实际 ${sentences.length}`,
+      )
+    }
+    if (sentences.length > planned.max_sentences) {
+      issues.push(
+        `section ${section.slot_id} 最多允许 ${planned.max_sentences} 个句子，实际 ${sentences.length}`,
+      )
+    }
+    const distinctSentences = new Set(sentences.map(normalizeGroundedClaimText))
+    if (distinctSentences.size < sentences.length) {
+      issues.push(`section ${section.slot_id} 不得用重复句子填充篇幅`)
+    }
+    const normalizedHeading = normalizeGroundedClaimText(section.heading)
+    const normalizedFirstSentence = normalizeGroundedClaimText(sentences[0] ?? "")
+    if (
+      normalizedHeading.length >= 6
+      && normalizedHeading === normalizedFirstSentence
+    ) {
+      issues.push(`section ${section.slot_id} 标题不得与正文首句完全重复`)
+    }
+    if (/\b(?:fact|source)[-_ ]?id\b|证据事实|引用事实/iu.test(`${section.heading}\n${section.body}`)) {
+      issues.push(`section ${section.slot_id} 不得向学习者暴露事实编号或证据标签`)
+    }
+  }
+  return issues
+}
+
+function splitTeachingSentences(value: string): string[] {
+  return value
+    .split(/[。！？!?；;\n]+/u)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+}
+
+/**
+ * 校验学习者实际可见的事实讲解，而不是自动附加的 claim/citation 元数据。
+ * 每条 required fact 都必须在 fact_explanation 的学习者可见正文中原意可见。
+ * 多条相关事实可在同一教学单元中自然组织；校验覆盖不强迫展示层“一事实一段”。
+ */
+export function validateConceptVisibleFactCoverage(
+  request: ConceptTutorRequest,
+  payload: ConceptSegmentAuthorPayloadV2,
+  plans: ConceptSectionPlan[],
+): string[] {
+  const issues: string[] = []
+  const factsByKey = new Map(request.evidence_pack.results.flatMap((source) =>
+    source.facts.map((fact) => [`${source.source_id}:${fact.fact_id}`, fact.content] as const)))
+
+  for (const target of request.generation_spec.targets) {
+    const authored = payload.objectives.find((entry) => entry.objective_id === target.objective_id)
+    const plan = plans.find((entry) => entry.objective_id === target.objective_id)
+    if (!authored || !plan) continue
+    const authoredBySlot = new Map(authored.sections.map((section) => [section.slot_id, section]))
+
+    const normalizedFactTexts: string[] = []
+    for (const factId of target.required_fact_ids) {
+      const fact = factsByKey.get(`${target.source_id}:${factId}`)
+      if (!fact?.trim()) {
+        issues.push(`objective ${target.objective_id} 的 required fact ${factId} 在 evidence 中不存在`)
+        continue
+      }
+      normalizedFactTexts.push(normalizeGroundedClaimText(fact))
+      const factSlots = plan.slots.filter((slotPlan) =>
+        slotPlan.kind === "fact_explanation" && slotPlan.fact_ids.includes(factId))
+      const visibleBodies = factSlots
+        .map((slotPlan) => authoredBySlot.get(slotPlan.slot_id)?.body ?? "")
+        .filter(Boolean)
+      const coveringBody = visibleBodies.find((body) =>
+        visibleTeachingTextExpressesFact(body, fact))
+      if (!coveringBody) {
+        issues.push(
+          `objective ${target.objective_id} 的 required fact ${factId} 未在可见 fact_explanation 正文中完整表达`,
+        )
+        continue
+      }
+    }
+
+    const underExplainedSlot = plan.slots
+      .filter((slotPlan) => slotPlan.kind === "fact_explanation")
+      .find((slotPlan) => {
+        const body = authoredBySlot.get(slotPlan.slot_id)?.body ?? ""
+        const normalizedBody = normalizeGroundedClaimText(body)
+        const boundFactLength = slotPlan.fact_ids.reduce((total, factId) => {
+          const fact = factsByKey.get(`${target.source_id}:${factId}`)
+          return total + normalizeGroundedClaimText(fact ?? "").length
+        }, 0)
+        const minimumExplanationLength = Math.max(12, slotPlan.fact_ids.length * 6)
+        return normalizedBody.length - boundFactLength < minimumExplanationLength
+      })
+    if (normalizedFactTexts.length > 0 && underExplainedSlot) {
+      issues.push(
+        `objective ${target.objective_id} 只罗列或复述 required facts，缺少通俗解释或有意义的直接实例`,
+      )
+    }
   }
   return issues
 }
@@ -397,7 +511,9 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
         misconception_tag: stableId("CONCEPT-MISCONCEPTION", { ...identity, slot_id: slot.slot_id }),
         explanation: section.body.trim() || "常见误解：请结合上文事实自查。",
         objective_id,
-        citations: structuredClone(citations),
+        citations: citations
+          .filter((citation) => slot.fact_ids.includes(citation.fact_id))
+          .map((citation) => structuredClone(citation)),
       })
       continue
     }
