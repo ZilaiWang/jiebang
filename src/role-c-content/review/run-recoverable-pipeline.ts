@@ -1,4 +1,5 @@
 import type { RoleCAgents } from "../agents/types"
+import { isValidSourceId } from "../../knowledge/identifiers"
 import {
   C_SCHEMA_VERSION,
   contentHash,
@@ -28,6 +29,8 @@ import type {
 import type { CPipelineInput } from "../orchestrator/content-pipeline"
 import type { SecureArtifactStore } from "../security/secure-artifact-store"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
+import { bindObjectiveEvidence } from "../planning/objective-evidence-bundle"
+import { BEHAVIOR_CAPABILITY_REQUIREMENTS } from "../../knowledge/capabilities"
 import { runReviewedCPipeline } from "./run-reviewed-pipeline"
 import type {
   ContentRecoveryAction,
@@ -474,23 +477,17 @@ function bindRefreshedSupportFacts(
 ): LearningPathNode {
   const requestedObjectives = new Set(requiredSupport.map((entry) => entry.objective_id))
   if (requestedObjectives.size === 0) return path
-  const factsBySource = new Map(evidence.results.map((item) => [
-    item.source_id,
-    item.facts.map((fact) => fact.fact_id),
-  ] as const))
   return {
     ...structuredClone(path),
     objectives: path.objectives.map((objective) => {
       if (!requestedObjectives.has(objective.objective_id)) {
         return structuredClone(objective)
       }
-      const available = factsBySource.get(objective.source_id) ?? []
+      const bundle = bindObjectiveEvidence(objective, evidence.results)
+      if (!bundle.sufficient) return structuredClone(objective)
       return {
         ...structuredClone(objective),
-        required_fact_ids: unique([
-          ...objective.required_fact_ids,
-          ...available,
-        ]),
+        required_fact_ids: bundle.required_fact_ids,
       }
     }),
   }
@@ -953,21 +950,19 @@ function reviewEvidenceGapRequest(
     learner_level: profile.level,
     required_facts: requiredFacts,
     target_objectives: structuredClone(path.objectives),
-    required_support: path.objectives.map((objective) => ({
-      objective_id: objective.objective_id,
-      capability: evidenceCapabilityForBehavior(objective.observable_behavior),
-      reason: `当前证据未能稳定支撑 ${objective.observable_behavior} 行为目标：${directive.reason}`,
-    })),
+    required_support: path.objectives.flatMap((objective) => {
+      const binding = bindObjectiveEvidence(objective, input.evidence_pack.results)
+      const capabilityGroups = binding.missing_capabilities.length > 0
+        ? binding.missing_capabilities
+        : BEHAVIOR_CAPABILITY_REQUIREMENTS[objective.observable_behavior]
+      return capabilityGroups.map((capabilities) => ({
+        objective_id: objective.objective_id,
+        capability: capabilities[0]!,
+        acceptable_capabilities: [...capabilities],
+        reason: `当前证据未能稳定支撑 ${objective.observable_behavior} 行为目标，需要补充 ${capabilities.join("/")} 中至少一种能力：${directive.reason}`,
+      }))
+    }),
   }
-}
-
-function evidenceCapabilityForBehavior(
-  behavior: LearningPathNode["objectives"][number]["observable_behavior"],
-): NonNullable<EvidenceGapRequest["required_support"]>[number]["capability"] {
-  if (behavior === "trace" || behavior === "apply") return "procedure"
-  if (behavior === "debug") return "boundary"
-  if (behavior === "create") return "io_contract"
-  return "definition"
 }
 
 function pathPlanningRequest(
@@ -1159,8 +1154,6 @@ type PathFactBindingResult =
   | { ok: true; path: LearningPathNode }
   | { ok: false; errors: string[] }
 
-const MAX_REQUIRED_FACTS_PER_OBJECTIVE = 3
-
 function bindUnboundObjectiveFacts(
   path: RoleBPathDraft,
   evidence: RagEvidencePack,
@@ -1168,21 +1161,18 @@ function bindUnboundObjectiveFacts(
   const bound = structuredClone(path)
   const errors: string[] = []
   for (const objective of bound.objectives) {
-    if (objective.required_fact_ids.length > 0) continue
-    const availableFactIds = unique(
-      evidence.results
-        .filter((item) => item.source_id === objective.source_id)
-        .flatMap((item) => item.facts)
-        .filter((fact) => fact.source_id === objective.source_id)
-        .map((fact) => fact.fact_id),
-    ).sort().slice(0, MAX_REQUIRED_FACTS_PER_OBJECTIVE)
-    if (availableFactIds.length === 0) {
+    const bundle = bindObjectiveEvidence(objective, evidence.results)
+    if (bundle.required_fact_ids.length === 0) {
       errors.push(
         `目标 ${objective.objective_id} 的知识点 ${objective.source_id} 没有可用事实`,
       )
       continue
     }
-    objective.required_fact_ids = availableFactIds
+    if (!bundle.sufficient) {
+      errors.push(`目标 ${objective.objective_id} 的事实能力不足：${bundle.missing_capabilities.map((group) => group.join("/")).join("、")}`)
+      continue
+    }
+    objective.required_fact_ids = bundle.required_fact_ids
   }
   return errors.length > 0
     ? { ok: false, errors }
@@ -1278,7 +1268,8 @@ function inferredMissingPrerequisites(
       ...instruction.evidence_refs,
     ])
     .join(" ")
-  return unique(text.match(/\bK[0-9]{3}\b/g) ?? [])
+  return unique((text.match(/\b[A-Z][A-Z0-9_-]{2,31}\b/g) ?? [])
+    .filter(isValidSourceId))
 }
 
 function unsupportedDirective(directive: RecoveryDirective): boolean {

@@ -176,6 +176,7 @@ misconception section 必须包含：错误理解；它与哪一条当前事实�
 2. 错误选项只能：直接否定事实、交换主客体、扩大或缩小事实范围。
 3. 不得使用 evidence 未说明的后果、代码输出、异常或 API 作为干扰项。
 4. answer 必须与 options 中一项完全一致；explanation 用 1 至 3 句解释正确项为什么符合事实。
+5. micro_check 只检验 section_plan 中首个 kind=fact_explanation slot 绑定的 fact_ids；题干、选项和解析不得使用该 slot 之外的事实。编排器会把同一组事实绑定为本题引用。
 
 ══════════════════════════════════════
 六、三级提示
@@ -185,6 +186,7 @@ Level 1：提醒学习者定位相关事实，不透露答案。
 Level 2：指出应关注的关键词、对象或步骤。
 Level 3：把事实应用到当前题面，接近完整思路，但不直接复制最终答案。
 三级提示必须真正递进，不能只是同一句话的三种改写。
+三级提示只围绕首个 kind=fact_explanation slot 绑定的 fact_ids 和本 objective 的 micro_check 展开，不得引用其他 slot 的事实。
 
 ══════════════════════════════════════
 七、Recap section

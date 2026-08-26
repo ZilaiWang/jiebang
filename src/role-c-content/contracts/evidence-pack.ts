@@ -1,6 +1,8 @@
 import type { ObjectiveEvidenceCoverage, RagResult, RagResultItem, RetrievalContext } from "../../rag/retriever"
-import type { KnowledgeDifficulty } from "../../knowledge/types"
+import type { EvidenceCapability, KnowledgeDifficulty, SourceAuthority } from "../../knowledge/types"
 import type { KnowledgeMisconception, KnowledgeWorkedExample } from "../../knowledge/types"
+import { inferFactCapabilities } from "../../knowledge/capabilities"
+import { factKey } from "../../knowledge/identifiers"
 import { C_SCHEMA_VERSION, stableId, type EvidenceRef, type SchemaVersion } from "./common"
 import type { LearningPathNode } from "./profile-adapter"
 
@@ -10,6 +12,12 @@ export interface EvidenceFact {
   source_id: string
   fact_id: string
   content: string
+  capabilities?: EvidenceCapability[]
+  scope?: string[]
+  exceptions?: string[]
+  prerequisites?: string[]
+  confidence?: number
+  authority?: SourceAuthority
 }
 
 export interface EvidenceExample {
@@ -127,7 +135,9 @@ export interface EvidenceGapRequest {
    */
   required_support?: Array<{
     objective_id: string
-    capability: "definition" | "procedure" | "state_transition" | "boundary" | "contrast" | "io_contract"
+    /** Preferred capability; alternatives express equivalent evidence forms. */
+    capability: EvidenceCapability
+    acceptable_capabilities?: EvidenceCapability[]
     reason: string
   }>
 }
@@ -203,7 +213,7 @@ export function adaptRagResult(result: RagResult, options: AdaptRagResultOptions
 
 export function evidenceFactKeys(pack: RagEvidencePack): Set<string> {
   return new Set(
-    pack.results.flatMap((item) => item.facts.map((fact) => `${fact.source_id}:${fact.fact_id}`)),
+    pack.results.flatMap((item) => item.facts.map(factKey)),
   )
 }
 
@@ -219,6 +229,14 @@ function normalizeResultItem(item: RagResultItem): RagEvidenceItem {
       source_id: fact.source_id ?? fact.sourceId,
       fact_id: fact.fact_id ?? fact.factId,
       content: fact.content,
+      capabilities: fact.capabilities?.length
+        ? [...fact.capabilities]
+        : inferFactCapabilities(fact.content),
+      ...(fact.scope?.length ? { scope: [...fact.scope] } : {}),
+      ...(fact.exceptions ? { exceptions: [...fact.exceptions] } : {}),
+      ...(fact.prerequisites ? { prerequisites: [...fact.prerequisites] } : {}),
+      ...(fact.confidence !== undefined ? { confidence: fact.confidence } : {}),
+      ...(fact.authority ? { authority: fact.authority } : {}),
     })),
     examples: item.examples.map((example) => ({ ...example })),
     practice_tasks: [...item.practiceTasks],

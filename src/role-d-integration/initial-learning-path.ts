@@ -21,7 +21,12 @@ import {
   type LearningPathNode,
   type ObservableBehavior,
 } from "../role-c-content/contracts/profile-adapter"
-import { decideObservableBehavior } from "../role-c-content/planning/observable-behavior-policy"
+import {
+  decideObservableBehavior,
+  explicitBehaviorFromGoal,
+  LEVEL_BEHAVIOR_BASELINE,
+} from "../role-c-content/planning/observable-behavior-policy"
+import { bindObjectiveEvidence } from "../role-c-content/planning/objective-evidence-bundle"
 
 export type InitialRoleCContextResult =
   | {
@@ -125,14 +130,35 @@ export async function buildInitialRoleCContext(input: {
     }
   }
 
-  const primaryBehavior = decideObservableBehavior({
+  const requestedPrimaryBehavior = decideObservableBehavior({
     goal: input.profile.goal,
     learner_level: input.profile.level,
   })
-  const behaviors = targetIds.map((_, index) =>
-    index === 0
-      ? primaryBehavior
-      : supportingBehavior(primaryBehavior))
+  const behaviorWasExplicit = explicitBehaviorFromGoal(input.profile.goal) !== null
+  const behaviors = targetIds.map((sourceId, index) => resolveSupportedBehavior({
+    source_id: sourceId,
+    requested: index === 0
+      ? requestedPrimaryBehavior
+      : supportingBehavior(requestedPrimaryBehavior),
+    level: input.profile.level,
+    facts: resultById.get(sourceId)!.facts,
+    explicit: behaviorWasExplicit,
+  }))
+  const bundles = targetIds.map((sourceId, index) => selectRequiredFactIds(
+    input.profile,
+    byId.get(sourceId)!,
+    resultById.get(sourceId)!,
+    behaviors[index]!,
+  ))
+  const unsupported = bundles.findIndex((bundle) => !bundle.sufficient)
+  if (unsupported >= 0) {
+    const sourceId = targetIds[unsupported]!
+    return {
+      ok: false,
+      code: "INVALID_TARGET_EVIDENCE",
+      reason: `知识点 ${sourceId} 的当前事实无法支撑 ${behaviors[unsupported]} 目标，缺少能力：${bundles[unsupported]!.missing_capabilities.map((group) => group.join("/"))}`,
+    }
+  }
   const objectives = targetIds.map((sourceId, index) => ({
     objective_id: stableId("OBJECTIVE", {
       learner_id: input.profile.learner_id,
@@ -140,11 +166,7 @@ export async function buildInitialRoleCContext(input: {
       goal: input.profile.goal,
     }),
     source_id: sourceId,
-    required_fact_ids: selectRequiredFactIds(
-      input.profile,
-      byId.get(sourceId)!,
-      resultById.get(sourceId)!,
-    ),
+    required_fact_ids: bundles[index]!.required_fact_ids,
     observable_behavior: behaviors[index]!,
     importance: "core" as const,
     // 路径第一个目标是本轮主修目标：primaryBehavior 对应的 source 即
@@ -518,7 +540,8 @@ function selectRequiredFactIds(
   profile: LearnerProfile,
   item: KnowledgeItem,
   evidence: RagResultItem,
-): string[] {
+  behavior: ObservableBehavior,
+): ReturnType<typeof bindObjectiveEvidence> {
   const intentText = [profile.goal, ...profile.weak_concepts].join(" ")
   const intentTerms = unique([
     item.title,
@@ -537,15 +560,11 @@ function selectRequiredFactIds(
         : score, 0),
   })).sort((left, right) =>
     right.score - left.score || left.index - right.index)
-  // A structured source is already B's selected teaching target.  Freezing
-  // only the top lexical match made the downstream behavior contract
-  // impossible surprisingly often: e.g. a target could require apply/create
-  // while C was allowed to see only the source's introductory definition.
-  // Keep relevance ranking for a stable order, but bind the complete set of
-  // facts returned for that selected source.  This is still a narrow,
-  // source-scoped evidence boundary and lets the C feasibility planner judge
-  // the real capability of the source instead of an accidental first fact.
-  return ranked.map((fact) => fact.factId)
+  return bindObjectiveEvidence({
+    source_id: item.sourceId,
+    observable_behavior: behavior,
+    required_fact_ids: ranked.map((fact) => fact.factId),
+  }, [evidence])
 }
 
 function extractIdentifierTerms(text: string): string[] {
@@ -556,6 +575,27 @@ function extractIdentifierTerms(text: string): string[] {
 function supportingBehavior(primary: ObservableBehavior): ObservableBehavior {
   if (primary === "create" || primary === "debug") return "apply"
   return primary
+}
+
+function resolveSupportedBehavior(input: {
+  source_id: string
+  requested: ObservableBehavior
+  level: LearnerProfile["level"]
+  facts: RagResultItem["facts"]
+  explicit: boolean
+}): ObservableBehavior {
+  const supports = (behavior: ObservableBehavior) => bindObjectiveEvidence({
+    source_id: input.source_id,
+    observable_behavior: behavior,
+    required_fact_ids: [],
+  }, [{ source_id: input.source_id, facts: input.facts }]).sufficient
+  if (supports(input.requested) || input.explicit) return input.requested
+  const candidates = unique([
+    ...LEVEL_BEHAVIOR_BASELINE[input.level],
+    "explain",
+    "recognize",
+  ]) as ObservableBehavior[]
+  return candidates.find(supports) ?? input.requested
 }
 
 function blueprintForBehaviors(behaviors: ObservableBehavior[]): AssessmentBlueprint {

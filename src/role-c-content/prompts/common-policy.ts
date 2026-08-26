@@ -1,4 +1,4 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.35.0" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.36.0" as const
 
 export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容生成组件。
 

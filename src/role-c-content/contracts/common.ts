@@ -2,6 +2,8 @@ import type { KnowledgeDifficulty } from "../../knowledge/types"
 import { createHash } from "node:crypto"
 import { C_SCHEMA_VERSION, stableStringify } from "./canonical"
 
+export { factKey } from "../../knowledge/identifiers"
+
 export { C_SCHEMA_VERSION, stableId } from "./canonical"
 
 export type SchemaVersion = typeof C_SCHEMA_VERSION

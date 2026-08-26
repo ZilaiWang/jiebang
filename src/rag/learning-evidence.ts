@@ -268,7 +268,7 @@ function evidenceSufficiency(
   const missingMisconceptionIds = requestedMisconceptions.filter((id) =>
     !availableMisconceptions.has(id))
   const workedExampleCount = result.results.reduce((sum, item) =>
-    sum + (item.workedExamples?.length ?? item.examples.length), 0)
+    sum + (item.workedExamples?.length ? item.workedExamples.length : item.examples.length), 0)
   const counterexampleCount = result.results.reduce((sum, item) =>
     sum + (item.counterexamples?.length ?? 0), 0)
   return {

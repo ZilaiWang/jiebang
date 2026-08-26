@@ -113,9 +113,13 @@ function assessmentDimensions(
     items.length,
   )
   const constructCoverage = ratio(plan.filter((entry) => Boolean(entry.construct && entry.evidence_of_mastery)).length, plan.length)
-  const misconceptionCoverage = design.learner.misconceptions.length === 0
-    ? 0.85
-    : ratio(choicePlans.filter((entry) => entry.target_misconception_id).length, choicePlans.length)
+  const misconceptionEligiblePlans = choicePlans.filter((entry) => entry.misconception_available)
+  const misconceptionCoverage = misconceptionEligiblePlans.length === 0
+    ? 1
+    : ratio(
+        misconceptionEligiblePlans.filter((entry) => entry.target_misconception_id).length,
+        misconceptionEligiblePlans.length,
+      )
   const tier3 = plan.filter((entry) => entry.tier === 3)
   const genuineTransfer = tier3.length === 0
     ? 0.85
@@ -123,7 +127,14 @@ function assessmentDimensions(
   return [
     dimension("construct_validity", average([constructCoverage, bool(items.length === plan.length)]), 1.4, true, "每题对应明确构念与掌握证据"),
     dimension("distractor_quality", choicePlans.length === 0 ? 1 : clamp(average([1 - vacuousRate, lengthBalance, bool(allOptions.length > 0)])), 1.3, true, "干扰项可信且没有明显荒谬线索", choicePlans.length > 0),
-    dimension("misconception_alignment", choicePlans.length === 0 ? 1 : misconceptionCoverage, 1.1, true, "选择题优先定位知识库误区", choicePlans.length > 0),
+    dimension(
+      "misconception_alignment",
+      misconceptionCoverage,
+      1.1,
+      true,
+      "存在当前引用可支撑的知识库误区时，选择题必须显式绑定",
+      misconceptionEligiblePlans.length > 0,
+    ),
     dimension("transfer_validity", tier3.length === 0 ? 1 : genuineTransfer, 1, true, "高阶题改变认知操作或任务结构", tier3.length > 0),
     dimension("item_independence", promptUniqueness, 0.9, false, "同卷题目不重复同一骨架"),
     dimension("reading_load", readability(items.map((item) => String(item.prompt ?? "")).join("。")), 0.7, false, "题干没有无关故事和过长阅读负担"),

@@ -1,5 +1,15 @@
 export type KnowledgeDifficulty = "beginner" | "basic" | "intermediate" | "integrated"
 
+export type EvidenceCapability =
+  | "definition"
+  | "rule"
+  | "procedure"
+  | "state_transition"
+  | "boundary"
+  | "contrast"
+  | "io_contract"
+  | "example"
+
 export interface KnowledgeFact {
   sourceId: string
   factId: string
@@ -12,6 +22,8 @@ export interface KnowledgeFact {
   prerequisites?: string[]
   confidence?: number
   authority?: SourceAuthority
+  /** Explicit runtime evidence role used by objective planning and preflight. */
+  capabilities?: EvidenceCapability[]
 }
 
 export type SourceAuthority = "curriculum" | "official_documentation" | "reviewed_reference"

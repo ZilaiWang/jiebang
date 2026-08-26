@@ -81,6 +81,7 @@ import {
   projectAssessmentPublicAuthorPayload,
   materializeCodeLabPublicAuthorPayload,
   materializeCodeLabSecureAuthorPayload,
+  materializeRecallFactSecureAuthorPayload,
   mapWithConcurrency,
   mergeConceptSegments,
   canonicalizeTestComparison,
@@ -553,7 +554,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
     const publicTestInputs = normalizedPublic.public_tests.map((test) => test.input)
     const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- 若本任务需要读取输入：hidden_tests[].input 请用能覆盖边界、反例、极端情况的「新数据」，避开这些 public 已用的输入：${JSON.stringify(publicTestInputs)}，并根据 reference_solution 重算 expected。\n- 若本任务是纯输出（不读取输入）：public 和 hidden 的 input 都留空（""）是合法的，区分度放在 expected 输出内容上，不要求 input 不同。\n- function 模式的参数用结构不同的非空封装，并重算 expected。`
-    const secureAuthorPayload = await this.generateStage<CodeLabSecureAuthorPayload>({
+    const secureAuthorPayload = taskContract?.learner_action === "recall_fact"
+      ? materializeRecallFactSecureAuthorPayload(request, securePlan)
+      : await this.generateStage<CodeLabSecureAuthorPayload>({
       task: "role-c.code-lab.secure",
       system_prompt: CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT,
       input: {
@@ -617,7 +620,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         })
         return validationIssuesExcludingRepairablePublicAnswerLeak(report)
       },
-    })
+        })
     const normalizedSecureAuthorPayload = normalizeCodeLabSecureAuthorPayload(
       normalizeCodeLabSecureAuthorPayloadLenient(
         secureAuthorPayload,

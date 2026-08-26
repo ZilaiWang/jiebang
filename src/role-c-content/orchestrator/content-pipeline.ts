@@ -11,7 +11,7 @@ import { contentHash, type BlockedReason, type FailureReason } from "../contract
 import type { AgentTraceEvent } from "../contracts/learning-evidence-event"
 import { newTraceEvent } from "../contracts/learning-evidence-event"
 import type { GenerationSpec } from "../contracts/generation-spec"
-import type { FactAuditPacket, FactAuditPort, RagEvidencePack } from "../contracts/evidence-pack"
+import type { EvidenceFact, FactAuditPacket, FactAuditPort, RagEvidencePack } from "../contracts/evidence-pack"
 import type {
   NextRoundGenerationContext,
   PriorAssessmentItem,
@@ -405,10 +405,14 @@ function validateGenerationRecovery(
 
 /** 从 pipeline input 构造 feasibility 输入：事实数取 required_fact_ids，事实内容从 evidence_pack 提取。 */
 function buildFeasibilityInput(input: CPipelineInput, capacity: AssessmentCapacityPlan): Parameters<typeof planArtifactFeasibility>[0] {
-  const factsByRef = new Map<string, { content: string }>()
+  const factsByRef = new Map<string, Pick<EvidenceFact, "fact_id" | "content" | "capabilities">>()
   for (const item of input.evidence_pack.results) {
     for (const fact of item.facts ?? []) {
-      factsByRef.set(`${fact.source_id}:${fact.fact_id}`, { content: fact.content })
+      factsByRef.set(`${fact.source_id}:${fact.fact_id}`, {
+        fact_id: fact.fact_id,
+        content: fact.content,
+        ...(fact.capabilities?.length ? { capabilities: [...fact.capabilities] } : {}),
+      })
     }
   }
   return {
@@ -611,7 +615,7 @@ async function runCPipelineCore(
       .flatMap((objective) => objective.missing_support.map((gap) => `[${objective.objective_id}] ${gap}`))
     const blockedReason: BlockedReason = {
       code: "BLOCKED_MISSING_EVIDENCE",
-      message: "证据能力不足：当前证据无法支撑冻结的 observable behavior，需要 A 补证据或 B 降低行为要求",
+      message: "证据能力不足：当前事实束无法支撑冻结的 observable behavior，需要 A 补齐相应能力事实或由 B 调整目标设计",
       details: missing.slice(0, 8),
     }
     pushTrace({

@@ -90,6 +90,29 @@ function toStructuredEvidenceItem(
       source_id: fact.source_id ?? fact.sourceId,
       fact_id: fact.fact_id ?? fact.factId,
     }))
+  const includesFact = (factId: string) => includeAllFacts || selectedFactIds.has(factId)
+  const misconceptions = (item.misconceptions ?? [])
+    .filter((entry) => entry.factRefs.length > 0 && entry.factRefs.every((ref) =>
+      ref.sourceId === item.sourceId && includesFact(ref.factId)))
+    .map((entry) => structuredClone(entry))
+  const workedExamples = (item.workedExamples ?? [])
+    .filter((entry) => entry.steps.length > 0 && entry.steps.every((step) =>
+      step.factIds.length > 0 && step.factIds.every(includesFact)))
+    .map((entry) => structuredClone(entry))
+  const projectedExamples = includeAllFacts
+    ? item.examples.map((example) => ({ ...example }))
+    : facts.map((fact) => ({
+        title: `${item.title} · ${fact.factId} 事实示例`,
+        // Identity hydration may not relabel an unreferenced chapter example
+        // as support for a smaller bundle. A comment is valid Python context
+        // and states exactly the authoritative fact, without adding an API or
+        // execution result that the fact cannot prove.
+        code: `# ${fact.content}`,
+        explanation: fact.content,
+      }))
+  const projectedPracticeTasks = includeAllFacts
+    ? [...item.practiceTasks]
+    : facts.map((fact) => `依据已审核事实“${fact.content}”完成一次识别、解释或应用，并说明判断依据。`)
   const trace: RetrievalTrace = {
     matchedKeywords: [],
     matchedFields: ["source_id"],
@@ -112,14 +135,22 @@ function toStructuredEvidenceItem(
     reason: `按 source_id 从知识库读取证据：${item.sourceId}`,
     snippet: item.snippet,
     facts,
-    examples: item.examples.map((example) => ({ ...example })),
-    practiceTasks: [...item.practiceTasks],
+    // Legacy examples/practice tasks have no fact references. They remain
+    // useful during semantic discovery. A fact-specific identity lookup uses
+    // an exact projection of each selected fact instead of silently exposing
+    // the whole chapter as if it supported the smaller bundle.
+    examples: projectedExamples,
+    practiceTasks: projectedPracticeTasks,
     quizItems: item.quizItems
       .filter((quiz) => includeAllFacts || selectedFactIds.has(quiz.factId))
       .map((quiz) => ({
         ...quiz,
         ...(quiz.options ? { options: [...quiz.options] } : {}),
       })),
+    misconceptions,
+    workedExamples,
+    counterexamples: includeAllFacts ? [...(item.counterexamples ?? [])] : [],
+    assessmentConstraints: [...(item.assessmentConstraints ?? [])],
     file: item.file,
     retrievalTrace: trace,
     retrieval_trace: {

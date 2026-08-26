@@ -6,6 +6,7 @@ import {
   type RagResultItem,
 } from "../../rag/retriever"
 import { retrieveStructuredEvidenceFromKnowledgeBase } from "../../rag/structured-evidence"
+import { bindObjectiveEvidence } from "../planning/objective-evidence-bundle"
 import type { LearnerProfile } from "../../role-b-profile/types"
 import { auditTeaching } from "../../role-b-profile/teaching-audit/auditor"
 import type { TeachingAuditStatus } from "../../role-b-profile/teaching-audit/types"
@@ -203,25 +204,30 @@ export async function prepareRoleCWeek3Input(
     target_source_ids: [...evaluationCase.target_source_ids],
     prerequisite_source_ids: prerequisiteSourceIds,
     goal: profile.goal,
-    objectives: targetItems.map((item, index) => ({
-      objective_id: stableId("OBJECTIVE-WEEK3", {
+    objectives: targetItems.map((item, index) => {
+      const objective_id = stableId("OBJECTIVE-WEEK3", {
         case_id: evaluationCase.case_id,
         source_id: item.sourceId,
-      }),
-      source_id: item.sourceId,
-      // The case evaluates the requested observable behavior, so its frozen
-      // evidence must include the complete selected source rather than only
-      // the first introductory fact.  Otherwise a trace/apply/create case is
-      // structurally unsatisfiable before the model is called.
-      required_fact_ids: item.facts.map((fact) => fact.factId),
-      observable_behavior: behaviorFor(
+      })
+      const observable_behavior = behaviorFor(
         evaluationCase.resource_kind,
         index,
         targetItems.length,
-      ),
-      importance: "core" as const,
-      is_primary: index === 0 ? (true as const) : undefined,
-    })),
+      )
+      const bundle = bindObjectiveEvidence({
+        source_id: item.sourceId,
+        required_fact_ids: [],
+        observable_behavior,
+      }, [{ source_id: item.sourceId, facts: item.facts }])
+      return {
+        objective_id,
+        source_id: item.sourceId,
+        required_fact_ids: bundle.required_fact_ids,
+        observable_behavior,
+        importance: "core" as const,
+        is_primary: index === 0 ? (true as const) : undefined,
+      }
+    }),
     assessment_blueprint: assessmentBlueprint(
       targetItems.length,
       evaluationCase.resource_kind,

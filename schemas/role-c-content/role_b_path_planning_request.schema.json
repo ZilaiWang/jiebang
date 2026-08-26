@@ -35,7 +35,7 @@
     "missing_prerequisite_source_ids": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" }
     },
     "required_action": { "const": "replan_path" },
     "fix_scope": { "const": "new_spec" },

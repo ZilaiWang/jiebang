@@ -12,6 +12,7 @@ import { buildGenerationSpec } from "../role-c-content/contracts/generation-spec
 import { generateConceptLesson } from "../role-c-content/agents/concept-tutor"
 import { generateCodeLab } from "../role-c-content/agents/code-lab"
 import { buildResourceBlueprint } from "../role-c-content/planning/resource-blueprint"
+import { bindObjectiveEvidence } from "../role-c-content/planning/objective-evidence-bundle"
 import { generateAssessment } from "../role-c-content/agents/tiered-evaluator"
 // 确定性模板 Provider 已于 2026-08 删除。
 // 请改用 ModelBackedRoleCContentProvider 并确保模型已配置。
@@ -735,12 +736,10 @@ function fillRequiredFacts(pathNode: LearningPathNode, evidencePack: ReturnType<
   return {
     ...pathNode,
     objectives: pathNode.objectives.map((objective) => {
-      if (objective.required_fact_ids.length > 0) return objective
-      const source = evidencePack.results.find((item) => item.source_id === objective.source_id)
-      const firstFact = source?.facts[0]
+      const bundle = bindObjectiveEvidence(objective, evidencePack.results)
       return {
         ...objective,
-        required_fact_ids: firstFact ? [firstFact.fact_id] : [],
+        required_fact_ids: bundle.required_fact_ids,
       }
     }),
     assessment_blueprint: { ...pathNode.assessment_blueprint },

@@ -37,10 +37,9 @@ export function explicitBehaviorFromGoal(goal: string): ObservableBehavior | nul
  *   1. 目标文本有明确动作动词 → 该行为；
  *   2. 泛化目标 → 画像等级基线兜底（不再默认 recognize）。
  *
- * 说明：完整版还会结合 mastery_state（弱→降档、已掌握→升档）与
- * evidence_capabilities（证据不支持则降档），但这两者在 B 侧初始路径构造时
- * 尚不可用（mastery 需答题后、capabilities 需 C 侧 feasibility 计算），
- * 留作 P1 在续轮与 feasibility 联动时接入。
+ * 说明：本函数只给出画像与目标语义的请求行为。B 的初始路径构造随后会把
+ * 该请求与 A 返回的 evidence capabilities 对齐；显式动作不被悄悄改写，泛化
+ * 目标则选择同一画像基线中知识事实能够真实支撑的行为。
  */
 export function decideObservableBehavior(input: {
   goal: string

@@ -43,6 +43,51 @@ describe("quality kernel v2", () => {
     expect(result.critical_findings).toContain("PUBLIC_INTERNAL_METADATA")
   })
 
+  test("assessment misconception quality only applies when the cited item has an available misconception", () => {
+    const design = {
+      learner: { misconceptions: ["MIS-OTHER-SOURCE"] },
+      objectives: [],
+    } as any
+    const basePlan = {
+      item_id: "I1",
+      family_id: "F1",
+      variant_id: "V1",
+      display_no: 1,
+      objective_id: "O1",
+      observation_key: "OBS1",
+      tier: 1,
+      modality: "mcq",
+      max_score: 1,
+      citations: [{ source_id: "K018", fact_id: "F001", relation: "derived_from" }],
+      cognitive_operation: "recognize_fact",
+      construct: "recognize:recognize_fact",
+      evidence_of_mastery: "select",
+      context_strategy: { kind: "neutral_context" },
+    } as const
+    const payload = { items: [{ prompt: "哪项正确？", options: ["A", "B", "C"] }] }
+    const notApplicable = evaluatePublicAuthorCandidate({
+      candidate_id: "C-NO-MIS",
+      artifact_kind: "assessment",
+      payload,
+      learning_design: design,
+      assessment_plan: [{ ...basePlan, misconception_available: false }] as any,
+    })
+    const dimension = notApplicable.dimensions.find((entry) =>
+      entry.dimension === "misconception_alignment")!
+    expect(dimension.applicable).toBe(false)
+    expect(dimension.score).toBe(1)
+
+    const missingBinding = evaluatePublicAuthorCandidate({
+      candidate_id: "C-MISSING-MIS",
+      artifact_kind: "assessment",
+      payload,
+      learning_design: design,
+      assessment_plan: [{ ...basePlan, misconception_available: true }] as any,
+    })
+    expect(missingBinding.dimensions.find((entry) =>
+      entry.dimension === "misconception_alignment")).toMatchObject({ applicable: true, score: 0 })
+  })
+
   test("hybrid retrieval consumes arbitrary metadata intent without source-specific rules", async () => {
     const knowledge = await loadKnowledgeBase()
     const target = knowledge.items.at(-1)!

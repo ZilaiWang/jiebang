@@ -34,7 +34,7 @@ describe("main agent session architecture", () => {
   })
 
   test("uses A's live knowledge-base version for every reviewed C round", async () => {
-    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.6.0")
+    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.7.0")
     expect(await resolveRoleCKnowledgeBaseVersion()).not.toBe("python-basics-v1")
   })
 
@@ -147,7 +147,7 @@ describe("main agent session architecture", () => {
     expect(isFinalMasterySession({ status: "waiting_for_user", feedback: { round_score: { accuracy: 0.5 }, final_decision: { action: "reinforce" } }, formal_path: { nodes: [{ status: "completed" }] } }, null)).toBe(false)
   })
 
-  test("binds every available A fact when B path node leaves required_fact_ids empty", () => {
+  test("binds a minimal source-local A fact bundle when B leaves required_fact_ids empty", () => {
     const bound = bindPathNodeFactsForRoleC({
       node_id: "FN-K009",
       target_source_ids: ["K009"],
@@ -155,7 +155,7 @@ describe("main agent session architecture", () => {
       objectives: [{ objective_id: "OBJ-K009", source_id: "K009", required_fact_ids: [], observable_behavior: "recognize", importance: "core" }],
       assessment_blueprint: { tier_1_count: 2, tier_2_count: 2, tier_3_count: 1, required_modalities: ["mcq", "code"] },
     } as any, { results: [{ source_id: "K009", facts: [{ fact_id: "F001" }, { fact_id: "F002" }, { fact_id: "F003" }] }] } as any)
-    expect(bound.objectives[0]?.required_fact_ids).toEqual(["F001", "F002", "F003"])
+    expect(bound.objectives[0]?.required_fact_ids).toEqual(["F001"])
   })
   test("accepts a safe assessment code-run command through the main Agent schema gate", () => {
     expect(validateOrchestratorApiBody("command", {

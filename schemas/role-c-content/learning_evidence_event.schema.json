@@ -7,7 +7,7 @@
   "properties": {
     "schema_version": { "const": "1.0" }, "event_id": { "type": "string", "minLength": 1 }, "learner_id_hash": { "type": "string", "minLength": 1 },
     "profile_version": { "type": "string", "minLength": 1 }, "path_node_id": { "type": "string", "minLength": 1 }, "objective_id": { "type": "string", "minLength": 1 },
-    "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+    "source_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
     "evidence": {
       "type": "object", "required": ["modality", "raw_score", "evidence_score", "grader_confidence", "hint_level", "attempt_no"],
       "properties": {

@@ -34,6 +34,7 @@ import {
 import type { RoleCGenerationFailure } from "../role-d-integration/contracts"
 import type { LearnerProfile } from "../role-b-profile/types"
 import type { LearningPathNode } from "../role-c-content/contracts/profile-adapter"
+import { bindObjectiveEvidence } from "../role-c-content/planning/objective-evidence-bundle"
 import { buildFormalPath, advanceToNextNode, isFormalPathMastered, startPath, type FormalLearningPath } from "../role-b-profile/teaching-audit/formal-path"
 import { RoleBLearningProgressAdapter } from "../role-b-profile/teaching-audit/learning-progress-adapter"
 import { createLocalBPathPlanningPort } from "../role-c-content/review/local-b-path-planning-port"
@@ -2220,18 +2221,10 @@ export function bindPathNodeFactsForRoleC(
     // 不能作为 C 本轮讲义/测评标题，否则 K003 会被“学习for循环”污染。
     goal: targetTitle ?? node.goal,
     objectives: node.objectives.map((objective) => {
-      const source = ragResult.results.find((item) => item.source_id === objective.source_id)
-      const availableFactIds = (source?.facts ?? [])
-        .map((fact) => fact.fact_id)
-        .filter((factId): factId is string => typeof factId === "string" && factId.length > 0)
-      const requiredFactIds = objective.required_fact_ids.length > 0
-        ? objective.required_fact_ids.filter((factId) => availableFactIds.includes(factId))
-        : availableFactIds
+      const bundle = bindObjectiveEvidence(objective, ragResult.results)
       return {
         ...objective,
-        // B节点可能只给source_id；这里从A当前RAG结果绑定全部真实事实，
-        // 不能把空required_fact_ids继续传给C可信门禁。
-        required_fact_ids: requiredFactIds,
+        required_fact_ids: bundle.required_fact_ids,
       }
     }),
     assessment_blueprint: {
