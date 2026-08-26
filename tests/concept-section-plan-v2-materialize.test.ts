@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   buildConceptSectionPlansForSegment,
+  anchorConceptFactsInVisibleText,
   materializeConceptSegmentV2,
   validateConceptVisibleFactCoverage,
   validateConceptSectionStructure,
@@ -68,6 +69,28 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
     ])
     expect(plans[0]!.slots.find((slot) => slot.kind === "overview")?.fact_ids).toEqual(["F001"])
     expect(plans[0]!.slots.find((slot) => slot.kind === "misconception")?.fact_ids).toEqual(["F001"])
+    expect(plans[0]!.micro_check).toEqual({
+      mode: "guided_application",
+      fact_ids: ["F001", "F002"],
+      minimum_reasoning_steps: 2,
+    })
+  })
+
+  test("零基础保留识别检查，basic 使用多事实应用检查", () => {
+    const request = segmentRequest(
+      [{ objective_id: "O1", source_id: "K001", fact_ids: ["F001", "F002", "F003"], behavior: "explain" }],
+      [
+        { source_id: "K001", fact_id: "F001", content: "Python 是编程语言" },
+        { source_id: "K001", fact_id: "F002", content: "Python 程序通常由解释器执行" },
+        { source_id: "K001", fact_id: "F003", content: "Python 代码使用缩进表示代码块" },
+      ],
+    )
+    expect(buildConceptSectionPlansForSegment(request)[0]!.micro_check.mode).toBe("guided_application")
+    request.generation_spec.learner_adaptation.level = "beginner"
+    expect(buildConceptSectionPlansForSegment(request)[0]!.micro_check).toMatchObject({
+      mode: "recognition",
+      minimum_reasoning_steps: 1,
+    })
   })
 
   test("可见正文缺少 required fact 时不能被自动 claim 元数据伪装成已覆盖", () => {
@@ -121,6 +144,43 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
     }
     const issues = validateConceptVisibleFactCoverage(request, authored, plans)
     expect(issues).toContain("objective O1 只罗列或复述 required facts，缺少通俗解释或有意义的直接实例")
+  })
+
+  test("事实核心由程序锚定，模型仍保留教学解释", () => {
+    const request = segmentRequest(
+      [{ objective_id: "O1", source_id: "K001", fact_ids: ["F001", "F002"], behavior: "recognize" }],
+      [
+        { source_id: "K001", fact_id: "F001", content: "int 表示整数" },
+        { source_id: "K001", fact_id: "F002", content: "float 表示小数" },
+      ],
+    )
+    const plans = buildConceptSectionPlansForSegment(request)
+    const authored = {
+      title: "Python 数值类型",
+      objectives: [{
+        objective_id: "O1",
+        sections: plans[0]!.slots.map((slot) => ({
+          slot_id: slot.slot_id,
+          heading: slot.kind,
+          body: slot.kind === "fact_explanation"
+            ? "根据证据事实 F001，这两种类型分别用于表达不同形式的数值。在选择时先观察数值是否带小数部分。"
+            : "先建立整体认识。再联系下面的例子。",
+          steps: [],
+          code: null,
+        })),
+        micro_check: { prompt: "哪项正确？", options: ["整数", "小数"], answer: "整数", explanation: "根据讲解判断。" },
+        hints: ["看类型", "看数值", "再判断"],
+      }],
+    }
+    const anchored = anchorConceptFactsInVisibleText({ payload: authored, request, plans })
+    const explanation = anchored.objectives[0]!.sections.find((section) =>
+      plans[0]!.slots.find((slot) => slot.slot_id === section.slot_id)?.kind === "fact_explanation")!
+    expect(explanation.body).toContain("int 表示整数")
+    expect(explanation.body).toContain("float 表示小数")
+    expect(explanation.body).toContain("选择时先观察")
+    expect(explanation.body).not.toContain("证据事实")
+    expect(explanation.body).not.toContain("F001")
+    expect(validateConceptVisibleFactCoverage(request, anchored, plans)).toEqual([])
   })
 
   test("12 条 required facts 在多个讲解单元中全部可见且逐单元有解释", () => {

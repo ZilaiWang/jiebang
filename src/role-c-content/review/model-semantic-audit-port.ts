@@ -6,7 +6,7 @@ import type {
 } from "./types"
 import { fastModelPolicy } from "../../model-runtime"
 
-export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v9"
+export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v11"
 const SEMANTIC_AUDIT_BATCH_SIZE = 8
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -84,6 +84,7 @@ export const ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT = `你是教学内容事实审�
    - optional_overreach：删掉或改写额外内容即可，suggested_scope=artifact；
    - essential_fact_missing：目标本身合理，但完成题目/解释所需的关键规则没有证据，suggested_scope=new_evidence；
    - objective_evidence_mismatch：冻结目标要求的行为高于证据能力，suggested_scope=new_spec。
+12a. 对题目尤其要区分“命题角度越界”和“冻结构念缺证据”：只要保持同一 objective、modality、cognitive_operation 和难度，仍能仅依据当前 cited_facts 重新命制一道可作答题，就必须判 optional_overreach，由 C 改写；不得因为作者自行加入某个具体领域、API、术语或案例，就反向要求 A 为这个可删除的角度补事实。只有冻结构念本身在当前证据下无法形成任何有效题目时，才判 essential_fact_missing 或 objective_evidence_mismatch。
 13. 输入中的 block_index 是当前批次内从 0 开始的短序号。必须按 block_index 升序返回，每个序号恰好一个结果；不要在输出中复写长 review_block_id。`
 
 type ModelSemanticReviewResult = Omit<SemanticReviewBlockResult, "review_block_id"> & {
@@ -134,35 +135,10 @@ export class ModelContentSemanticAuditPort implements ContentSemanticAuditPort {
         ...block,
         block_index: blockIndex,
       }))
-      const output = await this.gateway.generateStructured<{
-        results: ModelSemanticReviewResult[]
-      }>({
-        task: "role-c.fact-audit.semantic-artifact",
-        system_prompt: ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT,
-        input: { ...input, blocks: indexedBatch },
-        output_schema_id: "role_c_semantic_fact_audit_v3",
-        output_schema: OUTPUT_SCHEMA,
-        temperature: 0,
-        max_tokens: Math.min(3600, 800 + batch.length * 220),
-        policy: fastModelPolicy(
-          "SEMANTIC_AUDIT_CLASSIFICATION",
-          Math.min(6_000, 1_000 + batch.length * 260),
-          {
-            timeout_ms: 90_000,
-            max_transport_retries: 1,
-            priority: "review",
-            concurrency_group: "audit",
-          },
-        ),
-        idempotency_key: contentHash({
-          policy_version: this.policy_version,
-          model_config_hash: this.gateway.model_config_hash,
-          input: { ...input, blocks: indexedBatch },
-        }),
-      })
-      fresh.push(...validateResults(
+      fresh.push(...await this.auditBatch(
+        input,
+        indexedBatch,
         batch.map((block) => block.review_block_id),
-        output.results,
       ))
     }
     for (let index = 0; index < cacheMisses.length; index += 1) {
@@ -174,6 +150,56 @@ export class ModelContentSemanticAuditPort implements ContentSemanticAuditPort {
     return input.blocks.map((block) =>
       cachedResults.get(block.review_block_id) ?? freshById.get(block.review_block_id)!
     )
+  }
+
+  private async auditBatch(
+    input: Parameters<ContentSemanticAuditPort["auditArtifact"]>[0],
+    indexedBatch: Array<Parameters<ContentSemanticAuditPort["auditArtifact"]>[0]["blocks"][number] & { block_index: number }>,
+    expectedIds: string[],
+  ): Promise<SemanticReviewBlockResult[]> {
+    let lastError: unknown
+    for (let formatAttempt = 0; formatAttempt < 2; formatAttempt += 1) {
+      const requestInput = {
+        ...input,
+        blocks: indexedBatch,
+        ...(formatAttempt === 0 ? {} : {
+          format_retry: "上次返回未满足逐块结构合同。请逐个 block_index 返回一次，字段和枚举严格服从 schema。",
+        }),
+      }
+      const output = await this.gateway.generateStructured<{
+        results: ModelSemanticReviewResult[]
+      }>({
+        task: "role-c.fact-audit.semantic-artifact",
+        system_prompt: ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT,
+        input: requestInput,
+        output_schema_id: "role_c_semantic_fact_audit_v3",
+        output_schema: OUTPUT_SCHEMA,
+        temperature: 0,
+        max_tokens: Math.min(3600, 800 + indexedBatch.length * 220),
+        policy: fastModelPolicy(
+          "SEMANTIC_AUDIT_CLASSIFICATION",
+          Math.min(6_000, 1_000 + indexedBatch.length * 260),
+          {
+            timeout_ms: 90_000,
+            max_transport_retries: 1,
+            priority: "review",
+            concurrency_group: "audit",
+          },
+        ),
+        idempotency_key: contentHash({
+          policy_version: this.policy_version,
+          model_config_hash: this.gateway.model_config_hash,
+          input: requestInput,
+          format_attempt: formatAttempt,
+        }),
+      })
+      try {
+        return validateResults(expectedIds, output.results)
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   /** block 缓存键：审核策略 + 模型 + 块文本 + 引用事实 + locator。 */

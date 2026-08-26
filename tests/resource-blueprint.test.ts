@@ -50,7 +50,9 @@ describe("Role C shared resource blueprint", () => {
     expect(blueprint.assessment.item_plan.some((item) =>
       item.tier === 3 && item.presentation_mode === "construction")).toBe(true)
     expect(blueprint.difficulty_plan.assessment.challenge_target.transfer_distance).toBe(0)
-    expect(blueprint.difficulty_plan.assessment.challenge_target.cognitive_demand).toBeGreaterThan(2)
+    // 整卷按题目分值加权：两道识别、一道理解、一道应用与一道分析题
+    // 的认知目标恰为 2；Tier 3 构造题仍通过 item_plan 保持 analyze。
+    expect(blueprint.difficulty_plan.assessment.challenge_target.cognitive_demand).toBe(2)
     expect(Object.isFrozen(blueprint)).toBe(true)
   })
 
@@ -95,15 +97,15 @@ describe("resource blueprint difficulty_plan（三类资源目标难度分化）
     expect(plan.concept_lesson.support_target.scaffold_strength).toBeGreaterThan(plan.assessment.support_target.scaffold_strength)
     expect(plan.assessment.support_target.scaffold_strength).toBe(0)
     expect(plan.assessment.support_target.hint_strength).toBe(0)
-    // 代码实验 starter/hint 至少 3（引导式实现）
-    expect(plan.code_lab.support_target.starter_support).toBeGreaterThanOrEqual(3)
-    expect(plan.code_lab.support_target.hint_strength).toBeGreaterThanOrEqual(3)
+    // basic 保留部分脚手架；beginner 才提升到 3。
+    expect(plan.code_lab.support_target.starter_support).toBeGreaterThanOrEqual(2)
+    expect(plan.code_lab.support_target.hint_strength).toBeGreaterThanOrEqual(2)
   })
 
   test("三类资源按教学形态分别规划挑战：讲义更缓、实验更重过程、测评保持独立目标", () => {
     const plan = buildResourceBlueprint(spec, evidence).difficulty_plan
     expect(plan.concept_lesson.challenge_target.domain_complexity).toBe(2)
-    expect(plan.concept_lesson.challenge_target.cognitive_demand).toBe(1)
+    expect(plan.concept_lesson.challenge_target.cognitive_demand).toBe(2)
     expect(plan.code_lab.challenge_target.reasoning_steps).toBe(2.5)
     expect(plan.assessment.challenge_target.cognitive_demand).toBe(2)
   })

@@ -70,6 +70,18 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     expect(plan[0]?.citations.map((citation) => citation.fact_id)).toEqual(["F001"])
   })
 
+  test("有 evidence 时按目标行为选择最小可执行事实束，不再机械截取前四条", () => {
+    const { spec, evidence } = makeSpec([K009])
+    spec.targets[0]!.required_fact_ids = ["F1", "F2", "F3"]
+    evidence.results[0]!.facts = [
+      { source_id: "K009", fact_id: "F1", content: "列表保存有序元素。", capabilities: ["definition"] },
+      { source_id: "K009", fact_id: "F2", content: "append(x) 可在末尾追加元素。", capabilities: ["rule", "example"] },
+      { source_id: "K009", fact_id: "F3", content: "列表可按索引读取。", capabilities: ["rule"] },
+    ]
+    const plan = buildCodeLabObjectivePlan(spec, evidence)
+    expect(plan[0]?.citations.map((citation) => citation.fact_id)).toEqual(["F2", "F1"])
+  })
+
   test("综合项目（成绩统计器）→ stdin_stdout_program，即使 evidence 含 def/return", () => {
     const { spec, evidence } = makeSpec([K018])
     const bp = buildResourceBlueprint(spec, evidence)
@@ -79,13 +91,15 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     expect(bp.code_lab.task_contract.primary_objective_id).toBe("OBJ-K018")
   })
 
-  test("只有函数定义/调用证据时不强加返回值合同", () => {
+  test("函数定义/调用证据生成无外部输入的程序任务，不强加返回值合同", () => {
     const { spec, evidence } = makeSpec([K013])
     const bp = buildResourceBlueprint(spec, evidence)
     expect(bp.code_lab.task_contract.task_kind).toBe("stdin_stdout_program")
     expect(bp.code_lab.task_contract.execution_mode).toBe("stdin_stdout")
-    expect(bp.code_lab.task_contract.learner_action).toBe("recall_fact")
-    expect(bp.code_lab.task_contract.learner_owned_region).toBe("fact_literal")
+    expect(bp.code_lab.task_contract.learner_action).toBe("implement_program")
+    expect(bp.code_lab.task_contract.input_form).toBe("none")
+    expect(bp.code_lab.task_contract.stdin_layout).toBe("none")
+    expect(bp.code_lab.task_contract.learner_owned_region).toBe("program_logic")
     expect(bp.code_lab.task_contract.input_form).toBe("none")
     expect(bp.code_lab.task_contract.output_constraint).toContain("空 stdin")
   })
@@ -157,6 +171,7 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     const stdin = buildResourceBlueprint(stdinSpec, stdinEvidence)
     expect(stdin.code_lab.task_contract.program_entry).toContain("stdin")
     expect(stdin.code_lab.task_contract.input_form).toBe("stdin_lines")
+    expect(stdin.code_lab.task_contract.stdin_layout).toBe("single_line_text")
     expect(stdin.code_lab.task_contract.output_form).toBe("stdout_lines")
     expect(stdin.code_lab.task_contract.grading_invocation).toBe("feed_stdin_compare_stdout")
     expect(stdin.code_lab.task_contract.output_constraint).toContain("比较 stdout")
@@ -164,6 +179,7 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     const { spec: fnSpec, evidence: fnEvidence } = makeSpec([K014])
     const fn = buildResourceBlueprint(fnSpec, fnEvidence)
     expect(fn.code_lab.task_contract.input_form).toBe("function_arguments")
+    expect(fn.code_lab.task_contract.stdin_layout).toBe("none")
     expect(fn.code_lab.task_contract.output_form).toBe("return_value")
     expect(fn.code_lab.task_contract.grading_invocation).toBe("call_entry_function")
     expect(fn.code_lab.task_contract.output_constraint).toContain("返回值")

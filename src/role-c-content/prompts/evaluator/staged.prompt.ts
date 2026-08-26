@@ -69,6 +69,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - cognitive_operation 是该题必须测量的认知动作，不代表可以补写证据外规则。trace_execution 但 facts 只说明 print 用于输出时，可给定一个最小 print 实例考察输出，不得再加入 input 转换或算术；construct_solution 的旁支函数签名、输入解析和返回胶水应全部放进 starter，只让学习者完成当前 facts 直接支持的部分。
 - mcq 题干聚焦一个明确的知识点，true_false 题干陈述一个可明确判断真假的命题
 - trace 题给出一段简短代码，要求追踪变量值或输出结果
+- trace 题若当前 cited facts 没有输出函数、比较运算或其他 API 的行为事实，就只追踪 facts 已明确描述的状态、步骤或分支选择，不得自行加入 print/type/len、比较表达式等未被引用支持的运行细节。
 - short_answer 题要求用自然语言解释概念或分析问题
 - code 题给出明确的任务边界、输入输出约束和示例；只把当前 objective/facts 对应的行为留给学习者完成
 - code 题统一使用函数模式：public 必须提供明确函数签名和输入输出合同；starter_code 只保留函数签名、参数以及显式 TODO / pass / raise NotImplementedError 待完成区域，不得包含能直接满足题意的完整实现，也不得把任务改成 stdin_stdout
@@ -82,11 +83,13 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - 不要用"以上都对/都错"这类模糊选项
 - 选项文本简洁，长度相近，避免正确选项明显长于或短于其他选项
 - 好干扰项：只使用当前 item 的 cited facts，把其中一条明确规则的条件、方向或边界做单一且可定位的反转；错误必须能被当前引用事实直接否定。不要借用提示词示例、同一目标的其他事实或模型记忆来构造干扰项。
+- 题干、正确项和干扰项中的每个具体专业名词、用途、领域、API、运行结果都必须在当前 item 的 cited facts 中逐字存在或可由明确规则直接推出。“通用”“适用范围广”等概括不授权自行列举 Web、人工智能、数据分析、游戏等具体领域；若 facts 未列举，就直接考查已给事实，不补常识例子。
+- 不论 Tier，fact 没有写“仅、只能、唯一、总是、从不、完全”等绝对范围时，题干和任何选项都不得自行加入这些限定；“X 常用于 A”不能推出“X 仅用于 B”为可证伪误区。本题只引用一条 fact 时，正确项直接表达该 fact，错误项只能对该 fact 已写明的对象、方向、条件或边界作一次直接反转。
 - 坏干扰项：“不需要任何事实依据”“随机生成答案”“只用于界面展示”。这些选项没有真实认知吸引力，禁止使用。
 
 【难度控制】
 - Tier 1：直接考查核心概念的基本理解，不需要推理
-- Tier 2：需要在典型场景中应用概念，需要一定推理
+- Tier 2：是本卷内的第二层，不自动代表全局 basic。以 item_plan.cognitive_demand 为准：understand 仍只检查单条事实的辨析或原意解释，不拼接两条规则；apply 才要求在典型任务中完成简单应用
 - Tier 3：需要综合多个概念或处理边界情况
 
 【题目表现形式】
@@ -100,6 +103,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 8. construction：明确给出待构造的函数、程序或自然语言答案，不套无关故事。
 9. 不得为了 novelty 把 direct_fact 改成场景题。优先改变 operation、reasoning_pattern、representation 或 answer_form；只有 presentation_mode=scenario_transfer 时才改变 context_family。
 10. 同一张卷中不得让所有题使用同一种故事模板；非 scenario_transfer 题目的 structure_meta.context_family 一律填 "direct"。
+11. 生成后逐项做证据闭包检查：删除 cited facts 之外的具体领域、工具、API、异常类型、运行机制和用途；为了让题目显得真实而添加的专业细节，也必须有当前 item 引用支持。
 
 ══════════════════════════════════════════
 结构化要求

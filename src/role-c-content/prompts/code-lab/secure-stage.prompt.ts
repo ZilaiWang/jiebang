@@ -42,9 +42,10 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 }
 
 字段约束（必须逐条满足）：
-1. reference_solution：一个完整的、可直接执行的 Python 程序。**execution_mode 是 "function" 时**：写 def 开头的入口函数，return 实际计算结果，只保留入口函数和必要辅助函数；**execution_mode 是 "stdin_stdout" 时**：写完整的脚本——从 stdin 读取输入（input() 或 sys.stdin 按行读），处理后在顶层用 print 输出结果，不要定义只 return 不 print 的函数。不访问网络/文件/进程。
+1. reference_solution：一个完整的、可直接执行的 Python 程序。**execution_mode 是 "function" 时**：写 def 开头的入口函数，return 实际计算结果，只保留入口函数和必要辅助函数；**execution_mode 是 "stdin_stdout" 时**：写完整的脚本——从 stdin 读取输入（基础任务使用 input()），处理后在顶层用 print 输出结果，不要定义只 return 不 print 的函数。不访问网络/文件/进程。
 2. hidden_tests：数组，恰好与 objective_plan 中的目标数量相等（每个目标一个测试），按 objective_plan 顺序排列。
 3. hidden_tests[].input：**function 模式**必须是 {"args": [参数值列表], "kwargs": {}} 格式；**stdin_stdout 模式**必须是程序从 stdin 读到的原始文本（如 "10\\n20\\n30\\n"，与 public_payload 的 stdin 输入格式一致）。不能用参数名直接组成对象，不能用 {scores: [10,20]} 这种写法。参数顺序与入口函数签名一致。使用与 public_payload.public_tests 中完全不同的新值。若任务是纯输出（不读取输入），public 和 hidden 的 input 都留空（""）是合法的，此时区分度放在 expected 输出内容上。
+3a. task_contract.stdin_layout=single_line_text 时，reference_solution 只读取一行并在该行内解析全部字段；每个 hidden_tests[].input 也必须是单行同序字段。不得改成首行数量+后续多行数据，也不得在参考实现中连续调用 input() 读多行。隐藏输入必须保持 public_tests 的 token 类型形状：公开输入是整数序列时隐藏输入也只能是整数序列；公开输入是“文字+整数”等混合字段时，隐藏输入保持同一字段顺序与类型，只更换具体值。
 4. hidden_tests[].expected：必须与 reference_solution 的真实输出一致。function 模式：数值返回具体数值，对象、数组、字符串或布尔值返回对应 JSON 值；stdin_stdout 模式：expected 是程序 print 到 stdout 的完整文本（含换行）。不能写描述性文字。
 5. hidden_tests[].comparison：根据 frozen execution_contract.output_contract 选择。数值返回值使用 numeric，精确结构为 {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9}；对象、数组、字符串或布尔返回值使用 exact，精确结构为 {"kind": "exact"}。stdout text 必须返回字符串 expected；不得为 stdout text 返回对象。
 6. hidden_tests[].misconception_tag：具体说明测试针对的常见错误（如"skips_last_element"、"ignores_boundary"、"integer_division"），不用模糊标签。

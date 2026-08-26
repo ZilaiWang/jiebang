@@ -3,14 +3,46 @@ import { loadKnowledgeBase } from "../src/knowledge/loader"
 import { rankKnowledgeHybrid } from "../src/rag/hybrid-retriever"
 import { buildLearningDesignSpecV2 } from "../src/role-c-content/planning/learning-design-spec-v2"
 import { runPublicCandidateTournament, PublicQualityGateError } from "../src/role-c-content/quality/candidate-tournament"
+import { ModelGatewayError } from "../src/role-c-content/contracts/model-gateway"
 import { evaluatePublicAuthorCandidate } from "../src/role-c-content/quality/public-candidate-quality"
-import { validateAssessmentPairValidity, validateAssessmentPublicValidity } from "../src/role-c-content/quality/assessment-validity"
+import {
+  validateAssessmentAuthorEvidenceDiscipline,
+  validateAssessmentPairValidity,
+  validateAssessmentPublicValidity,
+} from "../src/role-c-content/quality/assessment-validity"
 import { betaPosteriorInterval, decideNextActionV2, evidenceReliability } from "../src/role-c-content/mastery/posterior-policy"
 import { evaluateQualityBenchmark } from "../src/evaluation/quality-benchmark"
 import { buildCodeLabSecurePlan, materializeCodeLabSecureAuthorPayload } from "../src/role-c-content/providers/staged-generation"
 import { reviewPublicCandidatesWithModel } from "../src/role-c-content/quality/model-candidate-critic"
+import { publicQualityBlockedReason } from "../src/role-c-content/orchestrator/content-pipeline"
 
 describe("quality kernel v2", () => {
+  test("公开候选质量拒绝属于内容 blocked，不伪装成 provider 故障", () => {
+    const error = new PublicQualityGateError([{
+      candidate_id: "C-BLOCK", artifact_kind: "assessment", hard_gates: [], dimensions: [],
+      overall_score: 0, release_eligible: false,
+      critical_findings: ["MODEL_CRITIC:answer_ambiguity:答案边界不明确"],
+    }], 0)
+    expect(publicQualityBlockedReason(error)).toEqual({
+      code: "BLOCKED_INVALID_OUTPUT",
+      message: error.message,
+      details: ["MODEL_CRITIC:answer_ambiguity:答案边界不明确"],
+    })
+    expect(publicQualityBlockedReason(new Error("network"))).toBeUndefined()
+  })
+
+  test("全部候选因模型额度失败时保留 provider 终局，不伪装成质量门禁", async () => {
+    const quotaError = new ModelGatewayError(
+      "HTTP_ERROR",
+      "模型服务返回 HTTP 429：余额不足或无可用资源包",
+      { provider_code: "1113", http_status: 429 },
+    )
+    await expect(runPublicCandidateTournament({
+      candidate_count: 3,
+      generate: async () => { throw quotaError },
+      evaluate: () => { throw new Error("没有候选时不应进入质量评估") },
+    })).rejects.toBe(quotaError)
+  })
   test("hydrates the canonical knowledge source with teachable, fact-bound metadata", async () => {
     const knowledge = await loadKnowledgeBase()
     const item = knowledge.items.find((entry) => entry.quizItems.some((quiz) => quiz.options?.length))!
@@ -210,6 +242,77 @@ describe("quality kernel v2", () => {
     expect(reviewed[0]?.critical_findings[0]).toContain("UNSUPPORTED_CLAIM")
   })
 
+  test("candidate critic cannot reject a fact that the frozen slot explicitly contains", async () => {
+    const base = {
+      candidate_id: "C-SLOT",
+      artifact_kind: "concept_lesson",
+      hard_gates: [],
+      dimensions: [{
+        dimension: "objective_alignment", score: 0.95, weight: 1, confidence: 0.8,
+        evidence_refs: ["O1"], rationale: "covered", core: true,
+      }],
+      overall_score: 0.95,
+      release_eligible: true,
+      critical_findings: [],
+    } as any
+    const reviewed = await reviewPublicCandidatesWithModel({
+      gateway: {
+        model_id: "glm-5.2",
+        model_config_hash: "sha256:test",
+        generateStructured: async () => ({
+          results: [{
+            candidate_index: 0,
+            groundedness: 40,
+            correctness: 80,
+            instructional_value: 70,
+            critical_issues: [{
+              code: "slot_fact_misplacement",
+              message: "CONCEPT-SLOT-abc 使用 F004，但该 slot.fact_ids 含 F004/F005/F006，F004 属于另一 slot。",
+            }],
+          }],
+        }),
+      } as any,
+      task: "test.candidate",
+      artifact_kind: "concept_lesson",
+      candidates: [{ candidate: { text: "列表用方括号创建" }, variant_index: 0, evaluation: base }],
+      evidence: [{ fact_id: "F004", content: "列表用方括号创建" }],
+      contract: {
+        section_plan: [{ slots: [{ slot_id: "CONCEPT-SLOT-abc", fact_ids: ["F004", "F005", "F006"] }] }],
+      },
+    })
+    expect(reviewed[0]?.hard_gates.at(-1)).toMatchObject({
+      gate: "independent_model_critic",
+      passed: true,
+    })
+    expect(reviewed[0]?.critical_findings).toEqual([])
+  })
+
+  test("candidate critic 对数量不完整的结构化输出做一次精确重试", async () => {
+    let calls = 0
+    const base = {
+      candidate_id: "C-RETRY", artifact_kind: "code_lab", hard_gates: [],
+      dimensions: [], overall_score: 1, release_eligible: true, critical_findings: [],
+    } as any
+    const reviewed = await reviewPublicCandidatesWithModel({
+      gateway: {
+        model_id: "glm-5.2", model_config_hash: "sha256:test",
+        generateStructured: async () => {
+          calls += 1
+          return calls === 1 ? { results: [] } : { results: [{
+            candidate_index: 0, groundedness: 1, correctness: 1,
+            instructional_value: 1, critical_issues: [],
+          }] }
+        },
+      } as any,
+      task: "test.candidate-retry",
+      artifact_kind: "code_lab",
+      candidates: [{ candidate: { text: "任务" }, variant_index: 0, evaluation: base }],
+      evidence: [], contract: {},
+    })
+    expect(calls).toBe(2)
+    expect(reviewed[0]?.release_eligible).toBe(true)
+  })
+
   test("assessment validity rejects engineering distractors and enforces planned misconception binding", () => {
     const plan = [{
       item_id: "I1",
@@ -235,6 +338,56 @@ describe("quality kernel v2", () => {
     expect(validateAssessmentPairValidity(publicPayload, securePayload, plan).map((entry) => entry.code)).toEqual(expect.arrayContaining([
       "ASSESSMENT_DISTRACTOR_WITHOUT_MISCONCEPTION", "ASSESSMENT_TARGET_MISCONCEPTION_MISSING",
     ]))
+  })
+
+  test("tier-1 choice author cannot invent absolute scope absent from its cited fact", () => {
+    const payload = {
+      title: "for 循环识别",
+      items: [{
+        prompt: "for 循环常用于什么？",
+        options: ["遍历序列中的元素", "仅用于生成整数序列", "仅用于终止循环"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any
+    const plan = [{
+      tier: 1,
+      modality: "mcq",
+      citations: [{ source_id: "K007", fact_id: "F001", relation: "derived_from" }],
+    }] as any
+    const facts = [{
+      source_id: "K007",
+      fact_id: "F001",
+      content: "for 循环常用于遍历序列中的元素。",
+    }]
+    const issues = validateAssessmentAuthorEvidenceDiscipline(payload, plan, facts)
+    expect(issues.map((entry) => entry.code)).toEqual([
+      "ASSESSMENT_UNSUPPORTED_ABSOLUTE_DISTRACTOR",
+      "ASSESSMENT_UNSUPPORTED_ABSOLUTE_DISTRACTOR",
+    ])
+    payload.items[0].options = ["遍历序列中的元素", "不常用于遍历序列中的元素"]
+    expect(validateAssessmentAuthorEvidenceDiscipline(payload, plan, facts)).toEqual([])
+  })
+
+  test("高阶选择题的题干也不能用证据外绝对范围伪造误区", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "Python 定位",
+      items: [{
+        prompt: "如何判断‘Python 只能用于教学’？",
+        options: ["成立", "不成立"],
+        starter_code: null,
+        structure_meta: { operation: "analyze" },
+      }],
+    } as any, [{
+      tier: 2,
+      modality: "mcq",
+      citations: [{ source_id: "K001", fact_id: "F003", relation: "derived_from" }],
+    }] as any, [{
+      source_id: "K001",
+      fact_id: "F003",
+      content: "Python 适合编写脚本、数据处理和教学示例。",
+    }])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_UNSUPPORTED_ABSOLUTE_PROMPT")
   })
 
   test("assessment scorecard excludes distractor dimensions for non-choice items", () => {

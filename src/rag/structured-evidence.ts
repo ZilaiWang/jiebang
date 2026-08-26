@@ -135,6 +135,7 @@ function toStructuredEvidenceItem(
     reason: `按 source_id 从知识库读取证据：${item.sourceId}`,
     snippet: item.snippet,
     facts,
+    coreFactIds: (item.coreFactIds ?? []).filter((factId) => includeAllFacts || selectedFactIds.has(factId)),
     // Legacy examples/practice tasks have no fact references. They remain
     // useful during semantic discovery. A fact-specific identity lookup uses
     // an exact projection of each selected fact instead of silently exposing

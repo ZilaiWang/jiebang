@@ -100,10 +100,11 @@ export function validateAssessmentPublicStage(
       .flatMap((item) => item.citations)
       .filter((citation) => citation.source_id === target.source_id)
       .map((citation) => citation.fact_id))
-    const missing = target.required_fact_ids.filter((factId) =>
+    const requiredForAssessment = requiredAssessmentFactIds(request, target)
+    const missing = requiredForAssessment.filter((factId) =>
       !citedFactIds.has(factId))
     if (missing.length > 0) {
-      issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `核心目标必要事实未被测评完整覆盖：${missing.join("、")}`))
+      issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `冻结测评计划中的事实未被题目完整覆盖：${missing.join("、")}`))
     }
   }
   const expected = effectiveAssessmentBlueprint(
@@ -270,12 +271,12 @@ export function validateAssessmentDraftStructure(
       .flatMap((item) => item.citations)
       .filter((citation) => citation.source_id === target.source_id)
       .map((citation) => citation.fact_id))
-    const missingRequiredFacts = target.required_fact_ids.filter((factId) =>
+    const missingRequiredFacts = requiredAssessmentFactIds(request, target).filter((factId) =>
       !citedFactIds.has(factId))
     if (!publicOk) issues.push(issue("missing_public_objective_coverage", `$.objective.${target.objective_id}`, "核心目标缺少有效公开测评映射"))
     if (!secureOk) issues.push(issue("missing_secure_objective_coverage", `$.objective.${target.objective_id}`, "核心目标缺少有效答案规范映射"))
     if (missingRequiredFacts.length > 0) {
-      issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `核心目标必要事实未被测评完整覆盖：${missingRequiredFacts.join("、")}`))
+      issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `冻结测评计划中的事实未被题目完整覆盖：${missingRequiredFacts.join("、")}`))
     }
     if (publicOk && secureOk && missingRequiredFacts.length === 0) coveredCore += 1
   }
@@ -293,6 +294,27 @@ export function validateAssessmentDraftStructure(
   issues.push(...validateAssessmentPublicSecureSeparation(publicPayload, securePayload).issues)
   const objectiveCoverage = coreTargets.length === 0 ? 1 : coveredCore / coreTargets.length
   return { ok: issues.length === 0, issues, citations: contentCitations, objective_coverage: objectiveCoverage }
+}
+
+/**
+ * GenerationSpec.required_fact_ids is the round-level evidence/coverage
+ * contract shared by the three artifacts.  A finite assessment form measures
+ * the fact subset frozen in its item plan; demanding every round fact in every
+ * form made a three-item beginner form impossible for a twelve-fact source.
+ * The final competition metric still checks the union of supported claims
+ * across lesson, lab and assessment against all round facts.
+ */
+function requiredAssessmentFactIds(
+  request: Pick<TieredEvaluatorRequest, "generation_spec" | "resource_blueprint">,
+  target: TieredEvaluatorRequest["generation_spec"]["targets"][number],
+): string[] {
+  const itemPlan = request.resource_blueprint?.assessment.item_plan
+  if (!itemPlan) return target.required_fact_ids
+  return unique(itemPlan
+    .filter((item) => item.objective_id === target.objective_id)
+    .flatMap((item) => item.citations)
+    .filter((citation) => citation.source_id === target.source_id)
+    .map((citation) => citation.fact_id))
 }
 
 /** Independent trust-plane verifier for answer keys and code reference suites. */

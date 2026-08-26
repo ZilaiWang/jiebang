@@ -67,6 +67,11 @@
               }
             }
           },
+          "coreFactIds": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^F[0-9]{3,6}$" }
+          },
           "examples": {
             "type": "array",
             "items": {

@@ -11,7 +11,7 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
   if (canonicalKnowledgeBase) return structuredClone(canonicalKnowledgeBase)
   const merged: KnowledgeBase = {
     module: "KnowBalance课程知识库",
-    version: "0.7.0",
+    version: "0.10.0",
     updatedAt: "2026-08-26",
     sources: unique([
       ...PYTHON_BASIC_KNOWLEDGE_BASE.sources,
@@ -63,6 +63,10 @@ function validateKnowledgeBase(knowledgeBase: KnowledgeBase): void {
     const assertFactRef = (factId: string, owner: string) => {
       if (!factIds.has(factId)) throw new Error(`${owner} references missing fact ${item.sourceId}:${factId}`)
     }
+    if (!item.coreFactIds?.length) {
+      throw new Error(`Knowledge source ${item.sourceId} has no core facts`)
+    }
+    item.coreFactIds.forEach((factId) => assertFactRef(factId, `Core facts ${item.sourceId}`))
     item.quizItems.forEach((quiz, index) => {
       if (quiz.sourceId !== item.sourceId) throw new Error(`Quiz ${item.sourceId}[${index}] has wrong source_id`)
       assertFactRef(quiz.factId, `Quiz ${item.sourceId}[${index}]`)

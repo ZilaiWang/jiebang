@@ -1,0 +1,90 @@
+{
+  "manifest_version": "competition-robustness-v1",
+  "total_cases": 12,
+  "cases": [
+    {
+      "case_id": "robust-hallucination-false-premise",
+      "category": "hallucination_induction",
+      "purpose": "错误前提不得借用相似引用进入发布面",
+      "test_file": "tests/fact-audit.test.ts",
+      "test_name": "rejects a block whose claim is not supported by the cited fact"
+    },
+    {
+      "case_id": "robust-hallucination-external-api",
+      "category": "hallucination_induction",
+      "purpose": "知识库外部专业知识不得被当作已支持事实",
+      "test_file": "tests/fact-audit.test.ts",
+      "test_name": "rejects arbitrary external knowledge without relying on a topic allowlist"
+    },
+    {
+      "case_id": "robust-hallucination-forged-citation",
+      "category": "hallucination_induction",
+      "purpose": "伪造 source/fact 引用必须拒绝",
+      "test_file": "tests/fact-audit.test.ts",
+      "test_name": "rejects a citation that is not present in the current RAG result"
+    },
+    {
+      "case_id": "robust-evidence-missing-fact",
+      "category": "evidence_anomaly",
+      "purpose": "事实性内容缺引用时进入修订",
+      "test_file": "tests/fact-audit.test.ts",
+      "test_name": "asks for revision when a knowledge block has no citation"
+    },
+    {
+      "case_id": "robust-evidence-citation-misaligned",
+      "category": "evidence_anomaly",
+      "purpose": "引用存在但语义不支持时拒绝",
+      "test_file": "tests/fact-audit.test.ts",
+      "test_name": "lets a semantic audit port reject a claim that passes lexical overlap"
+    },
+    {
+      "case_id": "robust-evidence-frozen-hash-change",
+      "category": "evidence_anomaly",
+      "purpose": "冻结证据包哈希变化时失败关闭",
+      "test_file": "tests/fact-audit.test.ts",
+      "test_name": "reports a frozen evidence mismatch when a caller provides the wrong expected hash"
+    },
+    {
+      "case_id": "robust-feedback-remediate",
+      "category": "dynamic_feedback",
+      "purpose": "弱目标不得被总分掩盖，决策为补救",
+      "test_file": "tests/role-c-dynamic-feedback.test.ts",
+      "test_name": "does not let a weighted total hide a weak objective"
+    },
+    {
+      "case_id": "robust-feedback-reinforce",
+      "category": "dynamic_feedback",
+      "purpose": "答案暴露后要求新变式巩固而不直接进阶",
+      "test_file": "tests/role-c-dynamic-feedback.test.ts",
+      "test_name": "requires a fresh independent form after hints or prior answer exposure"
+    },
+    {
+      "case_id": "robust-feedback-reprofile",
+      "category": "dynamic_feedback",
+      "purpose": "画像证据冲突时重新画像优先",
+      "test_file": "tests/role-c-dynamic-feedback.test.ts",
+      "test_name": "gives an explicit profile drift suggestion priority"
+    },
+    {
+      "case_id": "robust-engineering-model-timeout",
+      "category": "engineering_recovery",
+      "purpose": "模型工作流超过硬截止时间后明确停止",
+      "test_file": "tests/model-runtime-policy.test.ts",
+      "test_name": "fails closed after the workflow hard deadline"
+    },
+    {
+      "case_id": "robust-engineering-docker-unavailable",
+      "category": "engineering_recovery",
+      "purpose": "没有隔离执行器时编程题不得伪造通过",
+      "test_file": "tests/role-c-grading.test.ts",
+      "test_name": "grades exact and numeric items but blocks code without an isolated runner"
+    },
+    {
+      "case_id": "robust-engineering-session-restart",
+      "category": "engineering_recovery",
+      "purpose": "进程重启后恢复 retry_wait 任务并继续完成",
+      "test_file": "tests/durable-model-job-store.test.ts",
+      "test_name": "runner restores a future retry_wait job and wakes it when due"
+    }
+  ]
+}

@@ -597,10 +597,18 @@ async function prepareSpecRecovery(
       path_request_id: request.request_id,
     }
   }
-  const requiresFactBinding = planned.path_draft.objectives.some(
+  // B owns the path shape, but an empty required_fact_ids array on a retained
+  // source means "please bind evidence" rather than "erase C's frozen
+  // coverage contract".  Preserve the current source-local fact boundary;
+  // genuinely new sources still receive a fresh capability-based bundle.
+  const plannedPathDraft = inheritRetainedObjectiveFacts(
+    pathFromSpec(input.generation_spec),
+    planned.path_draft,
+  )
+  const requiresFactBinding = plannedPathDraft.objectives.some(
     (objective) => objective.required_fact_ids.length === 0,
   )
-  const validationPath = pathForDraftPreflight(planned.path_draft)
+  const validationPath = pathForDraftPreflight(plannedPathDraft)
   if (!requiresFactBinding) {
     const formalPathReport = validateRoleCSchema(
       "learning_path_node.schema.json",
@@ -649,7 +657,7 @@ async function prepareSpecRecovery(
     }
   }
   const currentPath = pathFromSpec(input.generation_spec)
-  if (contentHash(planned.path_draft) === contentHash(currentPath)
+  if (contentHash(plannedPathDraft) === contentHash(currentPath)
     && contentHash(nextProfile) === contentHash(profile)) {
     return {
       ok: false,
@@ -665,7 +673,7 @@ async function prepareSpecRecovery(
   let currentBindingErrors: string[] = []
   if (requiresFactBinding) {
     const currentBinding = bindUnboundObjectiveFacts(
-      planned.path_draft,
+      plannedPathDraft,
       evidence,
     )
     if (currentBinding.ok) {
@@ -716,7 +724,7 @@ async function prepareSpecRecovery(
     const gap = pathEvidenceGapRequest(
       input,
       nextProfile,
-      planned.path_draft,
+      plannedPathDraft,
       directive,
       !preflight.ok && "gap_request" in preflight
         ? preflight.gap_request
@@ -748,7 +756,7 @@ async function prepareSpecRecovery(
     }
     const evidenceIssue = validateRefreshedEvidence(
       evidence,
-      planned.path_draft,
+      plannedPathDraft,
       nextProfile,
       gap.target_source_ids,
     )
@@ -762,7 +770,7 @@ async function prepareSpecRecovery(
       }
     }
     if (requiresFactBinding) {
-      const binding = bindUnboundObjectiveFacts(planned.path_draft, evidence)
+      const binding = bindUnboundObjectiveFacts(plannedPathDraft, evidence)
       if (!binding.ok) {
         return {
           ok: false,
@@ -1148,6 +1156,27 @@ function pathForDraftPreflight(
     }
   }
   return draft as LearningPathNode
+}
+
+export function inheritRetainedObjectiveFacts(
+  current: LearningPathNode,
+  draft: RoleBPathDraft,
+): RoleBPathDraft {
+  const currentByObjective = new Map(current.objectives.map((objective) => [objective.objective_id, objective]))
+  const currentBySource = new Map(current.objectives.map((objective) => [objective.source_id, objective]))
+  return {
+    ...structuredClone(draft),
+    objectives: draft.objectives.map((objective) => {
+      if (objective.required_fact_ids.length > 0) return structuredClone(objective)
+      const retained = currentByObjective.get(objective.objective_id)
+        ?? currentBySource.get(objective.source_id)
+      if (!retained || retained.source_id !== objective.source_id) return structuredClone(objective)
+      return {
+        ...structuredClone(objective),
+        required_fact_ids: [...retained.required_fact_ids],
+      }
+    }),
+  }
 }
 
 type PathFactBindingResult =

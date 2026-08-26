@@ -163,6 +163,17 @@ describe("统一证据身份与能力合同", () => {
     expect(secure.reference_solution).not.toContain("\nfor ")
     expect(secure.reference_solution).not.toMatch(/\b(?:while|input)\s*\(/u)
     expect(secure.mutation_variants[0]?.code).not.toBe(secure.reference_solution)
+    expect(secure.mutation_variants[0]?.code).not.toContain("TODO")
+  })
+
+  test("可执行 API 事实同时说明调用形式和可观察结果，严格审核无需依赖常识补全", async () => {
+    const kb = await loadKnowledgeBase()
+    const typeFact = kb.items.find((item) => item.sourceId === "K003")?.facts.find((fact) => fact.factId === "F004")
+    const splitFact = kb.items.find((item) => item.sourceId === "K012")?.facts.find((fact) => fact.factId === "F002")
+    expect(typeFact?.content).toContain("type(x)")
+    expect(typeFact?.content).toContain("<class 'int'>")
+    expect(splitFact?.content).toContain("s.split(sep)")
+    expect(splitFact?.content).toContain("返回")
   })
 
   test("讲义 V2 在两个 source 都使用 F001 时仍生成正确 claim 和块级引用", () => {

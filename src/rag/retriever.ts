@@ -25,6 +25,8 @@ export interface RagResultItem {
   reason: string
   snippet: string
   facts: KnowledgeFact[]
+  /** 当前知识项冻结的核心教学事实；由 A 随证据一起返回给 B/C。 */
+  coreFactIds?: string[]
   examples: KnowledgeExample[]
   practiceTasks: string[]
   quizItems: KnowledgeQuizItem[]
@@ -287,6 +289,7 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
       reason,
       snippet: item.snippet,
       facts: item.facts.map((fact) => ({ ...fact, source_id: fact.source_id ?? fact.sourceId, fact_id: fact.fact_id ?? fact.factId })),
+      coreFactIds: [...(item.coreFactIds ?? [])],
       examples: item.examples,
       practiceTasks: item.practiceTasks,
       quizItems: item.quizItems,

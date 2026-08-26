@@ -79,6 +79,8 @@ export interface CodeLabTaskContract {
   program_entry: string
   /** 输入形式：判题器向学习者程序提供输入的方式。 */
   input_form: "function_arguments" | "stdin_lines" | "none"
+  /** stdin 的确切布局由 planning 冻结，避免 public/secure 各自猜测行数。 */
+  stdin_layout: "none" | "single_line_text"
   /** 输出形式：判题器比较学习者程序的哪种产物。 */
   output_form: "return_value" | "stdout_lines"
   /** 判题调用方式：判题器如何驱动学习者程序。 */
@@ -180,7 +182,7 @@ export function buildResourceBlueprint(
     throw new Error("RESOURCE_BLUEPRINT_EVIDENCE_IDENTITY_MISMATCH")
   }
   const identity = buildLabIdentity(spec)
-  const codeObjectivePlan = buildCodeLabObjectivePlan(spec)
+  const codeObjectivePlan = buildCodeLabObjectivePlan(spec, evidence)
   const misconceptionIdsByObjective = Object.fromEntries(spec.targets.map((target) => {
     const evidenceItem = evidence.results.find((item) => item.source_id === target.source_id)
     const misconception = evidenceItem?.misconceptions?.find((entry) =>
@@ -346,6 +348,7 @@ export function buildDifficultyPlan(
   const difficulty = spec.difficulty
     ?? adaptationDefaults(spec.learner_adaptation?.level ?? "basic").difficulty
   const { challenge, support } = splitDifficultyVector(difficulty)
+  const learnerLevel = spec.learner_adaptation?.level ?? "basic"
   const assessmentBlueprint = spec.assessment_blueprint
   const plannedPrerequisiteLoad = spec.path_node?.prerequisite_source_ids?.length ?? 0
   const assessmentChallenge = plannedAssessmentChallenge(
@@ -357,12 +360,10 @@ export function buildDifficultyPlan(
   const concept: ResourceDifficultyPlanEntry = {
     challenge_target: {
       ...challenge,
-      // 讲义比测评低一档。target 由教学设计决定，observed 由真实内容决定，
-      // 二者独立比较；不为配合估算器下限而抬高目标（否则会掩盖估算器问题）。
-      // 一份可学习的讲义至少需要一次识别/解释活动。0 表示该维度不适用，
-      // 不能作为真实讲义的认知与推理目标，否则任何正常内容都会被误判偏难。
-      cognitive_demand: clamp5(Math.max(1, challenge.cognitive_demand - 1)),
-      reasoning_steps: clamp5(Math.max(1, challenge.reasoning_steps - 1)),
+      // 讲义降低阅读密度与表达坡度，但不能把学习目标本身降一档。
+      // basic 学习者仍需在讲义中完成简单应用，而不是被重新测成纯识记。
+      cognitive_demand: clamp5(Math.max(1, challenge.cognitive_demand)),
+      reasoning_steps: clamp5(Math.max(1, challenge.reasoning_steps)),
       code_complexity: clamp5(challenge.code_complexity - 1),
       prerequisite_load: clamp5(Math.max(
         challenge.prerequisite_load,
@@ -389,8 +390,14 @@ export function buildDifficultyPlan(
     support_target: {
       scaffold_strength: clamp5(support.scaffold_strength),
       reading_density: support.reading_density,
-      hint_strength: clamp5(Math.max(support.hint_strength, 3)),
-      starter_support: clamp5(Math.max(support.starter_support, 3)),
+      hint_strength: clamp5(Math.max(
+        support.hint_strength,
+        learnerLevel === "beginner" ? 3 : learnerLevel === "basic" ? 2 : 1,
+      )),
+      starter_support: clamp5(Math.max(
+        support.starter_support,
+        learnerLevel === "beginner" ? 3 : learnerLevel === "basic" ? 2 : 1,
+      )),
     },
   }
 
@@ -661,20 +668,29 @@ function decideCodeLabTaskContract(
             ? "callable_function"
             : "stdin_stdout_program"
   const callable = taskKind === "callable_function"
-  const implementationFactSignal = /(?:输入|输出|返回值|\breturn\b|循环|遍历|条件|赋值|计算|索引|读写|调用.*参数|文件)/u.test(facts)
+  const implementationFactSignal = /(?:输入|输出|返回值|\b(?:def|return)\b|定义函数|函数体|调用函数|循环|遍历|条件|赋值|计算|索引|读写|调用.*参数|文件|[A-Za-z_][\w.]*\([^)]*\))/u.test(facts)
   const learnerAction: CodeLabTaskContract["learner_action"] = callable
     ? "implement_function"
     : primary.observable_behavior === "recognize"
         || primary.observable_behavior === "explain"
-        || !implementationFactSignal
       ? "recall_fact"
-      : "implement_program"
+      : implementationFactSignal
+        ? "implement_program"
+        : "recall_fact"
   const learnerOwnedRegion: CodeLabTaskContract["learner_owned_region"] =
     learnerAction === "recall_fact"
       ? "fact_literal"
       : learnerAction === "implement_function"
         ? "function_body"
         : "program_logic"
+  const externalInputSignal = primaryOutputSignal
+    || goalOutputSignal
+    || /(?:标准输入|stdin|读取(?:用户)?输入|输入数据)/u.test(facts)
+  const inputForm: CodeLabTaskContract["input_form"] = callable
+    ? "function_arguments"
+    : learnerAction === "recall_fact" || !externalInputSignal
+      ? "none"
+      : "stdin_lines"
   return {
     task_kind: taskKind,
     learner_action: learnerAction,
@@ -685,12 +701,11 @@ function decideCodeLabTaskContract(
       ? "入口函数（def 定义，函数名由 instruction 指定）"
       : learnerAction === "recall_fact"
         ? "stdout（程序胶水已给出，学习者只填写事实文本）"
-        : "stdin→stdout（整个程序读取 stdin 并打印结果）",
-    input_form: callable
-      ? "function_arguments"
-      : learnerAction === "recall_fact"
-        ? "none"
-        : "stdin_lines",
+        : inputForm === "none"
+          ? "stdout（程序直接运行冻结任务数据并打印结果）"
+          : "stdin→stdout（整个程序读取 stdin 并打印结果）",
+    input_form: inputForm,
+    stdin_layout: inputForm === "stdin_lines" ? "single_line_text" : "none",
     output_form: callable ? "return_value" : "stdout_lines",
     grading_invocation: callable
       ? "call_entry_function"
@@ -699,6 +714,8 @@ function decideCodeLabTaskContract(
       ? "判题器调用入口函数并比较返回值；不得要求 print 输出作为评分结果"
       : learnerAction === "recall_fact"
         ? "判题器使用空 stdin 并比较 stdout；学习者只替换一个事实文本占位，输出调用由 starter_code 完整提供"
-        : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
+        : inputForm === "none"
+          ? "判题器使用空 stdin 并比较 stdout；任务数据由程序骨架给出，学习者完成目标逻辑，不得改造为另一套输入协议"
+          : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
   }
 }

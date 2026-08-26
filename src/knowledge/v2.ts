@@ -27,6 +27,15 @@ export function hydrateKnowledgeItemV2(item: KnowledgeItem): KnowledgeItem {
   return {
     ...source,
     facts,
+    // 旧知识切片的题目事实引用已经经过课程编写，是比数组位置更可靠的
+    // “核心内容”信号；不足三条时再按事实顺序补齐。新切片可以显式声明
+    // coreFactIds 覆盖这一兼容规则。
+    coreFactIds: source.coreFactIds?.length
+      ? [...new Set(source.coreFactIds)]
+      : [...new Set([
+          ...source.quizItems.map((item) => item.factId),
+          ...factIds,
+        ])].slice(0, 3),
     misconceptions: source.misconceptions?.length
       ? structuredClone(source.misconceptions)
       : deriveMisconceptions(source, facts),

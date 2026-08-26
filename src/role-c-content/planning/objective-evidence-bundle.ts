@@ -5,6 +5,7 @@ export interface EvidenceSourceLike {
   source_id?: string
   sourceId?: string
   facts: Array<CapabilityFactLike & { source_id?: string; sourceId?: string }>
+  coreFactIds?: string[]
 }
 
 export interface BoundObjectiveEvidence {
@@ -31,14 +32,30 @@ export function bindObjectiveEvidence(
   }
   const facts = source.facts.filter((fact) =>
     (fact.source_id ?? fact.sourceId ?? objective.source_id) === objective.source_id)
+  const availableFactIds = new Set(facts.map((fact) => fact.fact_id ?? fact.factId).filter(
+    (factId): factId is string => typeof factId === "string" && factId.length > 0,
+  ))
+  const sourceCoreFactIds = (source.coreFactIds ?? []).filter((factId) => availableFactIds.has(factId))
   const selection = selectEvidenceBundle({
     behavior: objective.observable_behavior,
     facts,
-    preferred_fact_ids: objective.required_fact_ids,
+    preferred_fact_ids: objective.required_fact_ids.length > 0
+      ? objective.required_fact_ids
+      : sourceCoreFactIds,
     max_facts: 5,
   })
+  // Non-empty required_fact_ids is an upstream/frozen contract, not merely a
+  // ranking hint.  Capability selection may prove whether that contract is
+  // teachable, but must not silently replace twelve required facts with one
+  // minimal explain fact during recovery.  Empty drafts are the only case in
+  // which C is authorised to choose a fresh minimal bundle.
+  const boundFactIds = objective.required_fact_ids.length > 0
+    ? [...new Set([...selection.fact_ids, ...objective.required_fact_ids])]
+    : sourceCoreFactIds.length > 0
+      ? [...new Set([...selection.fact_ids, ...sourceCoreFactIds])]
+      : selection.fact_ids
   return {
-    required_fact_ids: selection.fact_ids,
+    required_fact_ids: boundFactIds,
     capabilities: selection.capabilities,
     missing_capabilities: selection.missing_capabilities,
     sufficient: selection.sufficient,
