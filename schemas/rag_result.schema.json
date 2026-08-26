@@ -35,8 +35,8 @@
         ],
         "additionalProperties": false,
         "properties": {
-          "sourceId": { "type": "string", "pattern": "^K[0-9]{3}$" },
-          "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "sourceId": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
+          "source_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
           "title": { "type": "string" },
           "difficulty": { "type": "string", "enum": ["beginner", "basic", "intermediate", "integrated"] },
           "score": { "type": "number" },
@@ -49,16 +49,21 @@
               "required": ["sourceId", "factId", "source_id", "fact_id", "content"],
               "additionalProperties": false,
               "properties": {
-                "sourceId": { "type": "string", "pattern": "^K[0-9]{3}$" },
-                "factId": { "type": "string", "pattern": "^F[0-9]{3}$" },
-                "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
-                "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+                "sourceId": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
+                "factId": { "type": "string", "pattern": "^F[0-9]{3,6}$" },
+                "source_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
+                "fact_id": { "type": "string", "pattern": "^F[0-9]{3,6}$" },
                 "content": { "type": "string" },
                 "scope": { "type": "array", "items": { "type": "string" } },
                 "exceptions": { "type": "array", "items": { "type": "string" } },
                 "prerequisites": { "type": "array", "items": { "type": "string" } },
                 "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-                "authority": { "enum": ["curriculum", "official_documentation", "reviewed_reference"] }
+                "authority": { "enum": ["curriculum", "official_documentation", "reviewed_reference"] },
+                "capabilities": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "enum": ["definition", "rule", "procedure", "state_transition", "boundary", "contrast", "io_contract", "example"] }
+                }
               }
             }
           },
@@ -88,8 +93,8 @@
                 "question": { "type": "string" },
                 "options": { "type": "array", "items": { "type": "string" } },
                 "answer": { "type": "string" },
-                "sourceId": { "type": "string", "pattern": "^K[0-9]{3}$" },
-                "factId": { "type": "string", "pattern": "^F[0-9]{3}$" }
+                "sourceId": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
+                "factId": { "type": "string", "pattern": "^F[0-9]{3,6}$" }
               }
             }
           },

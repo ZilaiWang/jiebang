@@ -19,6 +19,7 @@ import {
   validateAssessmentDraftStructure,
   validateCodeLabDraftStructure,
 } from "../src/role-c-content"
+import { bindObjectiveEvidence } from "../src/role-c-content/planning/objective-evidence-bundle"
 
 const configPath = resolve(process.cwd(), ".env.role-c.local")
 const usage: Array<Record<string, unknown>> = []
@@ -65,12 +66,23 @@ try {
   })
   const kb = await loadKnowledgeBase()
   const evidence = adaptRagResult(rag, { kb_version: kb.version, rag_version: "rule-rag-0.1" })
+  const boundObjectives = rawPath.objectives.map((objective: {
+    source_id: string
+    observable_behavior: "recognize" | "explain" | "trace" | "apply" | "debug" | "create"
+    required_fact_ids: string[]
+  }) => {
+    const bundle = bindObjectiveEvidence(objective, evidence.results)
+    if (!bundle.sufficient) {
+      throw new Error(`SMOKE_EVIDENCE_INSUFFICIENT:${objective.source_id}:${objective.observable_behavior}:${bundle.missing_capabilities.map((group) => group.join("/")).join(",")}`)
+    }
+    return { ...objective, required_fact_ids: bundle.required_fact_ids }
+  })
   const path = defineLearningPathNode({
     node_id: rawPath.node_id,
     target_source_ids: rawPath.target_source_ids,
     prerequisite_source_ids: rawPath.prerequisite_source_ids,
     goal: rawPath.goal,
-    objectives: rawPath.objectives,
+    objectives: boundObjectives,
     assessment_blueprint: rawPath.assessment_blueprint,
   })
   const built = buildGenerationSpec({

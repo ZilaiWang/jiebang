@@ -1,5 +1,10 @@
 import type { ObservableBehavior } from "../contracts/profile-adapter"
 import type { AssessmentCapacityPlan } from "./assessment-capacity"
+import {
+  selectEvidenceBundle,
+  type CapabilityFactLike,
+  type EvidenceBehavior,
+} from "../../knowledge/capabilities"
 
 /**
  * 生成前可行性判断（改进方案4 第七节 / 第 4 层 ArtifactFeasibilityPlan）。
@@ -51,7 +56,7 @@ export interface FeasibilityInput {
     observable_behavior: ObservableBehavior
     importance: "core" | "supporting"
     fact_refs: Array<{ source_id: string; fact_id: string }>
-    facts: Array<{ content: string }>
+    facts: CapabilityFactLike[]
   }>
   capacity: AssessmentCapacityPlan
 }
@@ -69,29 +74,21 @@ export const BEHAVIOR_MINIMUM_CAPABILITY: Record<ObservableBehavior, string> = {
   create: "程序过程、外部合同及可观察结果",
 }
 
-// 文本特征启发式：判断 fact 集合是否支撑更高等级行为。
-const PROCESS_PATTERN = /步骤|顺序|先.*后|然后|接着|遍历|循环|迭代|状态|执行/i
-const RULE_PATTERN = /规则|如果.*(?:那么|则)|输入.*(?:输出|结果)|返回(?:值|结果)|换算|计算|逐项|每次/i
-const BOUNDARY_PATTERN = /边界|约束|不能|不允许|错误|异常|越界|冲突|限制|上限|下限/i
-const CODE_PATTERN = /函数|def |程序|接口|合同|参数|调用|返回|print|input|lambda/i
 const COMPARISON_PATTERN = /相比|区别|不同于|相同点|共同点|两者|二者|分别|而不是|与.{0,12}不同/u
 
-export function supportedBehaviorsFor(facts: Array<{ content: string }>): ObservableBehavior[] {
-  const text = facts.map((fact) => fact.content).join("\n")
-  if (facts.length === 0) return []
-  const behaviors: ObservableBehavior[] = ["recognize", "explain"]
-  if (PROCESS_PATTERN.test(text)) behaviors.push("trace")
-  if (RULE_PATTERN.test(text)) behaviors.push("apply")
-  if (BOUNDARY_PATTERN.test(text)) behaviors.push("debug")
-  if (CODE_PATTERN.test(text)) behaviors.push("create")
-  return behaviors
+export function supportedBehaviorsFor(facts: CapabilityFactLike[]): ObservableBehavior[] {
+  const behaviors: ObservableBehavior[] = ["recognize", "explain", "trace", "apply", "debug", "create"]
+  return behaviors.filter((behavior) => selectEvidenceBundle({
+    behavior: behavior as EvidenceBehavior,
+    facts,
+  }).sufficient)
 }
 
 export function assessObjectiveSupport(input: {
   objective_id: string
   observable_behavior: ObservableBehavior
   fact_refs: Array<{ source_id: string; fact_id: string }>
-  facts: Array<{ content: string }>
+  facts: CapabilityFactLike[]
 }): ObjectiveSupportPlan {
   const supported = supportedBehaviorsFor(input.facts)
   const supportsBehavior = supported.includes(input.observable_behavior)
@@ -114,7 +111,9 @@ export function assessObjectiveSupport(input: {
     : input.facts.length <= 2
       ? "compact"
       : "full"
-  const codeLab: ObjectiveSupportPlan["artifact_support"]["code_lab"] = supported.includes("create")
+  const codeLab: ObjectiveSupportPlan["artifact_support"]["code_lab"] = (
+    supported.includes("create") || supported.includes("apply")
+  )
     ? "full"
     : "unsupported"
   const assessment: ObjectiveSupportPlan["artifact_support"]["assessment"] = !supportsBehavior
@@ -139,15 +138,19 @@ export function planArtifactFeasibility(input: FeasibilityInput): ArtifactFeasib
 
   const coreMissingFacts = objectives.some((objective) => {
     const meta = input.objectives.find((entry) => entry.objective_id === objective.objective_id)!
-    return meta.importance === "core" && meta.facts.length === 0
+    const hasAuthoritativeCapabilities = meta.facts.some((fact) =>
+      Array.isArray(fact.capabilities) && fact.capabilities.length > 0)
+    return meta.importance === "core"
+      && (meta.facts.length === 0
+        || (hasAuthoritativeCapabilities && objective.missing_support.length > 0))
   })
 
   const capacityDecision = input.capacity.decision
   let status: FeasibilityStatus = "ready"
   if (coreMissingFacts) {
-    // 只有可确定证明的缺口才在生成前硬阻断。知识库尚未提供显式
-    // capability 元数据，不能把中文关键词启发式当作发布门禁；高阶行为
-    // 的可证性继续交给后续 typed semantic audit 判断并精确归因。
+    // Capability metadata is part of the frozen evidence contract. A missing
+    // core capability is therefore deterministic and must be routed before any
+    // model call instead of being retried as a content-writing failure.
     status = "need_evidence"
   } else if (capacityDecision === "REPLAN") {
     status = "need_spec"

@@ -1,4 +1,5 @@
 import type { RoleCAgents } from "../agents/types"
+import { isValidSourceId } from "../../knowledge/identifiers"
 import type { CPipelineInput, CPipelineOptions, CPipelineResult } from "../orchestrator/content-pipeline"
 import { runCPipeline } from "../orchestrator/content-pipeline"
 import { contentHash } from "../contracts/common"
@@ -591,7 +592,7 @@ function validateStructuredRecoveryFields(result: ContentReviewResult): void {
     || new Set(result.failed_dimensions).size !== result.failed_dimensions.length
     || !Array.isArray(result.missing_prerequisite_source_ids)
     || result.missing_prerequisite_source_ids.some((sourceId) =>
-      !/^K[0-9]{3}$/.test(sourceId))
+      !isValidSourceId(sourceId))
     || new Set(result.missing_prerequisite_source_ids).size
       !== result.missing_prerequisite_source_ids.length
     || !Array.isArray(result.unknown_prerequisite_refs)

@@ -7,8 +7,8 @@
   "properties": {
     "schema_version": { "const": "1.0" },
     "audit_id": { "type": "string", "minLength": 1 }, "run_id": { "type": "string", "minLength": 1 },
-    "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
-    "fact_id": { "type": "string", "pattern": "^F[0-9]{3}$" },
+    "source_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
+    "fact_id": { "type": "string", "pattern": "^F[0-9]{3,6}$" },
     "claim_text": { "type": "string", "minLength": 1 },
     "issue": { "enum": ["missing_support", "conflicting_support", "ambiguous_support"] },
     "artifact_id": { "type": "string", "minLength": 1 },

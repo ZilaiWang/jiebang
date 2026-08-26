@@ -81,5 +81,5 @@ describe("Week 3 evaluation framework", () => {
       expect(typeof result.weak_concepts_covered).toBe("boolean")
       expect(typeof result.goal_aligned).toBe("boolean")
     }
-  })
+  }, 15_000)
 })

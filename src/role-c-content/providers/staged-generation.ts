@@ -149,6 +149,8 @@ export interface AssessmentItemPlan {
   construct?: string
   evidence_of_mastery?: string
   cognitive_demand?: "understand" | "apply" | "analyze" | "transfer"
+  /** Whether current cited evidence exposes a source-local misconception. */
+  misconception_available?: boolean
   target_misconception_id?: string
   transfer_context?: string
   forbidden_clues?: string[]
@@ -1223,6 +1225,48 @@ export function materializeCodeLabSecureAuthorPayload(
   return normalizeCodeLabSecure(spec, draft, publicPayload, suiteId, plan)
 }
 
+/**
+ * A recall-fact lab has a fully frozen execution meaning: empty stdin and one
+ * authoritative fact printed to stdout. The model still authors the learner-
+ * facing task, but must not invent the private executable oracle for this
+ * contract; doing so previously allowed loops or input reads to turn a valid
+ * fact exercise into a trusted-runner timeout.
+ */
+export function materializeRecallFactSecureAuthorPayload(
+  request: CodeLabRequest,
+  plan: CodeLabSecurePlan,
+): CodeLabSecureAuthorPayload {
+  const primary = request.generation_spec.targets.find((target) => target.is_primary)
+    ?? request.generation_spec.targets[0]
+  if (!primary) throw new ModelOutputValidationError("role-c.code-lab.secure", ["recall_fact 缺少主目标"])
+  const evidence = request.evidence_pack.results.find((item) => item.source_id === primary.source_id)
+  const factId = primary.required_fact_ids[0]
+  const fact = evidence?.facts.find((entry) => entry.fact_id === factId)
+  if (!fact) {
+    throw new ModelOutputValidationError("role-c.code-lab.secure", [
+      `recall_fact 缺少权威事实 ${primary.source_id}:${factId ?? "unknown"}`,
+    ])
+  }
+  const literal = JSON.stringify(fact.content)
+  const referenceSolution = `fact_text = ${literal}\nprint(fact_text)`
+  const mutationCode = 'fact_text = "TODO"\nprint(fact_text)'
+  return {
+    reference_solution: referenceSolution,
+    hidden_tests: plan.hidden_tests.map((entry) => ({
+      input: "",
+      expected: `${fact.content}\n`,
+      comparison: { kind: "exact" },
+      misconception_tag: plan.mutation_variants.find((mutation) =>
+        mutation.objective_ids.includes(entry.objective_id))?.misconception_id
+        ?? `MIS-${entry.objective_id}`,
+    })),
+    mutation_variants: plan.mutation_variants.map((entry) => ({
+      code: mutationCode,
+      misconception_tag: entry.misconception_id,
+    })),
+  }
+}
+
 function normalizeCodeLabSecureHiddenInputs(
   payload: CodeLabSecurePayload,
   publicPayload: CodeLabPublicPayload,
@@ -1513,6 +1557,7 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
       construct: `${objective.observable_behavior}:${item.cognitive_operation}`,
       evidence_of_mastery: masteryEvidenceFor(item.modality, item.cognitive_operation),
       cognitive_demand: cognitiveDemand,
+      misconception_available: misconceptions.length > 0,
       ...(misconceptions.length > 0
         ? { target_misconception_id: misconceptions[index % misconceptions.length]!.misconceptionId }
         : {}),

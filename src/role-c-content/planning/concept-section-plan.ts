@@ -1,4 +1,5 @@
 import { stableId } from "../contracts/common"
+import { factKey } from "../../knowledge/identifiers"
 import type { CitationRef } from "../contracts/common"
 import type { ConceptLessonPayload, QuizBlock, RenderBlock, Claim } from "../contracts/artifacts"
 import type { ConceptTutorRequest } from "../agents/types"
@@ -250,12 +251,13 @@ export function materializeSectionBlock(input: {
  */
 export function materializeConceptObjectiveV2(input: {
   objective_id: string
+  source_id: string
   plan: ConceptSectionPlan
   authored: { sections: AuthoredSection[] }
   citations: CitationRef[]
   factTextByFactId: Map<string, string>
 }): RenderBlock[] {
-  const { objective_id, plan, authored, citations, factTextByFactId } = input
+  const { objective_id, source_id, plan, authored, citations, factTextByFactId } = input
   const authoredBySlot = new Map(authored.sections.map((section) => [section.slot_id, section]))
   const blocks: RenderBlock[] = []
   for (const slot of plan.slots) {
@@ -266,11 +268,17 @@ export function materializeConceptObjectiveV2(input: {
       }
       continue
     }
-    const claims: Claim[] = slot.fact_ids.map((factId, index) => ({
-      claim_id: stableId("CONCEPT-CLAIM", { objective_id, slot_id: slot.slot_id, fact_id: factId, index }),
-      text: factTextByFactId.get(factId) ?? "",
-      citations: structuredClone(citations),
-    }))
+    const claims: Claim[] = slot.fact_ids.map((factId, index) => {
+      const citation = citations.find((entry) =>
+        entry.source_id === source_id && entry.fact_id === factId)
+      return {
+        claim_id: stableId("CONCEPT-CLAIM", { objective_id, slot_id: slot.slot_id, fact_id: factId, index }),
+        text: citation
+          ? factTextByFactId.get(factKey(citation)) ?? factTextByFactId.get(factId) ?? ""
+          : factTextByFactId.get(factId) ?? "",
+        citations: citation ? [structuredClone(citation)] : [],
+      }
+    })
     blocks.push(materializeSectionBlock({ objective_id, slot, section, claims }))
   }
   return blocks
@@ -488,7 +496,9 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
 
   const claimsFor = (slot: ConceptSectionSlot) => slot.fact_ids.map((factId, index) => ({
     claim_id: stableId("CONCEPT-CLAIM", { ...identity, slot_id: slot.slot_id, fact_id: factId, index }),
-    text: factTextByFactId.get(factId) ?? "",
+    text: factTextByFactId.get(factKey({ source_id, fact_id: factId }))
+      ?? factTextByFactId.get(factId)
+      ?? "",
     citations: citations
       .filter((citation) => citation.fact_id === factId)
       .map((citation) => structuredClone(citation)),
@@ -546,6 +556,10 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
   // micro_check
   const optionIndex = authored.micro_check.options.findIndex((option) =>
     option.trim().toLocaleLowerCase() === authored.micro_check.answer.trim().toLocaleLowerCase())
+  const primaryFactIds = plan.slots.find((slot) =>
+    slot.kind === "fact_explanation")?.fact_ids ?? []
+  const primaryCitations = citations.filter((citation) =>
+    primaryFactIds.includes(citation.fact_id))
   const micro_check: QuizBlock = {
     block_id: stableId("CONCEPT-CHECK", identity),
     block_type: "quiz",
@@ -562,7 +576,7 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
           answer_explanation: authored.micro_check.explanation.trim(),
         }
       : {}),
-    citations: citations.map((citation) => ({ ...citation, relation: "derived_from" as const })),
+    citations: primaryCitations.map((citation) => ({ ...citation, relation: "derived_from" as const })),
   }
   coverageBlockIds.push(micro_check.block_id)
 
@@ -571,7 +585,7 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
     hints: authored.hints.slice(0, 3).map((text, hintIndex) => ({
       hint_level: (hintIndex + 1) as 1 | 2 | 3,
       text: text.trim(),
-      citations: citations.map((citation) => ({ ...citation, relation: "derived_from" as const })),
+      citations: primaryCitations.map((citation) => ({ ...citation, relation: "derived_from" as const })),
     })),
   }
 

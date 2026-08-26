@@ -2,6 +2,7 @@ import { auditGeneratedContentWithSemantic } from "../fact-audit/auditor"
 import { contentHash } from "../role-c-content/contracts/common"
 import { adaptRagResult } from "../role-c-content/contracts/evidence-pack"
 import { retrieveKnowledge } from "../rag/retriever"
+import { loadKnowledgeBase } from "../knowledge/loader"
 import type { KnowledgeDifficulty } from "../knowledge/types"
 import { PYTHON_BASIC_KNOWLEDGE_BASE } from "../knowledge/python-basic"
 import { auditTeaching } from "../role-b-profile/teaching-audit/auditor"
@@ -147,6 +148,7 @@ export function buildWeek3EvaluationCases(): Week3EvaluationCase[] {
 export async function runWeek3Evaluation(): Promise<Week3EvaluationReport> {
   const cases = buildWeek3EvaluationCases()
   const caseResults: Week3CaseResult[] = []
+  const knowledgeBase = await loadKnowledgeBase()
 
   for (const evaluationCase of cases) {
     const learnerProfile = GOLDEN_LEARNER_PROFILES[evaluationCase.learner_profile_id]
@@ -156,6 +158,7 @@ export async function runWeek3Evaluation(): Promise<Week3EvaluationReport> {
       query: evaluationCase.query,
       learnerLevel: evaluationCase.learner_level,
       topK: 5,
+      knowledgeBase,
     })
     const evidencePack = adaptRagResult(ragResult, {
       kb_version: "python-basic@0.2.0",

@@ -1,5 +1,6 @@
 import type { CitationRef } from "../contracts/common"
 import { evidenceFactKeys, type RagEvidencePack } from "../contracts/evidence-pack"
+import { factKey } from "../../knowledge/identifiers"
 
 export interface ValidationIssue {
   code: string
@@ -16,7 +17,7 @@ export interface ValidationReport {
 export function validateCitations(citations: CitationRef[], evidence: RagEvidencePack): ValidationReport {
   const validFacts = evidenceFactKeys(evidence)
   const issues = citations.flatMap((citation, index) => {
-    const key = `${citation.source_id}:${citation.fact_id}`
+    const key = factKey(citation)
     if (validFacts.has(key)) return []
     return [{
       code: "invalid_citation",

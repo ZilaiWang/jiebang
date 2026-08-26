@@ -105,6 +105,7 @@ import {
   InMemoryPipelineCheckpointStore,
   type CPipelineCheckpointStore,
 } from "../role-c-content"
+import { bindObjectiveEvidence } from "../role-c-content/planning/objective-evidence-bundle"
 
 const defaultInMemoryLearningPersistence: RoleCLearningPersistence = {
   cycleStore: new InMemoryLearningCycleStore(),
@@ -1511,21 +1512,17 @@ async function refreshNextPathEvidence(
         reason: `A 未返回目标 ${objective.objective_id} 对应的 ${objective.source_id}`,
       }
     }
-    const availableFacts = new Set(item.facts.map((fact) => fact.fact_id))
-    if (objective.required_fact_ids.length === 0) {
-      objective.required_fact_ids = [...availableFacts].sort().slice(0, 3)
-      boundFacts = true
-    }
-    const missingFacts = objective.required_fact_ids.filter((factId) =>
-      !availableFacts.has(factId))
-    if (objective.required_fact_ids.length === 0 || missingFacts.length > 0) {
+    const bundle = bindObjectiveEvidence(objective, evidence.results)
+    if (bundle.required_fact_ids.length === 0 || !bundle.sufficient) {
       return {
         ok: false,
-        reason: missingFacts.length > 0
-          ? `A 未返回目标 ${objective.objective_id} 的必要事实：${missingFacts.join("、")}`
-          : `目标 ${objective.objective_id} 没有可绑定事实`,
+        reason: bundle.required_fact_ids.length === 0
+          ? `目标 ${objective.objective_id} 没有可绑定事实`
+          : `目标 ${objective.objective_id} 的事实能力不足：${bundle.missing_capabilities.map((group) => group.join("/")).join("、")}`,
       }
     }
+    if (objective.required_fact_ids.join("\u0000") !== bundle.required_fact_ids.join("\u0000")) boundFacts = true
+    objective.required_fact_ids = bundle.required_fact_ids
   }
   if (boundFacts) {
     resolvedPath.node_id = stableId("PATH-C-NEXT", {

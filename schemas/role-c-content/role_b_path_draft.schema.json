@@ -12,12 +12,12 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" }
     },
     "prerequisite_source_ids": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "type": "string", "pattern": "^K[0-9]{3}$" }
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" }
     },
     "goal": { "type": "string", "minLength": 1 },
     "objectives": {
@@ -28,11 +28,11 @@
         "required": ["objective_id", "source_id", "required_fact_ids", "observable_behavior", "importance"],
         "properties": {
           "objective_id": { "type": "string", "minLength": 1 },
-          "source_id": { "type": "string", "pattern": "^K[0-9]{3}$" },
+          "source_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
           "required_fact_ids": {
             "type": "array",
             "uniqueItems": true,
-            "items": { "type": "string", "pattern": "^F[0-9]{3}$" }
+            "items": { "type": "string", "pattern": "^F[0-9]{3,6}$" }
           },
           "observable_behavior": {
             "enum": ["recognize", "explain", "trace", "apply", "debug", "create"]

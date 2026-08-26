@@ -398,11 +398,11 @@
       "properties": {
         "source_id": {
           "type": "string",
-          "pattern": "^K[0-9]{3}$"
+          "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$"
         },
         "fact_id": {
           "type": "string",
-          "pattern": "^F[0-9]{3}$"
+          "pattern": "^F[0-9]{3,6}$"
         },
         "relation": {
           "enum": [
