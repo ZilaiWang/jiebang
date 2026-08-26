@@ -146,6 +146,56 @@ describe("resource-fit-audit：生成后实际难度估计与匹配判定", () =
       .toBeGreaterThan(direct.observed.challenge.reasoning_steps)
   })
 
+  test("题干提到‘编写脚本’不会把识别题误判成代码构造题", () => {
+    const entry = auditResourceFit({
+      artifact_id: "recognize-python",
+      kind: "assessment",
+      target: TARGET_ASSESSMENT,
+      payload: {
+        form_id: "f", title: "t", objective_ids: ["O1"],
+        items: [{
+          item_id: "i", family_id: "fam", variant_id: "v", display_no: 1,
+          objective_id: "O1", tier: 3, modality: "mcq", max_score: 4,
+          prompt: "Python 适合编写脚本。以下判断哪项正确？", citations: [],
+          structure_meta: {
+            operation: "recognize_fact",
+            reasoning_pattern: "single_direct_match",
+            representation: "declarative_statement",
+            context_family: "direct",
+            answer_form: "single_choice",
+          },
+        }],
+        submission_policy: { max_attempts: 1, formative: false },
+        routing: { anchor_item_ids: [], rules: [] },
+        objective_coverage: [], used_evidence: [],
+      } as never,
+    })
+    expect(entry.observed.challenge.cognitive_demand).toBe(1)
+    expect(entry.observed.challenge.reasoning_steps).toBe(1)
+  })
+
+  test("整卷观测按题目分值加权，不由单道高阶题最大值代表", () => {
+    const items = [1, 2, 3, 4, 5].map((displayNo) => ({
+      item_id: `i${displayNo}`, family_id: "fam", variant_id: "v", display_no: displayNo,
+      objective_id: "O1", tier: displayNo === 5 ? 3 as const : 1 as const,
+      modality: "mcq" as const, max_score: displayNo === 5 ? 4 : 1,
+      prompt: "判断事实", citations: [],
+      structure_meta: displayNo === 5
+        ? { operation: "recognize_fact", reasoning_pattern: "integrate_multiple_constraints", representation: "text", context_family: "direct", answer_form: "single_choice" }
+        : { operation: "recognize_fact", reasoning_pattern: "single_direct_match", representation: "text", context_family: "direct", answer_form: "single_choice" },
+    }))
+    const entry = auditResourceFit({
+      artifact_id: "weighted-assessment", kind: "assessment", target: TARGET_ASSESSMENT,
+      payload: {
+        form_id: "f", title: "t", objective_ids: ["O1"], items,
+        submission_policy: { max_attempts: 1, formative: false },
+        routing: { anchor_item_ids: [], rules: [] }, objective_coverage: [], used_evidence: [],
+      } as never,
+    })
+    expect(entry.observed.challenge.reasoning_steps).toBe(2)
+    expect(entry.observed.challenge.reasoning_steps).toBeLessThan(3)
+  })
+
   test("支持明显不足时按具体维度判偏难，不再被挑战侧最大值掩盖", () => {
     const entry = auditResourceFit({
       artifact_id: "lesson-under-supported",
@@ -213,9 +263,20 @@ describe("resource_fit 进入 reviewed_release_delivery schema", () => {
           support: { scaffold_strength: 2, reading_density: "low", hint_strength: 2, starter_support: 0 },
           confidence: 0.85,
         },
-        fit: { verdict: "fit", score: 1, mismatched_dimensions: [], reason_codes: [] },
+        fit: { verdict: "fit", score: 1, mismatched_dimensions: [], reason_codes: [], dimensions: [] },
       })),
-      overall: { verdict: "fit", score: 1 },
+      overall: {
+        verdict: "fit",
+        score: 1,
+        aggregation: {
+          policy: "bottleneck_cap",
+          weighted_mean: 1,
+          weakest_kind: "assessment",
+          weakest_score: 1,
+          bottleneck_margin: 0.08,
+          final_score: 1,
+        },
+      },
     }
     const result = validateRoleCSchemaFragment(
       "reviewed_release_delivery.schema.json",

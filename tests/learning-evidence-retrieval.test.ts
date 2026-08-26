@@ -50,6 +50,11 @@ describe("learning evidence retrieval", () => {
     expect(result.match_status).toBe("no_match")
     expect(result.results).toHaveLength(0)
     expect(result.retrieval_context?.retrieval_mode).toBe("semantic_discovery")
+    expect(result.evidence_sufficiency).toMatchObject({
+      ok: false,
+      missing_source_ids: [],
+      worked_example_count: 0,
+    })
   })
 
   test("identity hydration preserves exact source/fact identity and objective coverage", async () => {
@@ -83,6 +88,8 @@ describe("learning evidence retrieval", () => {
     })
     expect(result.retrieval_id).toStartWith("RAG-")
     expect(result.retrieval_context?.request_hash).toStartWith("sha256:")
+    expect(result.evidence_sufficiency?.ok).toBe(true)
+    expect(result.evidence_sufficiency?.worked_example_count).toBeGreaterThan(0)
   })
 
   test("missing required facts produce a target-level weak result", async () => {

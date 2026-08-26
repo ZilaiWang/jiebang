@@ -149,4 +149,23 @@ describe("Day7 回归：列表 → 循环共享前置知识点", () => {
     expect(beginner.assessment.support_target.scaffold_strength).toBe(0)
     expect(integrated.assessment.support_target.scaffold_strength).toBe(0)
   })
+
+  test("测评 target 按整卷计划汇总，Tier 3 不自动等于迁移题", () => {
+    const plan = buildDifficultyPlan({
+      learner_adaptation: { level: "beginner", scaffold_level: 3, preferred_contexts: [] },
+      assessment_blueprint: {
+        tier_1_count: 2, tier_2_count: 2, tier_3_count: 1,
+        required_modalities: ["mcq", "true_false"],
+      },
+      difficulty: {
+        domain_complexity: 1, cognitive_demand: 1, reasoning_steps: 1,
+        code_complexity: 0, prerequisite_load: 0, scaffold_strength: 3,
+      },
+    } as never)
+    expect(plan.assessment.challenge_target.cognitive_demand).toBe(2.2)
+    expect(plan.assessment.challenge_target.reasoning_steps).toBe(2.2)
+    expect(plan.assessment.challenge_target.transfer_distance).toBe(0)
+    expect(plan.concept_lesson.challenge_target.cognitive_demand).toBe(1)
+    expect(plan.concept_lesson.challenge_target.reasoning_steps).toBe(1)
+  })
 })

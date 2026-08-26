@@ -886,7 +886,7 @@ function ResourceMatchCard({ session, resource, assessment, compact = false }: {
   return <article className={`resource-match-card ${compact ? "is-compact" : ""} is-${match.source}`} aria-label="本轮结构适配指数">
     <header><span><Sparkles size={15} /> 本轮结构适配指数</span><em>{match.label}</em></header>
     <div className="resource-match-score" style={ringStyle}><div><strong>{match.score}</strong><small>/ 100</small></div></div>
-    <div className="resource-match-summary"><b>{match.label}</b><p>{match.source === "official" ? `规则估计 · ${match.overallVerdict === "fit" ? "整体匹配" : match.overallVerdict === "too_hard" ? "整体偏难" : match.overallVerdict === "too_easy" ? "整体偏易" : "未判定"}` : "讲义与正式测评面向当前画像的页面展示指数"}</p></div>
+    <div className="resource-match-summary"><b>{match.label}</b><p>{match.source === "official" ? `规则估计 · ${match.overallVerdict === "fit" ? "整体匹配" : match.overallVerdict === "too_hard" ? "整体偏难" : match.overallVerdict === "too_easy" ? "整体偏易" : "未判定"}` : "讲义与正式测评面向当前画像的页面展示指数"}</p>{match.aggregation && match.aggregation.weakestScore !== undefined ? <small className="resource-match-aggregation">加权平均 {match.aggregation.weightedMean} · 最弱资源 {resourceKindLabel(match.aggregation.weakestKind)} {match.aggregation.weakestScore} · 瓶颈保护后 {match.aggregation.finalScore}</small> : null}</div>
     {match.source === "official" && match.resources.length
       ? <div className="resource-fit-list">{match.resources.map((entry) => <div className={`resource-fit-row is-${entry.verdict}`} key={entry.artifactId}>
           <div className="resource-fit-kind"><b>{resourceKindLabel(entry.kind)}</b><em>{verdictLabel(entry.verdict)}</em></div>

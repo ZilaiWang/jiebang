@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { contentHash } from "../src/role-c-content/contracts/common"
 import { buildResourceBlueprint } from "../src/role-c-content/planning/resource-blueprint"
 import {
+  buildCodeLabObjectivePlan,
   projectAssessmentPublicAuthorPayload,
   validateAssessmentNovelty,
 } from "../src/role-c-content/providers/staged-generation"
@@ -56,6 +57,19 @@ const K014 = { source_id: "K014", title: "函数参数与返回值", fact: "retu
 const K009 = { source_id: "K009", title: "列表", fact: "列表可用于保存多个有序元素。" }
 
 describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据关键词猜）", () => {
+  test("识别型代码实验只投影完成练习所需的一条事实，不重复整章内容", () => {
+    const plan = buildCodeLabObjectivePlan({
+      spec_id: "S-FOCUS",
+      policies: { seed: 1 },
+      targets: [{
+        objective_id: "O1", source_id: "K001",
+        required_fact_ids: Array.from({ length: 12 }, (_, index) => `F${String(index + 1).padStart(3, "0")}`),
+        observable_behavior: "recognize", importance: "core",
+      }],
+    } as any)
+    expect(plan[0]?.citations.map((citation) => citation.fact_id)).toEqual(["F001"])
+  })
+
   test("综合项目（成绩统计器）→ stdin_stdout_program，即使 evidence 含 def/return", () => {
     const { spec, evidence } = makeSpec([K018])
     const bp = buildResourceBlueprint(spec, evidence)

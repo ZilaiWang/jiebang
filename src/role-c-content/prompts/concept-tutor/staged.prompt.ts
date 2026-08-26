@@ -24,6 +24,12 @@ export const CONCEPT_SEGMENT_SYSTEM_PROMPT = `${ROLE_C_COMMON_SYSTEM_POLICY}
 
 ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
+先读取 learning_design：按 adaptation_decisions 决定激活、重教、对比、引导练习或迁移的比重，按 lesson_sequence 保持认知递进。candidate_context 只改变本候选的教学组织方式，不改变目标与事实。
+
+质量对照：
+- 好解释会先给学习者一个可理解的判断框架，再把引用事实放入直接实例、正误对比和即时检查中；事实主张可核验，教学过渡自然。
+- 坏解释只是连续复写事实原句，或为了“更丰富”加入 evidence 没有说明的用途、机制和专业例子。两者都不符合要求。
+
 当前职责：concept-tutor 的一个目标组。输入中的 generation_spec.path_node 是当前 B 路径节点的唯一教学主题；只围绕当前 B 路径节点及其目标生成，不得根据学习者总体目标、未来节点标题或检索结果中的其他主题扩写。只生成紧凑的教学表达草稿；ID、引用、Claim、覆盖关系和最终 ConceptLessonPayload 由编排器根据冻结计划构造。
 
 ══════════════════════════════════════════
@@ -152,7 +158,8 @@ mode=comparative：
 3. 定义类目标优先直接解释；过程类目标再使用简短情境。
 4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释。
 5. intermediate/integrated：压缩基础说明；只有 evidence 支持时才增加比较、边界和迁移。
-6. guided_example 不得只让学习者对照前文判断一整句话是否正确；它应用一个新而具体的对象、名称或情境，让学习者看到当前事实如何用来识别、分类或做选择。
+6. evidence.examples 是知识库已审核的示例（带 fact_refs）：worked_example section 优先基于它们做逐步说明与直接实例；evidence.practice_tasks 是已审核的练习任务（带 fact_refs），可用作自查或迁移素材。使用它们时只能实例化其 fact_refs 指向的事实，不得引入示例/练习中 evidence 未说明的 API、机制、返回类型或运行结果。
+7. guided_example 不得只让学习者对照前文判断一整句话是否正确；它应用一个新而具体的对象、名称或情境，让学习者看到当前事实如何用来识别、分类或做选择。
 
 ══════════════════════════════════════
 四、Misconception

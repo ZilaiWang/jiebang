@@ -117,12 +117,14 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
       .filter((factId) => !factKeys.has(`${objective.source_id}:${factId}`))
       .map((factId) => `${objective.source_id}:${factId}`),
   )
+  const insufficiency = input.evidence_pack.evidence_sufficiency
 
   if (
     input.evidence_pack.match_status === "no_match" ||
     missingSources.length > 0 ||
     missingPrerequisiteSources.length > 0 ||
-    missingFacts.length > 0
+    missingFacts.length > 0 ||
+    insufficiency?.ok === false
   ) {
     const details = [
       ...errors,
@@ -131,6 +133,12 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
         ? [`缺少先修知识点：${missingPrerequisiteSources.join("、")}`]
         : []),
       ...(missingFacts.length > 0 ? [`缺少事实：${missingFacts.join("、")}`] : []),
+      ...(insufficiency?.missing_misconception_ids.length
+        ? [`缺少目标误区：${insufficiency.missing_misconception_ids.join("、")}`]
+        : []),
+      ...(insufficiency && insufficiency.worked_example_count === 0
+        ? ["缺少可用 worked example"]
+        : []),
     ]
     return {
       ok: false,

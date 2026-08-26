@@ -8,6 +8,8 @@ import {
   RESOURCE_FIT_POLICY_VERSION,
   type ArtifactResourceFit,
   type ChallengeVector,
+  type ResourceFitAggregation,
+  type ResourceFitDimension,
   type ResourceFitKind,
   type ResourceFitReport,
   type ResourceFitVerdict,
@@ -73,6 +75,18 @@ export function buildResourceFitReport(input: {
   const lab = input.entries.find((entry) => entry.kind === "code_lab")?.fit.score ?? 0
   const assessment = input.entries.find((entry) => entry.kind === "assessment")?.fit.score ?? 0
   const overallScore = overallFitScoreV2({ lesson, lab, assessment })
+  // 公开聚合口径（改进方案6 第一节）：加权平均、最弱资源、瓶颈封顶后的总分，
+  // 让前端能明确展示"加权平均 77 · 最弱资源 正式测评 57 · 瓶颈保护后 66"。
+  const weightedMean = lesson * 0.30 + lab * 0.35 + assessment * 0.35
+  const weakest = [...input.entries].sort((left, right) => left.fit.score - right.fit.score)[0]!
+  const aggregation: ResourceFitAggregation = {
+    policy: "bottleneck_cap",
+    weighted_mean: Math.round(weightedMean * 1000) / 1000,
+    weakest_kind: weakest.kind,
+    weakest_score: weakest.fit.score,
+    bottleneck_margin: 0.08,
+    final_score: Math.round(overallScore * 1000) / 1000,
+  }
   return {
     schema_version: "1.0",
     run_id: input.run_id,
@@ -83,6 +97,7 @@ export function buildResourceFitReport(input: {
     overall: {
       verdict: overallVerdict(input.entries),
       score: Math.round(overallScore * 1000) / 1000,
+      aggregation,
     },
   }
 }
@@ -185,15 +200,18 @@ function estimateAssessment(payload: AssessmentPublicPayload): Observed {
   const items = payload.items
   const itemDemands = items.map(assessmentItemDemand)
   const distinctOperations = new Set(items.map((item) => item.structure_meta?.operation).filter(Boolean)).size
-  const cognitiveDemand = itemDemands.length === 0
-    ? 0
-    : itemDemands.reduce((sum, item) => sum + item.cognitive, 0) / itemDemands.length
-  const reasoningSteps = itemDemands.length === 0
-    ? 0
-    : Math.max(...itemDemands.map((item) => item.reasoning))
-  const transferDistance = itemDemands.length === 0
-    ? 0
-    : Math.max(...itemDemands.map((item) => item.transfer))
+  const scoreWeights = items.map((item) => Math.max(1, item.max_score))
+  const totalWeight = scoreWeights.reduce((sum, value) => sum + value, 0)
+  // 正式测评是一组题目的测量组合，不能让单道高阶题的最大值代表整卷。
+  // 按题目分值加权，既保留 Tier 3 的影响，也不会把 1 道题误算成 5 道题都同样难。
+  const weightedDemand = (field: "cognitive" | "reasoning" | "transfer") =>
+    totalWeight === 0
+      ? 0
+      : itemDemands.reduce((sum, item, index) =>
+          sum + item[field] * scoreWeights[index]!, 0) / totalWeight
+  const cognitiveDemand = weightedDemand("cognitive")
+  const reasoningSteps = weightedDemand("reasoning")
+  const transferDistance = CLAMP(weightedDemand("transfer"))
 
   return {
     challenge: {
@@ -224,35 +242,39 @@ function assessmentItemDemand(item: AssessmentPublicPayload["items"][number]): {
   transfer: number
 } {
   const meta = item.structure_meta
-  const surface = [
-    item.prompt,
-    item.starter_code ?? "",
-    meta?.operation ?? "",
-    meta?.reasoning_pattern ?? "",
-    meta?.answer_form ?? "",
-  ].join(" ").toLocaleLowerCase()
-  const direct = /直接|识别|判断|正误|single|fact|recall/u.test(surface)
-  const multistep = /多步|链式|综合|compose|推导|逐步|trace|追踪/u.test(surface)
-  const diagnosis = /诊断|纠错|debug|错误原因|修正/u.test(surface)
-  const construction = item.modality === "code" || /构造|实现|编写|construction/u.test(surface)
+  // 只用任务结构元数据估计认知操作。题干里的领域事实可能自然包含“编写程序”
+  // 等词，不能因此把一道识别题误判为代码构造题。
+  const operation = (meta?.operation ?? "").toLocaleLowerCase()
+  const reasoningPattern = (meta?.reasoning_pattern ?? "").toLocaleLowerCase()
+  const answerForm = (meta?.answer_form ?? "").toLocaleLowerCase()
+  const structuredSurface = `${operation} ${reasoningPattern} ${answerForm}`
+  const direct = /direct|single|atomic|recognize|verify|recall|identify|判断|识别/u.test(structuredSurface)
+  const multistep = /multi|chain|integrat|compare|compose|derive|trace|综合|多步|链式|比较|推导|追踪/u.test(structuredSurface)
+  const diagnosis = /diagnos|debug|correct_error|纠错|诊断/u.test(structuredSurface)
+  const construction = item.modality === "code"
+    || /construct|implement|write_code|solution/u.test(operation)
   const cognitive = construction
     ? 4
     : diagnosis || multistep || item.modality === "trace"
       ? 3
-      : direct
-        ? 1
-        : 2
+      : multistep
+        ? 3
+        : direct
+          ? 1
+          : 2
   const reasoning = construction
     ? 4
     : multistep || diagnosis || item.modality === "trace"
       ? 3
-      : direct
-        ? 1
-        : 2
+      : multistep
+        ? 3
+        : direct
+          ? 1
+          : 2
   const context = meta?.context_family?.trim().toLocaleLowerCase() ?? ""
   const transfer = !context || context === "direct"
     ? 0
-    : /迁移|综合|transfer/u.test(surface)
+    : /迁移|transfer/u.test(structuredSurface)
       ? 2
       : 1
   return { cognitive, reasoning, transfer }
@@ -375,6 +397,18 @@ function computeFit(
     score,
     mismatched_dimensions: mismatched,
     reason_codes: reasons,
+    // raw target/observed/gap 调试输出（改进方案6 第一节：让分数可解释）。
+    dimensions: dimensions.map((dimension): ResourceFitDimension => ({
+      name: dimension.name,
+      family: dimension.family,
+      applicable: dimension.applicable,
+      target: dimension.target,
+      observed: dimension.observed,
+      signed_gap: dimension.observed - dimension.target,
+      weight: dimension.weight,
+      tolerance: dimension.tolerance,
+      basis: dimension.basis,
+    })),
   }
 }
 

@@ -31,7 +31,12 @@ import {
 import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import { join, resolve } from "node:path"
 import { appendFile, mkdir } from "node:fs/promises"
-import type { ModelCallTrace } from "../model-runtime"
+import {
+  ModelExecutionBudget,
+  roleCContentModelCallBudget,
+  type ModelCallTrace,
+} from "../model-runtime"
+import type { PublicCandidateEvaluation } from "../role-c-content/quality/contracts"
 import {
   adaptLearnerProfile,
   adaptRagResult,
@@ -140,6 +145,25 @@ function modelTraceSink(dataDirectory?: string) {
       await appendFile(path, `${JSON.stringify({ ...trace, recorded_at: new Date().toISOString() })}\n`, "utf8")
     } catch {
       // Observability is non-authoritative and never weakens content validation.
+    }
+  }
+}
+
+function candidateSelectionDiagnosticSink(dataDirectory?: string) {
+  if (!dataDirectory?.trim()) return undefined
+  const directory = join(resolve(dataDirectory), "diagnostics")
+  const path = join(directory, "candidate-selections.jsonl")
+  return async (selection: {
+    task: string
+    winner_candidate_id: string
+    evaluations: PublicCandidateEvaluation[]
+    rejected_generation_count: number
+  }): Promise<void> => {
+    try {
+      await mkdir(directory, { recursive: true })
+      await appendFile(path, `${JSON.stringify({ ...selection, timestamp: new Date().toISOString() })}\n`, "utf8")
+    } catch {
+      // Candidate diagnostics never participate in release decisions.
     }
   }
 }
@@ -260,10 +284,28 @@ export async function generateRoleCForRoleDWithRuntime(
   const runtimeEnv = runtime.env ?? process.env
   let modelGateway: ReturnType<typeof createRoleCModelGatewayFromEnv> | undefined
   try {
+    const publicCandidateCount = roleCPublicCandidateCount(runtimeEnv.ROLE_C_MODEL_PUBLIC_CANDIDATE_COUNT)
+    const assessmentItemCount = pathNode.assessment_blueprint.tier_1_count
+      + pathNode.assessment_blueprint.tier_2_count
+      + pathNode.assessment_blueprint.tier_3_count
+    const modelCallBudget = roleCContentModelCallBudget({
+      objective_count: pathNode.objectives.length,
+      assessment_item_count: assessmentItemCount,
+      public_candidate_count: publicCandidateCount,
+    })
     modelGateway = runtime.providerMode === "model"
       ? createRoleCModelGatewayFromEnv(runtimeEnv, {
           on_trace: modelTraceSink(runtime.dataDirectory),
           trace_context: { run_id: input.runId },
+          execution_budget: new ModelExecutionBudget({
+            soft_deadline_ms: positiveRuntimeInteger(runtimeEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS, 180_000),
+            hard_deadline_ms: positiveRuntimeInteger(runtimeEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS, 360_000),
+            max_model_calls: positiveRuntimeInteger(runtimeEnv.MODEL_RUNTIME_MAX_MODEL_CALLS, modelCallBudget),
+            max_transport_retries_total: nonNegativeRuntimeInteger(
+              runtimeEnv.MODEL_RUNTIME_TRANSPORT_RETRY_BUDGET,
+              Math.max(3, Math.ceil(modelCallBudget * 0.05)),
+            ),
+          }),
         })
       : undefined
   } catch (error) {
@@ -321,6 +363,7 @@ export async function generateRoleCForRoleDWithRuntime(
     {
       ...modelBackedProviderOptionsFromEnv(runtimeEnv),
       stage_failure_diagnostic_sink: stageDiagnosticSink(runtime.dataDirectory),
+      candidate_selection_sink: candidateSelectionDiagnosticSink(runtime.dataDirectory),
     },
   )
   const agents = createRoleCAgents(provider, {
@@ -526,6 +569,21 @@ export async function generateRoleCForRoleDWithRuntime(
       ),
     },
   }
+}
+
+function roleCPublicCandidateCount(value: string | undefined): 1 | 2 | 3 {
+  if (value === "1" || value === "2" || value === "3") return Number(value) as 1 | 2 | 3
+  return 3
+}
+
+function positiveRuntimeInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function nonNegativeRuntimeInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 export interface RoleCRecoveryEvidenceRefreshOptions {

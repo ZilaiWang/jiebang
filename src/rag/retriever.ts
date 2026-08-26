@@ -1,11 +1,19 @@
 import { loadKnowledgeBase } from "../knowledge/loader"
-import type { KnowledgeBase, KnowledgeDifficulty, KnowledgeExample, KnowledgeFact, KnowledgeQuizItem } from "../knowledge/types"
+import type { KnowledgeBase, KnowledgeDifficulty, KnowledgeExample, KnowledgeFact, KnowledgeMisconception, KnowledgeQuizItem, KnowledgeWorkedExample } from "../knowledge/types"
+import {
+  rankKnowledgeHybrid,
+  selectWithMmr,
+  type EmbeddingPort,
+  type HybridRetrievalIntent,
+} from "./hybrid-retriever"
 
 export interface RetrieveKnowledgeInput {
   query: string
   learnerLevel?: KnowledgeDifficulty
   topK?: number
   knowledgeBase?: KnowledgeBase
+  intent?: HybridRetrievalIntent
+  embeddingPort?: EmbeddingPort
 }
 
 export interface RagResultItem {
@@ -20,6 +28,10 @@ export interface RagResultItem {
   examples: KnowledgeExample[]
   practiceTasks: string[]
   quizItems: KnowledgeQuizItem[]
+  misconceptions?: KnowledgeMisconception[]
+  workedExamples?: KnowledgeWorkedExample[]
+  counterexamples?: string[]
+  assessmentConstraints?: string[]
   file: string
   retrievalTrace: RetrievalTrace
   retrieval_trace: RetrievalTraceJson
@@ -35,7 +47,11 @@ export interface RetrievalTrace {
     facts: number
     practiceTasks: number
     difficulty: number
-    bonus: number
+      bonus: number
+      bm25?: number
+      vector?: number
+      metadata?: number
+      misconception?: number
   }
 }
 
@@ -55,6 +71,16 @@ export interface RagResult {
   retrieval_context?: RetrievalContext
   match_status?: "strong" | "weak" | "no_match"
   objective_coverage?: ObjectiveEvidenceCoverage[]
+  evidence_sufficiency?: EvidenceSufficiency
+}
+
+export interface EvidenceSufficiency {
+  ok: boolean
+  missing_source_ids: string[]
+  missing_fact_ids: string[]
+  missing_misconception_ids: string[]
+  worked_example_count: number
+  counterexample_count: number
 }
 
 export type RetrievalMode = "semantic_discovery" | "identity_hydration" | "evidence_repair"
@@ -137,23 +163,63 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
   const knowledgeBase = input.knowledgeBase ?? await loadKnowledgeBase()
   const normalizedQuery = normalize(input.query)
   const expandedTerms = expandQueryTerms(normalizedQuery)
+  const hybridSignals = await rankKnowledgeHybrid({
+    query: input.query,
+    expanded_query: expandedTerms,
+    items: knowledgeBase.items,
+    intent: input.intent,
+    embedding_port: input.embeddingPort,
+  })
+  const hybridBySource = new Map(hybridSignals.map((signal) => [signal.source_id, signal]))
 
   const scored = knowledgeBase.items
     .map((item) => {
+      const hybridSignal = hybridBySource.get(item.sourceId)!
       const matchedKeywords = item.keywords.filter((keyword) => isSearchableTerm(keyword) && expandedTerms.includes(normalize(keyword)))
       const synonymHits = item.keywords.filter((keyword) => isSearchableTerm(keyword) && !normalizedQuery.includes(normalize(keyword)) && expandedTerms.includes(normalize(keyword)))
-      const titleHit = normalizedQuery.includes(normalize(item.title))
+      const semanticFootprint = [...new Set([...matchedKeywords, ...synonymHits].map(normalize))]
+      const hybrid = {
+        ...hybridSignal,
+        matched_terms: semanticFootprint.length > 0
+          ? semanticFootprint
+          : hybridSignal.matched_terms,
+      }
+      const normalizedTitle = normalize(item.title)
+      const titleHit = normalizedQuery.includes(normalizedTitle)
+        || expandedTerms.includes(normalizedTitle)
+        || item.keywords.some((keyword) => {
+          const term = normalize(keyword)
+          return isSearchableTerm(term)
+            && normalizedTitle.includes(term)
+            && expandedTerms.includes(term)
+        })
       const factHits = item.facts.filter((fact) => normalizedQueryIncludesAny(normalizedQuery, fact.content)).length
       const taskHits = item.practiceTasks.filter((task) => normalizedQueryIncludesAny(normalizedQuery, task)).length
       const levelBonus = input.learnerLevel ? Math.max(0, 3 - Math.abs(DIFFICULTY_ORDER[item.difficulty] - DIFFICULTY_ORDER[input.learnerLevel])) : 0
       const semanticBonus = synonymHits.length * 6
+      const prerequisiteSupportBonus = matchedKeywords.length > 0
+        && knowledgeBase.items.some((candidate) =>
+          candidate.prerequisites.includes(item.sourceId)
+          && candidate.keywords.some((keyword) => expandedTerms.includes(normalize(keyword))))
+        ? 4
+        : 0
+      // Lexical n-grams widen recall without drowning the existing exact
+      // keyword/fact signals in common phrases such as “程序” or “数据”.
+      const hybridBonus = hybrid.lexical_score * 0.25
+        + hybrid.vector_score * 12
+        + hybrid.metadata_score * 20
+        + hybrid.misconception_score * 10
       const scoreBreakdown = {
         keyword: matchedKeywords.length * 10,
-        title: titleHit ? 5 : 0,
+        title: titleHit ? 8 : 0,
         facts: factHits * 3,
         practiceTasks: taskHits * 2,
         difficulty: levelBonus,
-        bonus: semanticBonus,
+        bonus: semanticBonus + hybridBonus + prerequisiteSupportBonus,
+        bm25: hybrid.lexical_score,
+        vector: hybrid.vector_score,
+        metadata: hybrid.metadata_score,
+        misconception: hybrid.misconception_score,
       }
       const semanticScore = scoreBreakdown.keyword
         + scoreBreakdown.title
@@ -169,6 +235,10 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
         ...(levelBonus > 0 ? ["difficulty"] : []),
         ...(synonymHits.length > 0 ? ["synonyms"] : []),
         ...(semanticBonus > 0 ? ["taskIntent"] : []),
+        ...(hybrid.lexical_score > 0 ? ["bm25"] : []),
+        ...(hybrid.vector_score > 0 ? ["embedding"] : []),
+        ...(hybrid.metadata_score > 0 ? ["metadata"] : []),
+        ...(hybrid.misconception_score > 0 ? ["misconceptions"] : []),
       ]
 
       return {
@@ -182,13 +252,27 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
           difficultyMatch: levelBonus > 0,
           scoreBreakdown,
         },
+        hybrid,
+        hasGroundedSemanticSignal: matchedKeywords.length > 0
+          || titleHit
+          || factHits > 0
+          || taskHits > 0
+          || semanticBonus > 0
+          || hybrid.vector_score > 0
+          || hybrid.metadata_score > 0
+          || hybrid.misconception_score > 0,
       }
     })
     // Difficulty only ranks already relevant candidates. It can never create a
     // match by itself, otherwise every beginner item becomes a false hit.
-    .filter((entry) => entry.semanticScore > 0)
+    .filter((entry) => entry.semanticScore > 0
+      && (entry.hasGroundedSemanticSignal || entry.hybrid.lexical_score >= 24))
     .sort((left, right) => right.score - left.score || left.item.sourceId.localeCompare(right.item.sourceId))
-  const selected = diversifySemanticFootprints(scored, topK)
+  const selected = selectWithMmr(
+    scored.map((entry) => ({ ...entry, signal: entry.hybrid, relevance: entry.score })),
+    topK,
+    0.58,
+  )
 
   return {
     query: input.query,
@@ -206,6 +290,10 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
       examples: item.examples,
       practiceTasks: item.practiceTasks,
       quizItems: item.quizItems,
+      misconceptions: structuredClone(item.misconceptions ?? []),
+      workedExamples: structuredClone(item.workedExamples ?? []),
+      counterexamples: [...(item.counterexamples ?? [])],
+      assessmentConstraints: [...(item.assessmentConstraints ?? [])],
       file: item.file,
       retrievalTrace,
       retrieval_trace: {
@@ -216,35 +304,6 @@ export async function retrieveKnowledge(input: RetrieveKnowledgeInput): Promise<
       },
     })),
   }
-}
-
-/** Avoids filling top-k with several items that matched the exact same concept. */
-function diversifySemanticFootprints<T extends {
-  score: number
-  item: { sourceId: string }
-  retrievalTrace: RetrievalTrace
-}>(entries: T[], topK: number): T[] {
-  const remaining = [...entries]
-  const selected: T[] = []
-  const footprints = new Set<string>()
-  while (remaining.length > 0 && selected.length < topK) {
-    remaining.sort((left, right) => {
-      const leftFootprint = semanticFootprint(left.retrievalTrace)
-      const rightFootprint = semanticFootprint(right.retrievalTrace)
-      const leftAdjusted = footprints.has(leftFootprint) && leftFootprint ? left.score * 0.4 : left.score
-      const rightAdjusted = footprints.has(rightFootprint) && rightFootprint ? right.score * 0.4 : right.score
-      return rightAdjusted - leftAdjusted || left.item.sourceId.localeCompare(right.item.sourceId)
-    })
-    const next = remaining.shift()!
-    selected.push(next)
-    const footprint = semanticFootprint(next.retrievalTrace)
-    if (footprint) footprints.add(footprint)
-  }
-  return selected
-}
-
-function semanticFootprint(trace: RetrievalTrace): string {
-  return [...trace.matchedKeywords].map(normalize).sort().join("|")
 }
 
 function normalize(value: string): string {

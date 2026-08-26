@@ -69,6 +69,18 @@ export async function retrieveLearningEvidence(
       learnerLevel: request.learner_profile.level,
       topK: request.top_k + (request.planning_context?.excluded_source_ids.length ?? 0),
       knowledgeBase,
+      intent: {
+        target_source_ids: request.path_context?.target_source_ids,
+        prerequisite_source_ids: request.path_context?.prerequisite_source_ids,
+        required_fact_ids: request.path_context?.objectives.flatMap((objective) =>
+          objective.required_fact_ids.map((fact_id) => ({ source_id: objective.source_id, fact_id }))),
+        misconception_terms: request.learning_context?.misconception_tags,
+        resource_needs: request.resource_needs,
+        focus_terms: [
+          ...request.learner_profile.weak_concepts,
+          ...(request.planning_context ? [request.planning_context.current_goal] : []),
+        ],
+      },
     })
     const excluded = new Set(request.planning_context?.excluded_source_ids ?? [])
     const result: RagResult = {
@@ -223,6 +235,7 @@ function decorateResult(
     retrieval_id: retrievalId,
     match_status: matchStatus,
     objective_coverage: coverage,
+    evidence_sufficiency: evidenceSufficiency(request, result, coverage),
     retrieval_context: {
       request_id: request.request_id,
       request_hash: contentHash(request),
@@ -233,4 +246,45 @@ function decorateResult(
       resource_needs: [...request.resource_needs],
     },
   }
+}
+
+function evidenceSufficiency(
+  request: LearningEvidenceRequest,
+  result: RagResult,
+  coverage: ObjectiveEvidenceCoverage[],
+): NonNullable<RagResult["evidence_sufficiency"]> {
+  const foundSources = new Set(result.results.map((item) => item.source_id ?? item.sourceId))
+  const requestedSources = new Set([
+    ...(request.path_context?.target_source_ids ?? []),
+    ...(request.path_context?.prerequisite_source_ids ?? []),
+  ])
+  const missingSourceIds = [...requestedSources].filter((sourceId) => !foundSources.has(sourceId))
+  const missingFactIds = coverage.flatMap((entry) =>
+    entry.missing_fact_ids.map((factId) => `${entry.source_id}:${factId}`))
+  const requestedMisconceptions = (request.learning_context?.misconception_tags ?? [])
+    .filter((id) => id.startsWith("MIS-"))
+  const availableMisconceptions = new Set(result.results.flatMap((item) =>
+    (item.misconceptions ?? []).map((entry) => entry.misconceptionId)))
+  const missingMisconceptionIds = requestedMisconceptions.filter((id) =>
+    !availableMisconceptions.has(id))
+  const workedExampleCount = result.results.reduce((sum, item) =>
+    sum + (item.workedExamples?.length ?? item.examples.length), 0)
+  const counterexampleCount = result.results.reduce((sum, item) =>
+    sum + (item.counterexamples?.length ?? 0), 0)
+  return {
+    ok: matchStatusReady(result, coverage)
+      && missingSourceIds.length === 0
+      && missingFactIds.length === 0
+      && missingMisconceptionIds.length === 0
+      && (!request.resource_needs.includes("example") || workedExampleCount > 0),
+    missing_source_ids: missingSourceIds,
+    missing_fact_ids: missingFactIds,
+    missing_misconception_ids: missingMisconceptionIds,
+    worked_example_count: workedExampleCount,
+    counterexample_count: counterexampleCount,
+  }
+}
+
+function matchStatusReady(result: RagResult, coverage: ObjectiveEvidenceCoverage[]): boolean {
+  return result.results.length > 0 && coverage.every((entry) => entry.status === "strong")
 }

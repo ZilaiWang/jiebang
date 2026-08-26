@@ -21,6 +21,7 @@ import {
   type LearningPathNode,
   type ObservableBehavior,
 } from "../role-c-content/contracts/profile-adapter"
+import { decideObservableBehavior } from "../role-c-content/planning/observable-behavior-policy"
 
 export type InitialRoleCContextResult =
   | {
@@ -124,7 +125,10 @@ export async function buildInitialRoleCContext(input: {
     }
   }
 
-  const primaryBehavior = behaviorFromGoal(input.profile.goal)
+  const primaryBehavior = decideObservableBehavior({
+    goal: input.profile.goal,
+    learner_level: input.profile.level,
+  })
   const behaviors = targetIds.map((_, index) =>
     index === 0
       ? primaryBehavior
@@ -547,16 +551,6 @@ function selectRequiredFactIds(
 function extractIdentifierTerms(text: string): string[] {
   return unique(text.toLowerCase().match(/[a-z_][a-z0-9_]*/g) ?? [])
     .filter((term) => term.length >= 2)
-}
-
-function behaviorFromGoal(goal: string): ObservableBehavior {
-  const normalized = goal.toLowerCase()
-  if (/(debug|调试|排错|修复|改错)/.test(normalized)) return "debug"
-  if (/(create|implement|build|编写|实现|创建|完成|搭建|设计)/.test(normalized)) return "create"
-  if (/(trace|追踪|追溯|预测输出|逐步分析)/.test(normalized)) return "trace"
-  if (/(apply|use|使用|应用|计算|统计|处理|转换|读取|写入|查询)/.test(normalized)) return "apply"
-  if (/(explain|解释|说明|理解|比较)/.test(normalized)) return "explain"
-  return "recognize"
 }
 
 function supportingBehavior(primary: ObservableBehavior): ObservableBehavior {

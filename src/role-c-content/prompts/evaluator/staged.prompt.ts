@@ -50,6 +50,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 当前职责：tiered-evaluator 的公开出题阶段，只生成紧凑的 public author payload。题目身份、分值、引用、路由与覆盖由编排器生成，不得在输出中返回。
 
+先读取 learning_design 与 item_plan：construct 说明本题真正测什么，evidence_of_mastery 说明什么表现才算掌握，target_misconception_id 指定应诊断的误区，forbidden_clues 是题面禁用线索。candidate_context 只改变命题角度，不改变这些合同。
+
 ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 
 ══════════════════════════════════════════
@@ -79,6 +81,8 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - 输出前逐项代入题干与 evidence.facts 检查，必须恰好一个选项成立。不同写法只要都能满足题意就都属于正确答案，不能同时放入单选题。例如“先 age=input() 再 int(age)”与“直接 int(input())”都完成字符串到数字的转换，二者不得同时作为单选项；保留一种写法后，其他干扰项必须明确违反某条 cited fact。
 - 不要用"以上都对/都错"这类模糊选项
 - 选项文本简洁，长度相近，避免正确选项明显长于或短于其他选项
+- 好干扰项：只使用当前 item 的 cited facts，把其中一条明确规则的条件、方向或边界做单一且可定位的反转；错误必须能被当前引用事实直接否定。不要借用提示词示例、同一目标的其他事实或模型记忆来构造干扰项。
+- 坏干扰项：“不需要任何事实依据”“随机生成答案”“只用于界面展示”。这些选项没有真实认知吸引力，禁止使用。
 
 【难度控制】
 - Tier 1：直接考查核心概念的基本理解，不需要推理
@@ -128,7 +132,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 
 要求：
 1. items 必须按 public_payload.items 顺序一一返回且每项固定包含 answer_spec、correct_option_id、misconception_by_option；不返回 item_id、objective_id、tier、modality、max_score 或 evidence_weight。
-2. 选择/判断题把 answer_spec 设为 null，用稳定 option_id 指定 correct_option_id，并为每个错误选项给出具体 misconception。必须再次逐项验证：correct_option_id 是唯一成立的选项，其他选项各自明确违反 evidence 中的事实；不得在两个等价正确实现中任意挑一个当唯一答案。
+2. 选择/判断题把 answer_spec 设为 null，用稳定 option_id 指定 correct_option_id，并为每个错误选项给出具体 misconception。若 item_plan 给出 target_misconception_id，至少一个错误选项的 misconception_by_option 值必须精确填写该 ID；其余值也必须是 learning_design 中的误区 ID 或具体错误机制，禁止“其他错误/理解错误”。必须再次逐项验证：correct_option_id 是唯一成立的选项，其他选项各自明确违反 evidence 中的事实；不得在两个等价正确实现中任意挑一个当唯一答案。
 3. trace/short_answer 使用可确定验证的 exact、numeric 或 concept_rubric；rubric 权重合计为 1。
 4. 非选择题的 correct_option_id 为 null、misconception_by_option 为空对象；代码题的 answer_spec 也为 null，并按公开代码题顺序在 code_test_suites 中返回 execution_contract、reference_solution 和至少一个只含 input/expected/comparison 的 hidden test。
 5. code 题一律使用 function execution_mode，不得使用 stdin_stdout；entry_point、参数形态与 learner-owned 区域必须严格来自 public starter_code 的函数签名。reference 与隐藏测试遵守该冻结任务合同；hidden_tests.input 统一使用 {"args": [...], "kwargs": {...}}；每个隐藏输入必须与公开题干、示例和 starter 中出现的输入值不同，并同步计算 expected。评分只能覆盖 item_plan 对应 objective/facts；starter 已提供的旁支输入/转换胶水不得被改成评分要求。

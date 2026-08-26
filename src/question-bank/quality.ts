@@ -14,6 +14,11 @@ export interface QuestionBankQualityReport {
     choice_option_validity: number
     exam_gradable_rate: number
     programming_test_case_coverage: number
+    internal_meta_free_rate: number
+    misconception_bound_rate: number
+    plausible_distractor_rate: number
+    /** Deterministic bank is intentionally excluded from the formal adaptive assessment path. */
+    production_ready: false
     quality_gate_passed: boolean
   }
   details: {
@@ -38,6 +43,16 @@ export function analyzeQuestionBankQuality(bank: QuestionBank): QuestionBankQual
   const gradableExamItems = examItems.filter((item) => item.grading_method === "unit_test" || item.rubric.length > 0)
   const programmingItems = bank.items.filter((item) => isProgrammingPractice(item))
   const programmingWithTests = programmingItems.filter((item) => (item.test_cases?.length ?? 0) >= 2 && item.test_cases!.some((testCase) => testCase.hidden))
+  const internalMetaPattern = /(?:source[_ ]?id|fact[_ ]?id|\bRAG\b|evidence(?:_pack)?|知识库编号)/iu
+  const metaFreeItems = bank.items.filter((item) => !internalMetaPattern.test([
+    item.question,
+    ...(item.options ?? []),
+  ].join(" ")))
+  const choiceWithMisconceptions = choiceItems.filter((item) => item.misconception_tags.length > 0)
+  const vacuousPattern = /(?:不需要任何.{0,8}(?:依据|规则)|随机生成|只适用于界面|与题目无关|以上都[对错])/u
+  const plausibleDistractors = choiceItems.flatMap((item) => (item.options ?? [])
+    .filter((option) => option !== item.answer))
+  const nonVacuousDistractors = plausibleDistractors.filter((option) => !vacuousPattern.test(option))
 
   const summary = {
     total_questions: bank.items.length,
@@ -46,6 +61,10 @@ export function analyzeQuestionBankQuality(bank: QuestionBank): QuestionBankQual
     choice_option_validity: ratio(validChoiceItems.length, choiceItems.length),
     exam_gradable_rate: ratio(gradableExamItems.length, examItems.length),
     programming_test_case_coverage: ratio(programmingWithTests.length, programmingItems.length),
+    internal_meta_free_rate: ratio(metaFreeItems.length, bank.items.length),
+    misconception_bound_rate: ratio(choiceWithMisconceptions.length, choiceItems.length),
+    plausible_distractor_rate: ratio(nonVacuousDistractors.length, plausibleDistractors.length),
+    production_ready: false as const,
     quality_gate_passed: false,
   }
   const failedGates = [
@@ -94,6 +113,10 @@ export function renderQuestionBankQualityMarkdown(report: QuestionBankQualityRep
     `- 选择题选项有效率：${(report.summary.choice_option_validity * 100).toFixed(1)}%`,
     `- 考试题可判分率：${(report.summary.exam_gradable_rate * 100).toFixed(1)}%`,
     `- 编程题测试用例覆盖率：${(report.summary.programming_test_case_coverage * 100).toFixed(1)}%`,
+    `- 内部元信息清洁率：${(report.summary.internal_meta_free_rate * 100).toFixed(1)}%`,
+    `- 误区绑定率：${(report.summary.misconception_bound_rate * 100).toFixed(1)}%`,
+    `- 可信干扰项比例：${(report.summary.plausible_distractor_rate * 100).toFixed(1)}%`,
+    "- 用途：fixture / smoke / 离线诊断（正式个性化测评由 Role C 模型候选链生产）",
     `- 质量门禁：${report.summary.quality_gate_passed ? "通过" : "未通过"}`,
     "",
     "## 题型分布",

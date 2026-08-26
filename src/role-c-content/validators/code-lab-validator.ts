@@ -65,7 +65,8 @@ export function validateCodeLabPublicStage(
       claim.citations
         .filter((citation) => citation.source_id === target.source_id)
         .map((citation) => citation.fact_id)))
-    const missingRequiredFacts = target.required_fact_ids.filter(
+    const plannedFactIds = codeLabPlannedFactIds(request, target)
+    const missingRequiredFacts = plannedFactIds.filter(
       (factId) => !citedFactIds.has(factId),
     )
     const hasRequiredFacts = missingRequiredFacts.length === 0
@@ -74,7 +75,7 @@ export function validateCodeLabPublicStage(
       && entry.public_test_ids.every((id) => tests.get(id)?.objective_id === target.objective_id))
     const ladder = ladders.get(target.objective_id)
     const levels = new Set(ladder?.hints.map((hint) => hint.hint_level) ?? [])
-    if (!hasRequiredFacts) issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `核心目标必要事实未全部用于实验 Claim：${missingRequiredFacts.join("、")}`))
+    if (!hasRequiredFacts) issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `实验计划事实未用于 Claim：${missingRequiredFacts.join("、")}`))
     if (!validCoverage) issues.push(issue("missing_public_objective_coverage", `$.objective.${target.objective_id}`, "核心目标缺少 instruction/public test 对齐"))
     if ([1, 2, 3].some((level) => !levels.has(level as 1 | 2 | 3))) {
       issues.push(issue("invalid_hint_ladder", `$.objective.${target.objective_id}`, "核心目标必须包含 level 1/2/3 三级提示"))
@@ -171,7 +172,8 @@ export function validateCodeLabDraftStructure(
       claim.citations
         .filter((citation) => citation.source_id === target.source_id)
         .map((citation) => citation.fact_id)))
-    const missingRequiredFacts = target.required_fact_ids.filter(
+    const plannedFactIds = codeLabPlannedFactIds(request, target)
+    const missingRequiredFacts = plannedFactIds.filter(
       (factId) => !citedFactIds.has(factId),
     )
     const hasRequiredFacts = missingRequiredFacts.length === 0
@@ -185,7 +187,7 @@ export function validateCodeLabDraftStructure(
       secureEntry.hidden_test_ids.every((id) => hiddenTests.get(id)?.objective_id === target.objective_id) &&
       secureEntry.scoring_group_ids.length > 0 &&
       secureEntry.scoring_group_ids.every((id) => scoringGroups.get(id)?.objective_id === target.objective_id))
-    if (!hasRequiredFacts) issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `核心目标必要事实未全部用于实验 Claim：${missingRequiredFacts.join("、")}`))
+    if (!hasRequiredFacts) issues.push(issue("missing_required_fact", `$.objective.${target.objective_id}`, `实验计划事实未用于 Claim：${missingRequiredFacts.join("、")}`))
     if (!publicOk) issues.push(issue("missing_public_objective_coverage", `$.objective.${target.objective_id}`, "核心目标缺少 instruction/public test 对齐"))
     if (!secureOk) issues.push(issue("missing_secure_objective_coverage", `$.objective.${target.objective_id}`, "核心目标缺少 hidden test/scoring 对齐"))
     const ladder = hintLadders.get(target.objective_id)
@@ -241,6 +243,18 @@ export function validateCodeLabDraftStructure(
   issues.push(...validateCodeLabPublicSecureSeparation(publicPayload, securePayload).issues)
   const objectiveCoverage = coreTargets.length === 0 ? 1 : coveredCore / coreTargets.length
   return { ok: issues.length === 0, issues, citations: contentCitations, objective_coverage: objectiveCoverage }
+}
+
+function codeLabPlannedFactIds(
+  request: CodeLabRequest,
+  target: CodeLabRequest["generation_spec"]["targets"][number],
+): string[] {
+  const planned = request.resource_blueprint?.code_lab.objective_plan.find((entry) =>
+    entry.objective_id === target.objective_id)
+  return planned?.citations
+    .filter((citation) => citation.source_id === target.source_id)
+    .map((citation) => citation.fact_id)
+    ?? target.required_fact_ids
 }
 
 export interface CodeLabVerificationDiagnosticInput {

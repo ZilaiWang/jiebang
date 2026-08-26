@@ -1,7 +1,14 @@
 import { C_SCHEMA_VERSION, stableId, type SchemaVersion } from "../contracts/common"
 import type { LearningEvidenceEvent, ProfileDriftSuggestion } from "../contracts/learning-evidence-event"
-import { decideNextAction, type NextActionDecision } from "./next-action-policy"
+import type { NextActionDecision } from "./next-action-policy"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
+import {
+  betaPosteriorInterval,
+  decideNextActionV2,
+  evidenceReliability,
+  toPublicNextAction,
+  type PosteriorInterval,
+} from "./posterior-policy"
 
 export interface ObjectiveMasteryState {
   schema_version: SchemaVersion
@@ -17,6 +24,9 @@ export interface ObjectiveMasteryState {
   processed_artifact_ids: string[]
   last_action: NextActionDecision["action"]
   revision: number
+  posterior_interval?: PosteriorInterval
+  misconception_mass?: number
+  evidence_weight_sum?: number
 }
 
 export interface MasteryStateStore {
@@ -105,20 +115,35 @@ export async function prepareMasteryUpdateFromEvidence(
     if (processedArtifactIds.includes(first.provenance.idempotency_key)) {
       const sufficient = base.observed_modalities.includes("code") || base.observed_modalities.includes("trace")
       finalStates.set(stateKey, base)
-      decisions[base.objective_id] = decideNextAction({
-        mastery: base.mastery,
+      decisions[base.objective_id] = toPublicNextAction(decideNextActionV2({
+        posterior: base.posterior_interval ?? betaPosteriorInterval(base.alpha, base.beta),
         sufficient_modalities: sufficient,
+        misconception_mass: base.misconception_mass,
         previous_action: base.last_action,
-      })
+      }))
       continue
     }
-    const evidence = clamp01(batch.reduce((sum, event) => sum + event.evidence.evidence_score, 0) / batch.length)
+    const weightedEvidence = batch.map((event) => ({
+      score: clamp01(event.evidence.evidence_score),
+      reliability: evidenceReliability(event),
+    }))
+    const evidenceWeight = Math.max(0.15, weightedEvidence.reduce((sum, entry) => sum + entry.reliability, 0) / batch.length)
+    const evidence = clamp01(weightedEvidence.reduce((sum, entry) => sum + entry.score * entry.reliability, 0)
+      / Math.max(0.0001, weightedEvidence.reduce((sum, entry) => sum + entry.reliability, 0)))
     const modalities = [...new Set([...base.observed_modalities, ...batch.map((event) => event.evidence.modality)])]
-    const alpha = base.alpha + evidence
-    const beta = base.beta + (1 - evidence)
+    const alpha = base.alpha + evidence * evidenceWeight
+    const beta = base.beta + (1 - evidence) * evidenceWeight
     const mastery = alpha / (alpha + beta)
     const sufficient = modalities.includes("code") || modalities.includes("trace")
-    const decision = decideNextAction({ mastery, sufficient_modalities: sufficient, previous_action: base.last_action })
+    const posterior = betaPosteriorInterval(alpha, beta)
+    const misconceptionObservation = batch.some((event) => event.misconceptions.length > 0) ? 1 : 0
+    const misconceptionMass = round(clamp01((base.misconception_mass ?? 0.5) * 0.65 + misconceptionObservation * 0.35))
+    const decision = toPublicNextAction(decideNextActionV2({
+      posterior,
+      sufficient_modalities: sufficient,
+      misconception_mass: misconceptionMass,
+      previous_action: base.last_action,
+    }))
     const next: ObjectiveMasteryState = {
       ...base,
       alpha: round(alpha),
@@ -128,6 +153,9 @@ export async function prepareMasteryUpdateFromEvidence(
       observed_modalities: modalities,
       processed_artifact_ids: [...processedArtifactIds, first.provenance.idempotency_key],
       last_action: decision.action,
+      posterior_interval: posterior,
+      misconception_mass: misconceptionMass,
+      evidence_weight_sum: round((base.evidence_weight_sum ?? 0) + evidenceWeight),
       // One atomic save is one CAS revision even when the plan folds multiple
       // evidence batches for this objective into the same persisted state.
       revision: initialRevisions.get(stateKey)! + 1,
@@ -229,6 +257,9 @@ function initialState(event: LearningEvidenceEvent): ObjectiveMasteryState {
     processed_artifact_ids: [],
     last_action: "reinforce",
     revision: 0,
+    posterior_interval: betaPosteriorInterval(1, 1),
+    misconception_mass: 0.5,
+    evidence_weight_sum: 0,
   }
 }
 

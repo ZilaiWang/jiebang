@@ -17,6 +17,16 @@ export interface ConceptTutorModelInput {
     title: string
     difficulty: string
     facts: EvidenceFact[]
+    examples: Array<{
+      title: string
+      code: string
+      explanation: string
+      fact_refs: Array<{ source_id: string; fact_id: string }>
+    }>
+    practice_tasks: Array<{
+      text: string
+      fact_refs: Array<{ source_id: string; fact_id: string }>
+    }>
   }>
   upstream: {
     resource_blueprint?: {
@@ -66,13 +76,34 @@ export function buildConceptTutorModelInput(
     .filter((item) => relevantSources.has(item.source_id))
     .map((item) => {
       const requiredFacts = requiredFactsBySource.get(item.source_id)
+      const boundFacts = item.facts
+        .filter((fact) => !requiredFacts || requiredFacts.has(fact.fact_id))
       return {
         source_id: item.source_id,
         title: item.title,
         difficulty: item.difficulty,
-        facts: item.facts
-          .filter((fact) => !requiredFacts || requiredFacts.has(fact.fact_id))
-          .map((fact) => ({ ...fact })),
+        facts: boundFacts.map((fact) => ({ ...fact })),
+        // 改进方案6 第六/七节：examples / practice_tasks 此前被整段丢弃，
+        // 讲义模型只能反复改写 facts。这里按引用绑定投影，只有能绑定到
+        // required fact 的 example / practice 才进入可信生成；绑定不上的
+        // 只作候选，不进公开讲义 prompt。quiz_seeds.answer 仍绝不投影。
+        examples: (item.examples ?? [])
+          .map((example) => ({
+            title: example.title,
+            code: example.code,
+            explanation: example.explanation,
+            fact_refs: inferFactRefs(
+              `${example.title}\n${example.code}\n${example.explanation}`,
+              boundFacts,
+            ),
+          }))
+          .filter((example) => example.fact_refs.length > 0),
+        practice_tasks: (item.practice_tasks ?? [])
+          .map((text) => ({
+            text,
+            fact_refs: inferFactRefs(text, boundFacts),
+          }))
+          .filter((task) => task.fact_refs.length > 0),
       }
     })
 
@@ -124,4 +155,40 @@ export function buildConceptTutorModelInput(
         : {}),
     },
   }
+}
+
+/**
+ * 提取事实的核心词，用于 example / practice task 的引用绑定：
+ * 中文用 2 字滑动窗口切出实义片段（中文无空格分词，整段匹配过严），
+ * 英文/数字取 >= 3 字符的 token。绑定只用于过滤完全无关的 example，
+ * 最终事实正确性仍由下游 fact audit 把关。
+ */
+function factContentWords(content: string): string[] {
+  const words: string[] = []
+  words.push(...(content.match(/[a-z0-9_]{3,}/gi) ?? []))
+  const cnRuns = content.match(/[\u4e00-\u9fa5]{2,}/g) ?? []
+  for (const run of cnRuns) {
+    for (let i = 0; i + 2 <= run.length; i += 1) {
+      words.push(run.slice(i, i + 2))
+    }
+  }
+  return words
+}
+
+/**
+ * 推断一段 example / practice 文本绑定到哪些 required fact。
+ * 只有文本命中某条 fact 的至少一个核心词时才绑定；绑定不上的内容
+ * 不进入可信生成（改进方案6 第七节：无引用的旧例子先作候选）。
+ */
+function inferFactRefs(
+  text: string,
+  facts: EvidenceFact[],
+): Array<{ source_id: string; fact_id: string }> {
+  return facts
+    .filter((fact) => {
+      const words = factContentWords(fact.content)
+      if (words.length === 0) return false
+      return words.some((word) => text.includes(word))
+    })
+    .map((fact) => ({ source_id: fact.source_id, fact_id: fact.fact_id }))
 }

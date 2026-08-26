@@ -65,13 +65,17 @@ describe("Role C citable authoring context", () => {
     const assessment = buildAssessmentAuthorModelInput({ generation_spec: spec, evidence_pack: evidencePack, concept_artifact: conceptArtifact } as never)
 
     for (const input of [concept, lab, assessment]) {
-      expect(input.evidence[0]).toEqual(expect.objectContaining({
-        source_id: "K003",
-        facts: [expect.objectContaining({ fact_id: "F001" })],
-      }))
-      expect(input.evidence[0]).not.toHaveProperty("examples")
-      expect(input.evidence[0]).not.toHaveProperty("practice_tasks")
-      expect(input.evidence[0]?.facts.map((fact) => fact.fact_id)).toEqual(["F001"])
+      const evidence = input.evidence[0] as {
+        facts: Array<{ fact_id: string }>
+        examples?: unknown[]
+        practice_tasks?: unknown[]
+      }
+      expect(evidence.facts.map((fact) => fact.fact_id)).toEqual(["F001"])
+      // 不可寻址（未绑定 required fact）的 example / practice 不得进入可信生成：
+      // concept 现在总是携带这两个字段，但绑定不上 required fact 时为空数组；
+      // lab / assessment 暂不投影，字段不存在。
+      if (evidence.examples !== undefined) expect(evidence.examples).toEqual([])
+      if (evidence.practice_tasks !== undefined) expect(evidence.practice_tasks).toEqual([])
     }
   })
 

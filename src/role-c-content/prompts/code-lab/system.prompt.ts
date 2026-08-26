@@ -52,7 +52,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 10. 当前执行语言只允许 Python；不得请求网络、宿主文件、shell、包安装或环境变量。
 11. function 模式必须声明 entry_point；starter 和 reference 必须实现同一入口。
 12. public 只包含任务说明、starter、可见测试说明、三级提示、反思问题和引用；不得出现参考解、隐藏测试、期望值、评分组或 mutation。
-13. secure 必须包含 reference_solution、每个目标至少一个有区分力的 hidden test、scoring_groups、misconception_map 和逐目标覆盖映射；mutation_variants 可以为空。
+13. secure 必须包含 reference_solution、每个目标至少一个有区分力的 hidden test、scoring_groups、misconception_map、逐目标覆盖映射，以及每个目标一个与计划误区绑定的 mutation；mutation 必须由对应隐藏测试检出。
 14. 每个 core objective 必须同时对应至少一个 instruction block、public test、hidden test 和 scoring group。
 15. 每个事实 Claim 只可对所引 evidence fact 做标点、空白、大小写或约定短语的有限等价变化；任务、测试和提示使用 derived_from 引用。
 16. hidden test 要覆盖常规、边界和防硬编码输入；每个 hidden input 必须与所有 public test input 结构化不同，使用公开内容未出现的新值并同步计算 expected；权重与评分组必须可确定计算。

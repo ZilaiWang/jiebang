@@ -93,6 +93,7 @@ export interface CodeLabSecurePlan {
     mutation_id: string
     objective_ids: string[]
     must_fail_test_ids: string[]
+    misconception_id: string
   }>
 }
 
@@ -144,6 +145,14 @@ export interface AssessmentItemPlan {
     | "apply_rule"
     | "diagnose_error"
     | "construct_solution"
+  /** Measurement design owned by planning, not inferred by the item author. */
+  construct?: string
+  evidence_of_mastery?: string
+  cognitive_demand?: "understand" | "apply" | "analyze" | "transfer"
+  target_misconception_id?: string
+  transfer_context?: string
+  forbidden_clues?: string[]
+  expected_difficulty?: number
   context_strategy: {
     kind: "preferred_context" | "neutral_context"
     value?: string
@@ -689,13 +698,27 @@ export function buildCodeLabObjectivePlan(
       source_id: target.source_id,
       instruction_block_id: stableId("LAB-INSTRUCTION", identity),
       public_test_id: stableId("LAB-PUBLIC-TEST", identity),
-      citations: target.required_fact_ids.map((factId) => ({
+      // GenerationSpec.required_fact_ids 是整轮目标的完整事实覆盖合同；代码实验
+      // 只应携带足以完成当前练习的最小证据切片，否则一个简单练习会把整章事实
+      // 全部堆进 instruction、公开测试和提示。讲义与测评仍负责完整覆盖。
+      citations: codeLabFactIdsForTarget(target).map((factId) => ({
         source_id: target.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
       })),
     }
   })
+}
+
+function codeLabFactIdsForTarget(
+  target: GenerationSpec["targets"][number],
+): string[] {
+  const limit = target.observable_behavior === "recognize"
+    ? 1
+    : target.observable_behavior === "explain"
+      ? 2
+      : 4
+  return target.required_fact_ids.slice(0, limit)
 }
 
 export function validateCodeLabPublicAuthorAgainstPlan(
@@ -738,6 +761,11 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     }
     if (!/TODO|待填|补全/u.test(payload.starter_code)) {
       issues.push("starter_code recall_fact 任务必须明确标出事实文本待填区")
+    }
+    if (/raise\s+NotImplementedError/u.test(payload.starter_code)
+      || !/=\s*["'][^"'\n]*(?:TODO|待填|补全)[^"'\n]*["']/u.test(payload.starter_code)
+      || !/\bprint\s*\(/u.test(payload.starter_code)) {
+      issues.push("starter_code recall_fact 任务必须提供事实文本赋值与 print 输出胶水，只保留字符串占位由学习者替换")
     }
   }
   issues.push(...codeLabExecutionContractIssues(
@@ -929,6 +957,7 @@ export function normalizeCodeLabPublic(
 export function buildCodeLabSecurePlan(
   spec: GenerationSpec,
   suiteId: string,
+  misconceptionIdsByObjective: Record<string, string> = {},
 ): CodeLabSecurePlan {
   if (spec.targets.length === 0) {
     throw new ModelOutputValidationError("code-lab.secure.plan", ["GenerationSpec 没有可规划的目标"])
@@ -949,7 +978,16 @@ export function buildCodeLabSecurePlan(
   })
   return {
     hidden_tests: hiddenTests,
-    mutation_variants: [],
+    mutation_variants: spec.targets.map((target, index) => ({
+      mutation_id: stableId("LAB-MUTATION", {
+        test_suite_id: suiteId,
+        objective_id: target.objective_id,
+      }),
+      objective_ids: [target.objective_id],
+      must_fail_test_ids: [hiddenTests[index]!.test_id],
+      misconception_id: misconceptionIdsByObjective[target.objective_id]
+        ?? `MIS-${target.objective_id}-COMMON-ERROR`,
+    })),
   }
 }
 
@@ -976,6 +1014,15 @@ export function validateCodeLabSecureAgainstPlan(
       issues.push(`misconception_map 必须恰好映射一次计划测试 ${test.test_id}`)
     }
   }
+  if (payload.mutation_variants.length !== plan.mutation_variants.length) {
+    issues.push(`mutation_variants 数量应为 ${plan.mutation_variants.length}，实际 ${payload.mutation_variants.length}`)
+  }
+  plan.mutation_variants.forEach((expected, index) => {
+    const actual = payload.mutation_variants[index]
+    if (!actual) return
+    if (actual.mutation_id !== expected.mutation_id) issues.push(`mutation_variants[${index}].mutation_id 未按计划返回`)
+    if (actual.misconception_tag !== expected.misconception_id) issues.push(`mutation_variants[${index}] 未绑定计划误区`)
+  })
   if (payload.execution_contract.execution_mode === "function") {
     payload.hidden_tests.forEach((test, index) => {
       if (!isFunctionInvocationEnvelope(test.input)) {
@@ -1133,6 +1180,9 @@ export function validateCodeLabSecureAuthorAgainstPlan(
       }
     })
   }
+  if (payload.mutation_variants.length !== plan.mutation_variants.length) {
+    issues.push(`mutation_variants 数量应为 ${plan.mutation_variants.length}，实际 ${payload.mutation_variants.length}`)
+  }
   return issues
 }
 
@@ -1162,9 +1212,11 @@ export function materializeCodeLabSecureAuthorPayload(
       misconception_tag: payload.hidden_tests[index]!.misconception_tag,
     })),
     mutation_variants: plan.mutation_variants.map((entry, index) => ({
-      ...structuredClone(entry),
+      mutation_id: entry.mutation_id,
+      objective_ids: [...entry.objective_ids],
+      must_fail_test_ids: [...entry.must_fail_test_ids],
       code: payload.mutation_variants[index]!.code,
-      misconception_tag: payload.mutation_variants[index]!.misconception_tag,
+      misconception_tag: entry.misconception_id,
     })),
     objective_coverage: [],
   }
@@ -1212,7 +1264,10 @@ export function normalizeCodeLabSecure(
   normalized.mutation_variants = plan.mutation_variants.length > 0
     ? plan.mutation_variants.map((entry, index) => ({
         ...structuredClone(payload.mutation_variants[index]!),
-        ...structuredClone(entry),
+        mutation_id: entry.mutation_id,
+        objective_ids: [...entry.objective_ids],
+        must_fail_test_ids: [...entry.must_fail_test_ids],
+        misconception_tag: entry.misconception_id,
       }))
     : structuredClone(payload.mutation_variants)
   normalized.scoring_groups = spec.targets.map((target) => {
@@ -1369,7 +1424,7 @@ export function assessmentCompositionForBehavior(behavior: GenerationSpec["targe
   return [...compositions[behavior]]
 }
 
-export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPlan[] {
+export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvidencePack): AssessmentItemPlan[] {
   const tiers: Array<1 | 2 | 3> = [
     ...Array.from({ length: spec.assessment_blueprint.tier_1_count }, () => 1 as const),
     ...Array.from({ length: spec.assessment_blueprint.tier_2_count }, () => 2 as const),
@@ -1436,14 +1491,49 @@ export function buildAssessmentItemPlan(spec: GenerationSpec): AssessmentItemPla
   )
   return baseItems.map((item, index) => {
     const presentation = presentationPlan[index]!
+    const objective = spec.targets.find((target) => target.objective_id === item.objective_id)!
+    const evidenceItem = evidence?.results.find((entry) => entry.source_id === objective.source_id)
+    const misconceptions = (evidenceItem?.misconceptions ?? []).filter((entry) =>
+      entry.factRefs.length === 0
+        || entry.factRefs.some((reference) => item.citations.some((citation) =>
+          citation.source_id === reference.sourceId && citation.fact_id === reference.factId)))
+    const cognitiveDemand = item.tier === 1
+      ? "understand" as const
+      : item.tier === 2
+        ? "apply" as const
+        : presentation.mode === "scenario_transfer"
+          ? "transfer" as const
+          : "analyze" as const
     return {
       ...item,
       presentation_mode: presentation.mode,
       context_strategy: presentation.mode === "scenario_transfer" && presentation.context
         ? { kind: "preferred_context" as const, value: presentation.context }
         : { kind: "neutral_context" as const },
+      construct: `${objective.observable_behavior}:${item.cognitive_operation}`,
+      evidence_of_mastery: masteryEvidenceFor(item.modality, item.cognitive_operation),
+      cognitive_demand: cognitiveDemand,
+      ...(misconceptions.length > 0
+        ? { target_misconception_id: misconceptions[index % misconceptions.length]!.misconceptionId }
+        : {}),
+      ...(presentation.mode === "scenario_transfer" && presentation.context
+        ? { transfer_context: presentation.context }
+        : {}),
+      forbidden_clues: ["source_id", "fact_id", "RAG", "evidence", "知识库", "以上都对", "以上都错"],
+      expected_difficulty: item.tier === 1 ? 0.3 : item.tier === 2 ? 0.58 : 0.78,
     }
   })
+}
+
+function masteryEvidenceFor(
+  modality: AssessmentItemPublic["modality"],
+  operation: AssessmentItemPlan["cognitive_operation"],
+): string {
+  if (modality === "code") return "学习者提交的函数在公开与隐藏测试中表现出目标行为"
+  if (modality === "trace") return "学习者能够逐步追踪状态或输出并给出可复核结果"
+  if (operation === "diagnose_error") return "学习者能够定位错误机制并给出依据"
+  if (operation === "construct_solution") return "学习者能够构造满足冻结目标与事实边界的答案"
+  return "学习者能够仅依据当前证据作出唯一、可解释的判断"
 }
 
 /**

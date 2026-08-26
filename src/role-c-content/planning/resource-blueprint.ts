@@ -21,6 +21,10 @@ import {
   type CodeLabObjectivePlan,
   type CodeLabSecurePlan,
 } from "../providers/staged-generation"
+import {
+  buildLearningDesignSpecV2,
+  type LearningDesignSpecV2,
+} from "./learning-design-spec-v2"
 
 export interface ResourceBlueprintObjective {
   objective_id: string
@@ -95,6 +99,8 @@ export interface ResourceBlueprint {
   evidence_ref: string
   evidence_content_hash: string
   objectives: ResourceBlueprintObjective[]
+  /** Shared instructional decision consumed by all three authoring agents. */
+  learning_design: LearningDesignSpecV2
   /**
    * 三类资源各自的目标难度（Target Resource Difficulty）：讲义/代码实验/测评
    * 分别冻结 challenge（越大越难）与 support（越大支持越强）目标。
@@ -175,11 +181,23 @@ export function buildResourceBlueprint(
   }
   const identity = buildLabIdentity(spec)
   const codeObjectivePlan = buildCodeLabObjectivePlan(spec)
-  const codeSecurePlan = buildCodeLabSecurePlan(spec, identity.test_suite_id)
+  const misconceptionIdsByObjective = Object.fromEntries(spec.targets.map((target) => {
+    const evidenceItem = evidence.results.find((item) => item.source_id === target.source_id)
+    const misconception = evidenceItem?.misconceptions?.find((entry) =>
+      entry.factRefs.some((ref) => ref.sourceId === target.source_id
+        && target.required_fact_ids.includes(ref.factId)))
+    return [target.objective_id, misconception?.misconceptionId
+      ?? `MIS-${target.objective_id}-COMMON-ERROR`]
+  }))
+  const codeSecurePlan = buildCodeLabSecurePlan(
+    spec,
+    identity.test_suite_id,
+    misconceptionIdsByObjective,
+  )
   const assessmentSpec = options.assessment_blueprint
     ? { ...spec, assessment_blueprint: options.assessment_blueprint }
     : spec
-  const assessmentPlan = buildAssessmentItemPlan(assessmentSpec)
+  const assessmentPlan = buildAssessmentItemPlan(assessmentSpec, evidence)
   const assessmentCapacity = options.assessment_capacity
     ? {
         decision: options.assessment_capacity.decision,
@@ -197,7 +215,9 @@ export function buildResourceBlueprint(
   const crossArtifactContract = buildCrossArtifactContract()
   const qualityRequirement = decideQualityRequirement(assessmentSpec, codeObjectivePlan.length)
   // 容量缩减后，目标难度必须来自实际执行的 assessment blueprint。
-  const difficultyPlan = buildDifficultyPlan(assessmentSpec)
+  const difficultyPlan = buildDifficultyPlan(assessmentSpec, {
+    assessment_plan: assessmentPlan,
+  })
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
       entry.objective_id === target.objective_id)!
@@ -258,11 +278,17 @@ export function buildResourceBlueprint(
         })),
     }
   })
+  const learningDesign = buildLearningDesignSpecV2({
+    spec: assessmentSpec,
+    evidence,
+    assessment_plan: assessmentPlan,
+  })
   const blueprintIdentity = {
     spec_id: spec.spec_id,
     evidence_ref: evidence.retrieval_id,
     evidence_content_hash: evidenceHash,
     objectives,
+    learning_design: learningDesign,
     difficulty_plan: difficultyPlan,
     code_lab: {
       lab_id: identity.lab_id,
@@ -282,6 +308,7 @@ export function buildResourceBlueprint(
     evidence_ref: evidence.retrieval_id,
     evidence_content_hash: evidenceHash,
     objectives,
+    learning_design: learningDesign,
     difficulty_plan: difficultyPlan,
     code_lab: {
       lab_id: identity.lab_id,
@@ -312,32 +339,30 @@ export function buildResourceBlueprint(
  *
  * 这是"三种资源不再共用同一份 DifficultyVector"的落地。
  */
-export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPlan {
+export function buildDifficultyPlan(
+  spec: GenerationSpec,
+  options: { assessment_plan?: AssessmentItemPlan[] } = {},
+): ResourceDifficultyPlan {
   const difficulty = spec.difficulty
     ?? adaptationDefaults(spec.learner_adaptation?.level ?? "basic").difficulty
   const { challenge, support } = splitDifficultyVector(difficulty)
   const assessmentBlueprint = spec.assessment_blueprint
   const plannedPrerequisiteLoad = spec.path_node?.prerequisite_source_ids?.length ?? 0
-  const tier2Count = assessmentBlueprint?.tier_2_count ?? 0
-  const tier3Count = assessmentBlueprint?.tier_3_count ?? 0
-  const assessmentTransfer = tier3Count > 0
-    ? 2
-    : tier2Count > 0
-      ? 1
-      : 0
-  const assessmentCognitive = tier3Count > 0
-    ? 3
-    : tier2Count > 0
-      ? 2
-      : 1
+  const assessmentChallenge = plannedAssessmentChallenge(
+    options.assessment_plan,
+    assessmentBlueprint,
+    spec.learner_adaptation?.preferred_contexts ?? [],
+  )
 
   const concept: ResourceDifficultyPlanEntry = {
     challenge_target: {
       ...challenge,
       // 讲义比测评低一档。target 由教学设计决定，observed 由真实内容决定，
       // 二者独立比较；不为配合估算器下限而抬高目标（否则会掩盖估算器问题）。
-      cognitive_demand: clamp5(challenge.cognitive_demand - 1),
-      reasoning_steps: clamp5(challenge.reasoning_steps - 1),
+      // 一份可学习的讲义至少需要一次识别/解释活动。0 表示该维度不适用，
+      // 不能作为真实讲义的认知与推理目标，否则任何正常内容都会被误判偏难。
+      cognitive_demand: clamp5(Math.max(1, challenge.cognitive_demand - 1)),
+      reasoning_steps: clamp5(Math.max(1, challenge.reasoning_steps - 1)),
       code_complexity: clamp5(challenge.code_complexity - 1),
       prerequisite_load: clamp5(Math.max(
         challenge.prerequisite_load,
@@ -374,11 +399,15 @@ export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPla
       ...challenge,
       cognitive_demand: clamp5(Math.max(
         challenge.cognitive_demand,
-        assessmentCognitive,
+        assessmentChallenge.cognitive_demand,
+      )),
+      reasoning_steps: clamp5(Math.max(
+        challenge.reasoning_steps,
+        assessmentChallenge.reasoning_steps,
       )),
       transfer_distance: clamp5(Math.max(
         challenge.transfer_distance ?? 0,
-        assessmentTransfer,
+        assessmentChallenge.transfer_distance,
       )),
     },
     support_target: {
@@ -390,6 +419,78 @@ export function buildDifficultyPlan(spec: GenerationSpec): ResourceDifficultyPla
   }
 
   return { concept_lesson: concept, code_lab: codeLab, assessment }
+}
+
+/**
+ * 整卷难度必须由每道题的测量计划按分值加权汇总。Tier 表示题目层级，
+ * 但 Tier 3 不必然是迁移题；没有 scenario_transfer 时，不能把整卷目标强行
+ * 抬成迁移距离 2。这样 target 与真正交给 author 的 item plan 使用同一语义。
+ */
+function plannedAssessmentChallenge(
+  plan: AssessmentItemPlan[] | undefined,
+  blueprint: GenerationSpec["assessment_blueprint"] | undefined,
+  preferredContexts: string[],
+): {
+  cognitive_demand: number
+  reasoning_steps: number
+  transfer_distance: number
+} {
+  const entries = plan?.length
+    ? plan.map((item) => ({
+        weight: Math.max(1, item.max_score),
+        demand: item.cognitive_demand
+          ?? (item.tier === 1 ? "understand" : item.tier === 2 ? "apply" : "analyze"),
+        transfer: item.presentation_mode === "scenario_transfer" ? 2 : 0,
+      }))
+    : inferredAssessmentChallengeEntries(blueprint, preferredContexts)
+  const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0)
+  if (totalWeight === 0) {
+    return { cognitive_demand: 1, reasoning_steps: 1, transfer_distance: 0 }
+  }
+  const demandValue = (value: AssessmentItemPlan["cognitive_demand"]): number =>
+    value === "understand" ? 1 : value === "apply" ? 2 : value === "analyze" ? 3 : 4
+  const reasoningValue = (value: AssessmentItemPlan["cognitive_demand"]): number =>
+    value === "understand" ? 1 : value === "apply" ? 2 : 3
+  return {
+    cognitive_demand: CLAMP_WEIGHTED(entries, totalWeight, (entry) => demandValue(entry.demand)),
+    reasoning_steps: CLAMP_WEIGHTED(entries, totalWeight, (entry) => reasoningValue(entry.demand)),
+    transfer_distance: CLAMP_WEIGHTED(entries, totalWeight, (entry) => entry.transfer),
+  }
+}
+
+function inferredAssessmentChallengeEntries(
+  blueprint: GenerationSpec["assessment_blueprint"] | undefined,
+  preferredContexts: string[],
+): Array<{
+  weight: number
+  demand: NonNullable<AssessmentItemPlan["cognitive_demand"]>
+  transfer: number
+}> {
+  const tier1 = blueprint?.tier_1_count ?? 0
+  const tier2 = blueprint?.tier_2_count ?? 0
+  const tier3 = blueprint?.tier_3_count ?? 0
+  const itemCount = tier1 + tier2 + tier3
+  const scenarioBudget = preferredContexts.length > 0
+    ? Math.min(tier3, Math.floor(itemCount * 0.35))
+    : 0
+  return [
+    ...Array.from({ length: tier1 }, () => ({ weight: 1, demand: "understand" as const, transfer: 0 })),
+    ...Array.from({ length: tier2 }, () => ({ weight: 2, demand: "apply" as const, transfer: 0 })),
+    ...Array.from({ length: tier3 }, (_, index) => ({
+      weight: 4,
+      demand: index < scenarioBudget ? "transfer" as const : "analyze" as const,
+      transfer: index < scenarioBudget ? 2 : 0,
+    })),
+  ]
+}
+
+function CLAMP_WEIGHTED<T>(
+  entries: T[],
+  totalWeight: number,
+  value: (entry: T) => number,
+): number {
+  return clamp5(entries.reduce((sum, entry) =>
+    sum + value(entry) * (entry as T & { weight: number }).weight, 0) / totalWeight)
 }
 
 function clamp5(value: number): number {

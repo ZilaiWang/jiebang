@@ -33,7 +33,12 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
       "misconception_tag": "具体错误标签"
     }
   ],
-  "mutation_variants": []
+  "mutation_variants": [
+    {
+      "code": "与 reference 接口相同、但只植入一个计划误区的完整错误实现",
+      "misconception_tag": "必须逐字复制 objective_plan.mutation_variants 对应项的 misconception_id"
+    }
+  ]
 }
 
 字段约束（必须逐条满足）：
@@ -43,7 +48,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 4. hidden_tests[].expected：必须与 reference_solution 的真实输出一致。function 模式：数值返回具体数值，对象、数组、字符串或布尔值返回对应 JSON 值；stdin_stdout 模式：expected 是程序 print 到 stdout 的完整文本（含换行）。不能写描述性文字。
 5. hidden_tests[].comparison：根据 frozen execution_contract.output_contract 选择。数值返回值使用 numeric，精确结构为 {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9}；对象、数组、字符串或布尔返回值使用 exact，精确结构为 {"kind": "exact"}。stdout text 必须返回字符串 expected；不得为 stdout text 返回对象。
 6. hidden_tests[].misconception_tag：具体说明测试针对的常见错误（如"skips_last_element"、"ignores_boundary"、"integer_division"），不用模糊标签。
-7. mutation_variants：始终返回空数组 []。
+7. mutation_variants：数量和顺序必须与 objective_plan.mutation_variants 一致。每项保留 reference 的入口与输入输出合同，只植入对应 misconception_id 所描述的一种真实常见错误；misconception_tag 必须逐字复制该 misconception_id。错误实现必须被该计划项 must_fail_test_ids 指向的隐藏测试检出，不能用语法错误、异常或删除整个实现凑数。
 
 ══════════════════════════════════════════
 具体示例（假设入口函数是 average_score，任务是求平均值）
@@ -71,7 +76,12 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
       "misconception_tag": "decimal_average_miscalculation"
     }
   ],
-  "mutation_variants": []
+  "mutation_variants": [
+    {
+      "code": "def average_score(scores):\n    total = 0\n    for s in scores[:-1]:\n        total += s\n    return total / len(scores)",
+      "misconception_tag": "MIS-OBJ-AVERAGE-COMMON-ERROR"
+    }
+  ]
 }
 
 ══════════════════════════════════════════
@@ -84,6 +94,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - hidden_tests[].input 必须与 public_payload.public_tests 中所有 input 做 JSON 深比较；只要完全相同就无效。不要复用示例中的任何具体数字、字符串、列表或对象。至少改变输入结构和一个标量，并确保新输入不出现在 public_payload 的任何 learner-visible 字段中。
 - 常规用例 + 边界用例 + 防硬编码用例组合覆盖
 - expected 必须与 reference_solution 的实际返回值及类型一致（自己验算一遍）
+- 好 mutation：只改变一个与误区对应的关键行为，并被指定隐藏测试稳定杀死。坏 mutation：语法报错、直接 raise、改入口名、返回固定公开样例值，或与指定误区无关。
 
 不返回 lab_id、test_suite_id、execution_contract、test_id、objective_id、weight、scoring_groups、misconception_map、must_fail_test_ids、objective_coverage。
 
