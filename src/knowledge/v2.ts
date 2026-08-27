@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import type {
+  KnowledgeExample,
   KnowledgeFact,
   KnowledgeItem,
   KnowledgeMisconception,
@@ -24,18 +25,21 @@ export function hydrateKnowledgeItemV2(item: KnowledgeItem): KnowledgeItem {
   const source = structuredClone(item)
   const facts = source.facts.map((fact) => hydrateFact(fact, source.prerequisites))
   const factIds = facts.map((fact) => fact.factId)
+  const coreFactIds = source.coreFactIds?.length
+    ? [...new Set(source.coreFactIds)]
+    : [...new Set([
+        ...source.quizItems.map((entry) => entry.factId),
+        ...factIds,
+      ])].slice(0, 3)
+  const examples = source.examples.map(hydrateExample)
   return {
     ...source,
     facts,
     // 旧知识切片的题目事实引用已经经过课程编写，是比数组位置更可靠的
     // “核心内容”信号；不足三条时再按事实顺序补齐。新切片可以显式声明
     // coreFactIds 覆盖这一兼容规则。
-    coreFactIds: source.coreFactIds?.length
-      ? [...new Set(source.coreFactIds)]
-      : [...new Set([
-          ...source.quizItems.map((item) => item.factId),
-          ...factIds,
-        ])].slice(0, 3),
+    coreFactIds,
+    examples,
     misconceptions: source.misconceptions?.length
       ? structuredClone(source.misconceptions)
       : deriveMisconceptions(source, facts),
@@ -58,6 +62,20 @@ export function hydrateKnowledgeItemV2(item: KnowledgeItem): KnowledgeItem {
           "错误选项必须能定位到具体误解，不得使用明显荒谬或工程元信息选项",
           "迁移题应改变认知操作或任务结构，不能只替换数字、名称或背景词",
         ],
+  }
+}
+
+/**
+ * Legacy examples pre-date source-local fact references.  Preserve the code
+ * as discovery material, but never manufacture provenance with lexical
+ * matching: an example is admissible in a fact-specific evidence pack only
+ * after its source record explicitly declares the complete fact closure.
+ */
+function hydrateExample(example: KnowledgeExample): KnowledgeExample {
+  return {
+    ...example,
+    code: sanitizeTeachingExampleCode(example.code),
+    factIds: [...new Set(example.factIds ?? [])],
   }
 }
 

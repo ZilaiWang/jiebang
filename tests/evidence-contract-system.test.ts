@@ -116,6 +116,7 @@ describe("统一证据身份与能力合同", () => {
       title: "列表 · F001 事实示例",
       code: "# 列表可用于保存多个有序元素。",
       explanation: "列表可用于保存多个有序元素。",
+      factIds: ["F001"],
     }])
     expect(result?.practiceTasks).toEqual([
       "依据已审核事实“列表可用于保存多个有序元素。”完成一次识别、解释或应用，并说明判断依据。",
@@ -125,6 +126,31 @@ describe("统一证据身份与能力合同", () => {
       ref.sourceId === "K009" && ref.factId === "F001"))).toBe(true)
     expect(result?.workedExamples?.every((entry) => entry.steps.every((step) =>
       step.factIds.every((factId) => factId === "F001")))).toBe(true)
+  })
+
+  test("事实闭包完整时返回带引用的真实代码示例，而不是注释占位", async () => {
+    const knowledgeBase = await loadKnowledgeBase()
+    const loop = knowledgeBase.items.find((item) => item.sourceId === "K007")!
+    const sourceExample = {
+      title: "固定次数的累加",
+      code: "total = 0\nfor value in range(3):\n    total += value",
+      explanation: "用 range 生成有限整数序列，再由 for 逐项处理。",
+      factIds: ["F001", "F003", "F005"],
+    }
+    loop.examples = [sourceExample]
+    const structured = retrieveStructuredEvidenceFromKnowledgeBase({
+      source_ids: ["K007"],
+      fact_ids_by_source: { K007: sourceExample.factIds },
+    }, knowledgeBase)
+    const projected = structured.results[0]!.examples.find((example) =>
+      example.title === sourceExample.title)!
+
+    expect(projected.code).toBe(sourceExample.code)
+    expect(projected.code.split(/\r?\n/u).some((line) =>
+      line.trim() && !line.trim().startsWith("#"))).toBe(true)
+    expect(projected.factIds).toEqual(sourceExample.factIds)
+    expect(projected.factIds?.every((factId) =>
+      sourceExample.factIds.includes(factId))).toBe(true)
   })
 
   test("recall_fact 的私有执行真值由事实合同确定性物化", () => {

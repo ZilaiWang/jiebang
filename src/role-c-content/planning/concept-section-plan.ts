@@ -15,6 +15,10 @@ import {
   selectEvidenceBundle,
   type CapabilityFactLike,
 } from "../../knowledge/capabilities"
+import {
+  executableExampleFactIds,
+  isSubstantivePythonExample,
+} from "../../knowledge/example-code"
 
 /**
  * 讲义 Section Plan（改进方案5 第六节）。
@@ -58,6 +62,8 @@ export interface ConceptSectionSlot {
   min_sentences: number
   max_sentences: number
   allowed_block_types: Array<"paragraph" | "code" | "callout" | "comparison">
+  /** A grounded code example exists in the current fact closure. */
+  requires_executable_code?: boolean
 }
 
 export interface ConceptSectionPlan {
@@ -118,12 +124,16 @@ export function buildConceptSectionPlan(input: {
   support: ObjectiveSupportPlan
   learner_level?: "beginner" | "basic" | "intermediate" | "integrated"
   micro_check_fact_ids?: string[]
+  executable_example_fact_ids?: string[]
 }): ConceptSectionPlan {
   const { fact_ids } = input
   const mode = conceptModeForSupport(input.support, fact_ids.length)
 
   const factGroups = chunkFactIds(fact_ids)
   const primaryFactGroup = factGroups[0] ?? []
+  const executableExampleFactIds = input.executable_example_fact_ids?.filter((factId) =>
+    fact_ids.includes(factId)) ?? []
+  const requiresExecutableCode = executableExampleFactIds.length > 0
 
   const commonSlots: ConceptSectionSlot[] = [
     slot("overview", {
@@ -144,11 +154,12 @@ export function buildConceptSectionPlan(input: {
 
   const modeSlots: ConceptSectionSlot[] = mode === "procedural"
     ? [slot("procedure_steps", {
-        fact_ids: primaryFactGroup,
+        fact_ids: requiresExecutableCode ? executableExampleFactIds : primaryFactGroup,
         allowed_moves: ["procedure_trace", "direct_instance"],
         min_sentences: 1,
         max_sentences: 6,
         allowed_block_types: ["paragraph", "code"],
+        ...(requiresExecutableCode ? { requires_executable_code: true } : {}),
       })]
     : mode === "comparative"
       ? [slot("comparison", {
@@ -163,14 +174,15 @@ export function buildConceptSectionPlan(input: {
           // objective. Restricting it to the first (usually definition-only)
           // chunk forced basic learners back into a recall-only example even
           // when later facts exposed safe application behavior.
-          fact_ids,
+          fact_ids: requiresExecutableCode ? executableExampleFactIds : fact_ids,
           allowed_moves: ["direct_instance", "recognition_check"],
           min_sentences: 1,
           max_sentences: Math.max(4, Math.min(8, fact_ids.length + 2)),
           // Only procedural evidence may author executable Python.  A pure
           // definition/example objective otherwise tends to invent print,
           // variables or string syntax merely to satisfy a code-shaped slot.
-          allowed_block_types: ["paragraph"],
+          allowed_block_types: requiresExecutableCode ? ["code"] : ["paragraph"],
+          ...(requiresExecutableCode ? { requires_executable_code: true } : {}),
         })]
 
   const misconceptionSlot = slot("misconception", {
@@ -339,6 +351,11 @@ export function validateConceptSectionStructure(input: {
     }
     if (section.code && !planned.allowed_block_types.includes("code")) {
       issues.push(`section ${section.slot_id} 不允许生成 code`)
+    }
+    if (planned.requires_executable_code && !isSubstantivePythonExample(section.code ?? "")) {
+      issues.push(`section ${section.slot_id} 必须提供含可执行语句的 Python 示例，不能只写注释、pass 或省略号`)
+    } else if (section.code && !isSubstantivePythonExample(section.code)) {
+      issues.push(`section ${section.slot_id} 的 code 不能只包含注释、pass 或省略号`)
     }
     const sentences = splitTeachingSentences(section.body)
     if (sentences.length < planned.min_sentences) {
@@ -753,6 +770,16 @@ export function buildConceptSectionPlansForSegment(
       ...(discriminatingFactId ? [discriminatingFactId] : []),
       ...target.required_fact_ids,
     ])]
+    const targetFactSet = new Set(target.required_fact_ids)
+    const evidenceItem = request.evidence_pack.results.find((entry) =>
+      entry.source_id === target.source_id)
+    const executableExample = evidenceItem?.examples?.find((example) =>
+      isSubstantivePythonExample(example.code)
+      && example.fact_refs.length > 0
+      && example.fact_refs.every((ref) =>
+        ref.source_id === target.source_id && targetFactSet.has(ref.fact_id)))
+    const codeSupportFactIds = executableExample?.fact_refs.map((ref) => ref.fact_id)
+      ?? executableExampleFactIds(facts)
     return buildConceptSectionPlan({
       objective_id: target.objective_id,
       observable_behavior: target.observable_behavior,
@@ -760,6 +787,7 @@ export function buildConceptSectionPlansForSegment(
       support,
       learner_level: request.generation_spec.learner_adaptation.level,
       micro_check_fact_ids: microCheckFactIds,
+      executable_example_fact_ids: codeSupportFactIds,
     })
   })
 }

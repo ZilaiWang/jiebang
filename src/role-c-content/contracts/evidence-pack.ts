@@ -24,6 +24,8 @@ export interface EvidenceExample {
   title: string
   code: string
   explanation: string
+  /** Source-local fact closure that makes this reviewed example admissible. */
+  fact_refs: Array<{ source_id: string; fact_id: string }>
 }
 
 /** Internal-only seed item. answer must never be copied to a public artifact. */
@@ -238,7 +240,15 @@ function normalizeResultItem(item: RagResultItem): RagEvidenceItem {
       ...(fact.confidence !== undefined ? { confidence: fact.confidence } : {}),
       ...(fact.authority ? { authority: fact.authority } : {}),
     })),
-    examples: item.examples.map((example) => ({ ...example })),
+    examples: item.examples.map((example) => ({
+      title: example.title,
+      code: example.code,
+      explanation: example.explanation,
+      fact_refs: (example.factIds ?? []).map((factId) => ({
+        source_id: item.source_id ?? item.sourceId,
+        fact_id: factId,
+      })),
+    })),
     practice_tasks: [...item.practiceTasks],
     quiz_seeds: item.quizItems.map((quiz) => ({
       level: quiz.level,

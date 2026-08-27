@@ -92,11 +92,24 @@
     },
     "example": {
       "type": "object",
-      "required": ["title", "code", "explanation"],
+      "required": ["title", "code", "explanation", "fact_refs"],
       "properties": {
         "title": { "type": "string", "minLength": 1 },
         "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
-        "explanation": { "type": "string", "minLength": 1 }
+        "explanation": { "type": "string", "minLength": 1 },
+        "fact_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["source_id", "fact_id"],
+            "properties": {
+              "source_id": { "type": "string", "pattern": "^[A-Z][A-Z0-9_-]{0,27}[0-9]{3,6}$" },
+              "fact_id": { "type": "string", "pattern": "^F[0-9]{3,6}$" }
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     },

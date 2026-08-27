@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { semanticLessonLines } from "./lesson-format"
+import { normalizePythonDisplayIndentation, semanticLessonLines } from "./lesson-format"
 
 describe("lesson semantic line breaks", () => {
   test("puts each explicit demonstration step on its own line", () => {
@@ -12,5 +12,19 @@ describe("lesson semantic line breaks", () => {
       .toEqual(["概念说明。", "注意边界。"])
     expect(semanticLessonLines("Python 使用 if 进行条件判断。"))
       .toEqual(["Python 使用 if 进行条件判断。"])
+  })
+
+  test("does not treat inline numeric values as numbered steps", () => {
+    expect(semanticLessonLines("range(2, 8, 2) 指定起始为 2、结束为 8、步长为 2。"))
+      .toEqual(["range(2, 8, 2) 指定起始为 2、结束为 8、步长为 2。"])
+    expect(semanticLessonLines("操作如下：1、创建变量。2、输出结果。"))
+      .toEqual(["操作如下：", "1、创建变量。", "2、输出结果。"])
+  })
+
+  test("normalizes short Python indentation for lesson display", () => {
+    expect(normalizePythonDisplayIndentation('for item in ["a"]:\n print(item)'))
+      .toBe('for item in ["a"]:\n    print(item)')
+    expect(normalizePythonDisplayIndentation("if ready:\n    print('ok')"))
+      .toBe("if ready:\n    print('ok')")
   })
 })

@@ -34,7 +34,7 @@ describe("main agent session architecture", () => {
   })
 
   test("uses A's live knowledge-base version for every reviewed C round", async () => {
-    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.10.0")
+    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.11.0")
     expect(await resolveRoleCKnowledgeBaseVersion()).not.toBe("python-basics-v1")
   })
 
