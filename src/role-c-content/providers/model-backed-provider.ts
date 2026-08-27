@@ -58,6 +58,7 @@ import { validateConceptLesson } from "../validators/concept-validator"
 import {
   buildConceptSectionPlansForSegment,
   materializeConceptSegmentV2,
+  anchorConceptFactsInVisibleText,
   validateConceptSegmentV2AgainstPlans,
   validateConceptVisibleFactCoverage,
   type ConceptSegmentAuthorPayloadV2,
@@ -106,6 +107,7 @@ import {
   deriveCodeLabExecutionMode,
   freezeCodeLabExecutionContract,
   type CodeLabExecutionRepairPatch,
+  type CodeLabObjectivePlan,
   type CodeLabPublicAuthorPayload,
   type CodeLabSecureAuthorPayload,
   type AssessmentSecureAuthorPayload,
@@ -122,6 +124,7 @@ import {
 import type { CandidateSelectionResult, PublicArtifactKind, PublicCandidateEvaluation } from "../quality/contracts"
 import { reviewPublicCandidatesWithModel } from "../quality/model-candidate-critic"
 import {
+  validateAssessmentAuthorEvidenceDiscipline,
   validateAssessmentPairValidity,
   validateAssessmentPublicValidity,
 } from "../quality/assessment-validity"
@@ -200,6 +203,7 @@ interface StructuredStage<T> {
   idempotency_identity: Record<string, unknown>
   max_repairs: number
   validate: (value: T) => string[]
+  normalize_output?: (value: T) => T
   diagnostic_sink?: (diagnostic: SafeStageFailureDiagnostic) => void | Promise<void>
 }
 
@@ -236,6 +240,49 @@ function normalizeAssessmentAuthorFields(
       )
     }
   }
+}
+
+function projectCodeLabPublicModelInput(
+  input: ReturnType<typeof buildCodeLabModelInput>,
+  plan: CodeLabObjectivePlan[],
+): ReturnType<typeof buildCodeLabModelInput> {
+  const allowedByObjective = new Map(plan.map((entry) => [
+    entry.objective_id,
+    new Set(entry.citations.map((citation) => `${citation.source_id}:${citation.fact_id}`)),
+  ]))
+  const allowedKeys = new Set([...allowedByObjective.values()].flatMap((set) => [...set]))
+  const allowedForObjective = (objectiveId: string, sourceId: string, factId: string) =>
+    allowedByObjective.get(objectiveId)?.has(`${sourceId}:${factId}`) ?? false
+  const projected = structuredClone(input)
+  projected.contract.targets = projected.contract.targets.map((target) => ({
+    ...target,
+    required_fact_ids: target.required_fact_ids.filter((factId) =>
+      allowedForObjective(target.objective_id, target.source_id, factId)),
+  }))
+  projected.evidence = projected.evidence.flatMap((source) => {
+    const facts = source.facts.filter((fact) =>
+      allowedKeys.has(`${source.source_id}:${fact.fact_id}`))
+    return facts.length > 0 ? [{ ...source, facts }] : []
+  })
+  projected.concept.objective_summaries = projected.concept.objective_summaries.map((summary) => ({
+    ...summary,
+    // A summary text may combine several lesson slots.  Keep only its exact
+    // citations; the lab author writes against the projected evidence facts.
+    texts: [],
+    citations: summary.citations.filter((citation) =>
+      allowedForObjective(summary.objective_id, citation.source_id, citation.fact_id)),
+  }))
+  projected.concept.misconceptions = projected.concept.misconceptions.filter((entry) =>
+    entry.citations.length === 0 || entry.citations.some((citation) =>
+      allowedForObjective(entry.objective_id, citation.source_id, citation.fact_id)))
+  if (projected.upstream.resource_blueprint) {
+    projected.upstream.resource_blueprint.objectives = projected.upstream.resource_blueprint.objectives.map((objective) => ({
+      ...objective,
+      required_fact_ids: objective.required_fact_ids.filter((factId) =>
+        allowedForObjective(objective.objective_id, objective.source_id, factId)),
+    }))
+  }
+  return projected
 }
 
 /** Model-backed Provider. Stages are internal; public Role C contracts remain unchanged. */
@@ -298,6 +345,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         objective_id: plan.objective_id,
         mode: plan.mode,
         slots: plan.slots,
+        micro_check: plan.micro_check,
       }))
       const materialize = (payload: ConceptSegmentAuthorPayloadV2) =>
         normalizeConceptSegment(
@@ -346,6 +394,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             variant_index: variantIndex,
           },
           max_repairs: maxRepairs,
+          normalize_output: (payload) => anchorConceptFactsInVisibleText({
+            payload,
+            request: segment,
+            plans: sectionPlans,
+          }),
           diagnostic_sink: this.stageFailureDiagnosticSink,
           validate: (payload) => {
             const schema = validateRoleCSchemaFragment(
@@ -374,6 +427,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           artifact_kind: "concept_lesson",
           payload,
           learning_design: learningDesign,
+          concept_section_plans: sectionPlans,
           minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.07,
         }),
         review: (entries) => reviewPublicCandidatesWithModel({
@@ -418,7 +472,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const modelInput = buildCodeLabModelInput(request)
     const identity = request.resource_blueprint?.code_lab ?? buildLabIdentity(request.generation_spec)
     const objectivePlan = request.resource_blueprint?.code_lab.objective_plan
-      ?? buildCodeLabObjectivePlan(request.generation_spec)
+      ?? buildCodeLabObjectivePlan(request.generation_spec, request.evidence_pack)
+    const publicModelInput = projectCodeLabPublicModelInput(modelInput, objectivePlan)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const taskContract = request.resource_blueprint?.code_lab.task_contract
     // 执行接口由 planning 层的 CodeLabTaskContract 决定（先设计题，再定判题接口）。
@@ -439,7 +494,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       task: "role-c.code-lab.public",
       system_prompt: CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
       input: {
-        ...modelInput,
+        ...publicModelInput,
         learning_design: learningDesign,
         candidate_context: publicCandidateContext("code_lab", variantIndex),
         staged_contract: {
@@ -447,21 +502,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
           objective_plan: objectivePlan,
           execution_mode: executionMode,
-          ...(taskContract
-            ? {
-                task_contract: {
-                  task_kind: taskContract.task_kind,
-                  learner_action: taskContract.learner_action,
-                  learner_owned_region: taskContract.learner_owned_region,
-                  primary_objective_id: taskContract.primary_objective_id,
-                  program_entry: taskContract.program_entry,
-                  input_form: taskContract.input_form,
-                  output_form: taskContract.output_form,
-                  grading_invocation: taskContract.grading_invocation,
-                  output_constraint: taskContract.output_constraint,
-                },
-              }
-            : {}),
+          ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
         },
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
@@ -484,7 +525,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         // Freeze platform-owned execution fields before strict schema
         // validation. Otherwise a model-proposed unsupported import is
         // rejected before the trusted planning projection can remove it.
-        const normalizedAuthor = normalizeCodeLabPublicAuthorPayload(payload)
+        const normalizedAuthor = normalizeCodeLabPublicAuthorPayload(payload, taskContract)
         normalizedAuthor.execution_contract = freezeCodeLabExecutionContract(
           normalizedAuthor.execution_contract,
           executionMode,
@@ -523,9 +564,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         task: "role-c.code-lab.public",
         artifact_kind: "code_lab",
         candidates: entries,
-        evidence: modelInput.evidence,
+        evidence: publicModelInput.evidence,
         contract: {
-          targets: modelInput.contract.targets,
+          targets: publicModelInput.contract.targets,
           task_contract: taskContract,
           objective_plan: objectivePlan,
         },
@@ -538,6 +579,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const publicAuthor = publicTournament.winner
     const normalizedPublicAuthor = normalizeCodeLabPublicAuthorPayload(
       publicAuthor,
+      taskContract,
     )
     normalizedPublicAuthor.execution_contract = freezeCodeLabExecutionContract(
       normalizedPublicAuthor.execution_contract,
@@ -569,6 +611,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           lab_id: identity.lab_id,
           test_suite_id: identity.test_suite_id,
           execution_contract: normalizedPublic.execution_contract,
+          ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
           objective_plan: securePlan,
         },
         private_input_rules: secureInputRules,
@@ -767,6 +810,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           lab_id: identity.lab_id,
           test_suite_id: identity.test_suite_id,
           execution_contract: publicPayload.execution_contract,
+          ...(request.resource_blueprint?.code_lab.task_contract
+            ? { task_contract: structuredClone(request.resource_blueprint.code_lab.task_contract) }
+            : {}),
           objective_plan: objectivePlan,
         },
       },
@@ -901,12 +947,14 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           target.objective_id === itemPlan.objective_id)
         const itemUpstream = {
           ...modelInput.upstream,
-          objective_summaries: modelInput.upstream.objective_summaries.filter(
-            (entry) => entry.objective_id === itemPlan.objective_id,
-          ),
-          misconceptions: modelInput.upstream.misconceptions.filter(
-            (entry) => entry.objective_id === itemPlan.objective_id,
-          ),
+          // The item evidence is the complete authoring surface.  Aggregated
+          // lesson summaries span several fact slots and previously leaked a
+          // non-cited fact back into an otherwise isolated question.
+          objective_summaries: [],
+          misconceptions: modelInput.upstream.misconceptions.filter((entry) =>
+            entry.objective_id === itemPlan.objective_id
+            && (entry.citations.length === 0 || entry.citations.some((citation) =>
+              factKeys.has(`${citation.source_id}:${citation.fact_id}`)))),
           // The shared semantic plan may legitimately coordinate the whole
           // form, but it must not inject another objective's facts into one
           // item's authoring surface.
@@ -985,6 +1033,19 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               [itemPlan],
             )
             if (planIssues.length > 0) return planIssues
+            const evidenceIssues = validateAssessmentAuthorEvidenceDiscipline(
+              authored,
+              [itemPlan],
+              itemEvidence.flatMap((source) => source.facts.map((fact) => ({
+                source_id: source.source_id,
+                fact_id: fact.fact_id,
+                content: fact.content,
+              }))),
+            )
+            if (evidenceIssues.length > 0) {
+              return evidenceIssues.map((issue) =>
+                `[${issue.code}] ${issue.path}: ${issue.message}`)
+            }
             const materialized = materializeAssessmentPublicAuthorPayload(
               request.generation_spec,
               authored,
@@ -1160,6 +1221,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         const normalizedAuthor = normalizeAssessmentSecureAuthorPayload(
           payload,
           normalizedPublic,
+          plan,
+          request.evidence_pack,
         )
         const crossIssues = validateAssessmentSecureAuthorAgainstPublic(normalizedAuthor, normalizedPublic)
         if (crossIssues.length > 0) return crossIssues
@@ -1185,6 +1248,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const normalizedSecureAuthorPayload = normalizeAssessmentSecureAuthorPayload(
       secureAuthorPayload,
       normalizedPublic,
+      plan,
+      request.evidence_pack,
     )
     let securePayload = materializeAssessmentSecureAuthorPayload(
       request.generation_spec,
@@ -1196,7 +1261,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       public_draft: { payload: normalized.public_payload },
       secure_draft: { payload: normalized.secure_payload },
     })
-    if (separation.issues.some((issue) => REPAIRABLE_STARTER_LEAK_CODES.has(issue.code))) {
+    if (separation.issues.some((issue) => REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES.has(issue.code))) {
       const sanitizedPublic = conservativeAssessmentPublicSafetyRepair(normalized.public_payload)
       securePayload = materializeAssessmentSecureAuthorPayload(
         request.generation_spec,
@@ -1296,6 +1361,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         const normalizedAuthor = normalizeAssessmentSecureAuthorPayload(
           payload,
           publicPayload,
+          plan,
+          request.evidence_pack,
         )
         const crossIssues = validateAssessmentSecureAuthorAgainstPublic(
           normalizedAuthor,
@@ -1321,6 +1388,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const normalizedSecureAuthorPayload = normalizeAssessmentSecureAuthorPayload(
       secureAuthorPayload,
       publicPayload,
+      plan,
+      request.evidence_pack,
     )
     const materialized = materializeAssessmentSecureAuthorPayload(
       request.generation_spec,
@@ -1400,7 +1469,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const deterministicRepair = shouldUseDeterministicPublicSafetyRepair(issueCodes)
     let patch: CodeLabPublicSafetyRepairPatch
     if (deterministicRepair) {
-      patch = conservativeCodeLabPublicSafetyPatch(input.public_payload)
+      patch = conservativeCodeLabPublicSafetyPatch(
+        input.public_payload,
+        input.secure_payload.reference_solution,
+      )
       const fallbackIssues = validatePatch(patch)
       if (fallbackIssues.length > 0) {
         throw new ModelOutputValidationError(
@@ -1422,10 +1494,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           trusted_public_report: { issue: input.repair_reason },
         },
         output_schema_id: "role_c_code_lab_public_safety_repair_patch_v1",
-        output_schema: fragment(
-          "code_lab_draft.schema.json",
-          "/$defs/public_safety_repair_patch",
-        ),
+        output_schema: codeLabPublicSafetyRepairSchema(input.public_payload),
         temperature: this.codeLabTemperature,
         max_tokens: this.codeLabPublicMaxTokens,
         idempotency_identity: {
@@ -1443,6 +1512,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       if (!(error instanceof ModelOutputValidationError)) throw error
       const conservativePatch = conservativeCodeLabPublicSafetyPatch(
         input.public_payload,
+        input.secure_payload.reference_solution,
       )
       const fallbackIssues = validatePatch(conservativePatch)
       if (fallbackIssues.length > 0) {
@@ -1612,6 +1682,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             attempt,
           }),
           })
+        if (stage.normalize_output) value = stage.normalize_output(value)
       } catch (error) {
         if (
           attempt < stage.max_repairs
@@ -2110,8 +2181,12 @@ function assessmentUpstreamWithoutHistory<T extends { prior_assessment_items?: u
   return result
 }
 
-const REPAIRABLE_STARTER_LEAK_CODES = new Set([
+const REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES = new Set([
   "reference_solution_leak",
+  "starter_equals_reference",
+])
+
+const DETERMINISTIC_STARTER_LEAK_CODES = new Set([
   "starter_equals_reference",
 ])
 
@@ -2119,7 +2194,7 @@ function hasRepairablePublicAnswerLeak(
   report: ReturnType<typeof validateCodeLabDraftStructure>,
 ): boolean {
   return report.issues.some((issue) =>
-    REPAIRABLE_STARTER_LEAK_CODES.has(issue.code))
+    REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES.has(issue.code))
 }
 
 function validationIssuesExcludingRepairablePublicAnswerLeak(
@@ -2127,7 +2202,7 @@ function validationIssuesExcludingRepairablePublicAnswerLeak(
 ): string[] {
   return validationIssueStrings({
     issues: report.issues.filter((issue) =>
-      !REPAIRABLE_STARTER_LEAK_CODES.has(issue.code)
+      !REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES.has(issue.code)
       && !isTrustedExpectedDerivationIssue(issue.code)),
   })
 }
@@ -2193,7 +2268,7 @@ export function applyCodeLabPublicSafetyPatch(
 }
 
 export function shouldUseDeterministicPublicSafetyRepair(issueCodes: string[]): boolean {
-  return issueCodes.some((code) => REPAIRABLE_STARTER_LEAK_CODES.has(code))
+  return issueCodes.some((code) => DETERMINISTIC_STARTER_LEAK_CODES.has(code))
 }
 
 export function conservativeAssessmentPublicSafetyRepair(
@@ -2213,45 +2288,117 @@ export function conservativeAssessmentPublicSafetyRepair(
 
 export function conservativeCodeLabPublicSafetyPatch(
   prior: CodeLabPublicPayload,
+  referenceSolution?: string,
 ): CodeLabPublicSafetyRepairPatch {
+  const starterCode = minimalSafeStarter(
+    prior.starter_code,
+    prior.execution_contract,
+  )
+  const sanitize = (value: string, fallback: string) =>
+    referenceSolution && containsReferenceImplementationLine(
+      value,
+      referenceSolution,
+      starterCode,
+    )
+      ? fallback
+      : value
   return {
-    starter_code: minimalSafeStarter(
-      prior.starter_code,
-      prior.execution_contract,
-    ),
+    starter_code: starterCode,
     // 泄漏只发生在 starter/reference 等价时，不应把已经通过公开质量审核的
     // instruction、测试说明、提示和反思题一起降级为通用模板。
     instruction_texts: prior.instructions.map((block) =>
       "text" in block && typeof block.text === "string"
-        ? block.text
+        ? sanitize(block.text, "先明确输入、输出与待完成区域，再在 TODO 处实现核心逻辑。")
         : "完成题目要求的学习者代码区域。"),
     public_test_descriptions: prior.public_tests.map((test, index) =>
       typeof test.description === "string"
-        ? test.description
+        ? sanitize(test.description, `公开测试 ${index + 1}：检查实现是否满足题目声明的行为。`)
         : `公开测试 ${index + 1}：检查实现是否满足题目的可观察行为。`),
     public_test_expected_behaviors: prior.public_tests.map((test) =>
       typeof test.expected_behavior === "string"
-        ? test.expected_behavior
+        ? sanitize(test.expected_behavior, "结果应符合题目给出的输入输出约束。")
         : "结果应符合执行合同和题目中的输出约束。"),
     hint_texts: prior.hint_ladders.map((ladder) =>
       ladder.hints.map((hint, index) => typeof hint.text === "string"
-        ? hint.text
+        ? sanitize(hint.text, [
+            "先确认题目要求的输入与输出。",
+            "把任务拆成读取、处理和产生结果三个部分。",
+            "只在 TODO 区域补全核心逻辑，并逐项对照公开测试。",
+          ][index]!)
         : [
             "先明确输入、输出和需要处理的步骤。",
             "将核心处理保留在 TODO 位置。",
             "逐项对照公开测试检查结果。",
           ][index]!) as [string, string, string]),
-    reflection_questions: [...prior.reflection_questions],
+    reflection_questions: prior.reflection_questions.map((question) =>
+      sanitize(question, "你的实现如何对应题目的输入、处理和输出要求？")),
   }
+}
+
+function codeLabPublicSafetyRepairSchema(
+  prior: CodeLabPublicPayload,
+): Record<string, unknown> {
+  const schema = structuredClone(fragment(
+    "code_lab_draft.schema.json",
+    "/$defs/public_safety_repair_patch",
+  )) as {
+    properties: Record<string, { minItems?: number; maxItems?: number }>
+  }
+  const exact = (field: string, count: number) => {
+    schema.properties[field]!.minItems = count
+    schema.properties[field]!.maxItems = count
+  }
+  exact("instruction_texts", prior.instructions.length)
+  exact("public_test_descriptions", prior.public_tests.length)
+  exact("public_test_expected_behaviors", prior.public_tests.length)
+  exact("hint_texts", prior.hint_ladders.length)
+  exact("reflection_questions", prior.reflection_questions.length)
+  return schema as unknown as Record<string, unknown>
+}
+
+function containsReferenceImplementationLine(
+  value: string,
+  referenceSolution: string,
+  starterCode: string,
+): boolean {
+  const normalize = (text: string) => text.replace(/#[^\n]*/g, "").replace(/\s+/g, "").trim()
+  const starterLines = new Set(starterCode.split(/\r?\n/u).map(normalize).filter((line) => line.length >= 6))
+  const deltaLines = referenceSolution.split(/\r?\n/u)
+    .map(normalize)
+    .filter((line) => line.length >= 6 && !starterLines.has(line))
+  const normalizedValue = normalize(value)
+  return deltaLines.some((line) => normalizedValue.includes(line))
 }
 
 export function normalizeCodeLabPublicAuthorPayload(
   payload: CodeLabPublicAuthorPayload,
+  taskContract?: { learner_action: "recall_fact" | "implement_program" | "implement_function" },
 ): CodeLabPublicAuthorPayload {
   // Authoring validation must see unsafe or undeclared imports so the model can
   // rewrite the actual starter. Silently replacing it with a one-line TODO
   // produces a schema-valid but instructionally unusable lab.
-  return structuredClone(payload)
+  const normalized = structuredClone(payload)
+  if (taskContract?.learner_action === "recall_fact") {
+    normalized.starter_code = [
+      "# TODO: 只替换引号内的占位文本，保留变量和输出语句",
+      "fact_text = \"TODO：填写题目要求的事实文本\"",
+      "print(fact_text)",
+      "",
+    ].join("\n")
+    for (const objective of normalized.objectives) {
+      objective.instruction_text = "阅读本目标给出的事实，在 starter_code 的 TODO 字符串中填写对应事实文本，然后运行程序核对标准输出。"
+      objective.public_test.input = ""
+      objective.public_test.description = "运行程序，检查事实文本是否按题目要求输出。"
+      objective.public_test.expected_behavior = "标准输出应与本目标要求填写的事实文本一致。"
+      objective.hints = [
+        "先定位本目标要求表达的核心事实。",
+        "确认填写内容保留了事实中的主语、对象和关系。",
+        "只替换 TODO 字符串，不改动变量赋值和输出语句。",
+      ]
+      objective.reflection_question = "你填写的文本如何完整表达本目标给出的事实？"
+    }
+  }
+  return normalized
 }
 
 function minimalSafeStarter(
@@ -2312,6 +2459,8 @@ function normalizeCodeLabSecureAuthorPayload(
 function normalizeAssessmentSecureAuthorPayload(
   payload: AssessmentSecureAuthorPayload,
   publicPayload: AssessmentPublicPayload,
+  plan?: AssessmentItemPlan[],
+  evidence?: TieredEvaluatorRequest["evidence_pack"],
 ): AssessmentSecureAuthorPayload {
   const normalized = structuredClone(payload)
   normalized.items.forEach((item, index) => {
@@ -2322,6 +2471,13 @@ function normalizeAssessmentSecureAuthorPayload(
     if (modality !== "mcq" && modality !== "true_false") {
       item.correct_option_id = null
       item.misconception_by_option = {}
+    } else {
+      restorePlannedMisconceptionBinding(
+        item,
+        publicPayload.items[index],
+        plan?.[index],
+        evidence,
+      )
     }
   })
   normalized.code_test_suites.forEach((suite) => {
@@ -2348,6 +2504,57 @@ function normalizeAssessmentSecureAuthorPayload(
     }
   })
   return normalized
+}
+
+/**
+ * Secure author 偶尔会把冻结的 misconception ID 改写成一段自然语言。
+ * 只有当某个公开错误选项与知识库中该误区的错误信念确实匹配时，才把稳定
+ * ID 恢复到该选项；找不到语义锚点就保持失败关闭，绝不盲绑第一个干扰项。
+ */
+function restorePlannedMisconceptionBinding(
+  item: AssessmentSecureAuthorPayload["items"][number],
+  publicItem: AssessmentPublicPayload["items"][number] | undefined,
+  itemPlan: AssessmentItemPlan | undefined,
+  evidence: TieredEvaluatorRequest["evidence_pack"] | undefined,
+): void {
+  const targetId = itemPlan?.target_misconception_id
+  if (!targetId || Object.values(item.misconception_by_option).includes(targetId)) return
+  const misconception = evidence?.results
+    .flatMap((entry) => entry.misconceptions ?? [])
+    .find((entry) => entry.misconceptionId === targetId)
+  if (!misconception || !publicItem?.options?.length || !item.correct_option_id) return
+  const anchor = normalizeMisconceptionText(misconception.incorrectBelief)
+  const candidates = publicItem.options.filter((option) =>
+    option.option_id !== item.correct_option_id)
+  const matched = candidates
+    .map((option) => ({ option, score: textSimilarity(
+      normalizeMisconceptionText(option.text),
+      anchor,
+    ) }))
+    .sort((left, right) => right.score - left.score)[0]
+  if (!matched || matched.score < 0.58) return
+  item.misconception_by_option[matched.option.option_id] = targetId
+}
+
+function normalizeMisconceptionText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[\s，。！？；：,.!?;:'"“”‘’（）()]/gu, "")
+}
+
+function textSimilarity(left: string, right: string): number {
+  if (!left || !right) return 0
+  if (left.includes(right) || right.includes(left)) {
+    return Math.min(left.length, right.length) / Math.max(left.length, right.length)
+  }
+  const leftPairs = characterPairs(left)
+  const rightPairs = characterPairs(right)
+  if (leftPairs.size === 0 || rightPairs.size === 0) return 0
+  const overlap = [...leftPairs].filter((pair) => rightPairs.has(pair)).length
+  return (2 * overlap) / (leftPairs.size + rightPairs.size)
+}
+
+function characterPairs(value: string): Set<string> {
+  return new Set(Array.from({ length: Math.max(0, value.length - 1) }, (_, index) =>
+    value.slice(index, index + 2)))
 }
 
 function ensureZeroArgumentEntryPoint(

@@ -122,6 +122,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 10. 不能只写“这是重点”“请记住”等空泛补句；不得为了显得通俗而加入 evidence 未提供的执行方式、内部机制、优缺点或用途。
 11. overview 只用它绑定的首要事实引入主题，不要提前罗列全部事实；recap 要压缩成学习者能带走的结论，不复制前面的标题和解释句。
 12. “解释关键词”只能重述 evidence 已表达的主客体关系，不能把未给出的机制当成比喻。例如 evidence 若只说“程序通常由解释器执行”，不得加入“逐行读取”“翻译员”“不直接交给硬件”或与编译方式的对比。
+13. 每个 slot 的 fact_ids 是该 slot 的局部事实闭包。即使同一 objective 的其他 slot 或完整 evidence 中存在另一条事实，也不得提前借用或挪到当前 slot；例如当前 slot 只有“def 用于定义函数”，就不能写函数定义的完整语法，也不能写“定义时不执行”，除非这些事实的 fact_id 同时列在当前 slot 中。
 
 允许的安全深化方式：
 - direct_paraphrase：保留事实原意，用更容易理解的语言重新表达。
@@ -156,10 +157,12 @@ mode=comparative：
 1. preferred_contexts 只用于组织虚构名称、数据或叙述顺序；场景本身不得引入新的领域知识。
 2. 不要为每一个 objective 都套购物、成绩、公司或学生姓名故事。
 3. 定义类目标优先直接解释；过程类目标再使用简短情境。
-4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释。
-5. intermediate/integrated：压缩基础说明；只有 evidence 支持时才增加比较、边界和迁移。
-6. evidence.examples 是知识库已审核的示例（带 fact_refs）：worked_example section 优先基于它们做逐步说明与直接实例；evidence.practice_tasks 是已审核的练习任务（带 fact_refs），可用作自查或迁移素材。使用它们时只能实例化其 fact_refs 指向的事实，不得引入示例/练习中 evidence 未说明的 API、机制、返回类型或运行结果。
-7. guided_example 不得只让学习者对照前文判断一整句话是否正确；它应用一个新而具体的对象、名称或情境，让学习者看到当前事实如何用来识别、分类或做选择。
+4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释；给出完整步骤和充分提示。
+5. basic：在 evidence 明确提供可应用的规则、过程、API 或实例时，guided_example 至少组织一次两到三步的简单应用，只保留部分脚手架，让学习者完成一次判断或操作；不得把整份讲义退化成定义照抄和直接识别。
+   若 observable_behavior=apply/trace，guided_example 与 micro_check 至少有一个要求学习者依次使用两条已引用事实完成判断，提示只给方向与事实线索，不直接复述答案。
+6. intermediate/integrated：压缩基础说明；只有 evidence 支持时才增加比较、边界和迁移。
+7. evidence.examples 是知识库已审核的示例（带 fact_refs）：worked_example section 优先基于它们做逐步说明与直接实例；evidence.practice_tasks 是已审核的练习任务（带 fact_refs），可用作自查或迁移素材。使用它们时只能实例化其 fact_refs 指向的事实，不得引入示例/练习中 evidence 未说明的 API、机制、返回类型或运行结果。
+8. guided_example 不得只让学习者对照前文判断一整句话是否正确；它应用一个新而具体的对象、名称或情境，让学习者看到当前事实如何用来识别、分类或做选择。
 
 ══════════════════════════════════════
 四、Misconception
@@ -176,7 +179,8 @@ misconception section 必须包含：错误理解；它与哪一条当前事实�
 2. 错误选项只能：直接否定事实、交换主客体、扩大或缩小事实范围。
 3. 不得使用 evidence 未说明的后果、代码输出、异常或 API 作为干扰项。
 4. answer 必须与 options 中一项完全一致；explanation 用 1 至 3 句解释正确项为什么符合事实。
-5. micro_check 只检验 section_plan 中首个 kind=fact_explanation slot 绑定的 fact_ids；题干、选项和解析不得使用该 slot 之外的事实。编排器会把同一组事实绑定为本题引用。
+5. micro_check 只使用 section_plan.micro_check.fact_ids 对应的事实；题干、选项和解析不得使用该范围之外的事实。编排器会把同一组事实绑定为本题引用。
+6. mode=recognition 时做单步识别；mode=guided_application 时必须关联至少两条绑定事实，让学习者完成简单比较、状态跟踪或情境应用；mode=transfer 时进行三步迁移。题目实际推理步数不得低于 minimum_reasoning_steps。
 
 ══════════════════════════════════════
 六、三级提示
@@ -186,7 +190,7 @@ Level 1：提醒学习者定位相关事实，不透露答案。
 Level 2：指出应关注的关键词、对象或步骤。
 Level 3：把事实应用到当前题面，接近完整思路，但不直接复制最终答案。
 三级提示必须真正递进，不能只是同一句话的三种改写。
-三级提示只围绕首个 kind=fact_explanation slot 绑定的 fact_ids 和本 objective 的 micro_check 展开，不得引用其他 slot 的事实。
+三级提示只围绕 section_plan.micro_check.fact_ids 和本 objective 的 micro_check 展开，不得引用范围外的事实。guided_application/transfer 的 Level 1 只提醒目标，Level 2 提醒关系或步骤，Level 3 才可接近完整思路。
 
 ══════════════════════════════════════
 七、Recap section

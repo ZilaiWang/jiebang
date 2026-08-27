@@ -1,6 +1,7 @@
 import { contentHash } from "../contracts/common"
 import type { LearningDesignSpecV2 } from "../planning/learning-design-spec-v2"
 import type { AssessmentItemPlan } from "../providers/staged-generation"
+import type { ConceptSectionPlan } from "../planning/concept-section-plan"
 import type {
   PublicArtifactKind,
   PublicCandidateEvaluation,
@@ -16,6 +17,7 @@ export function evaluatePublicAuthorCandidate(input: {
   payload: unknown
   learning_design: LearningDesignSpecV2
   assessment_plan?: AssessmentItemPlan[]
+  concept_section_plans?: ConceptSectionPlan[]
   hard_gate_issues?: string[]
   minimum_score?: number
 }): PublicCandidateEvaluation {
@@ -23,7 +25,7 @@ export function evaluatePublicAuthorCandidate(input: {
   const text = collectText(input.payload)
   const metaLeak = META_LANGUAGE.test(text)
   const dimensions = input.artifact_kind === "concept_lesson"
-    ? conceptDimensions(input.payload, input.learning_design)
+    ? conceptDimensions(input.payload, input.learning_design, input.concept_section_plans ?? [])
     : input.artifact_kind === "code_lab"
       ? codeLabDimensions(input.payload, input.learning_design)
       : assessmentDimensions(input.payload, input.assessment_plan ?? [], input.learning_design)
@@ -50,25 +52,37 @@ export function evaluatePublicAuthorCandidate(input: {
   }
 }
 
-function conceptDimensions(payload: unknown, design: LearningDesignSpecV2): QualityDimensionScore[] {
+function conceptDimensions(
+  payload: unknown,
+  design: LearningDesignSpecV2,
+  sectionPlans: ConceptSectionPlan[],
+): QualityDimensionScore[] {
   const record = asRecord(payload)
   const objectives = Array.isArray(record.objectives) ? record.objectives.map(asRecord) : []
   const sections = objectives.flatMap((objective) => Array.isArray(objective.sections)
     ? objective.sections.map(asRecord)
     : [objective])
-  const kinds = sections.map((section) => String(section.kind ?? ""))
+  const authoredSlotIds = new Set(sections.map((section) => String(section.slot_id ?? "")))
+  const authoredKinds = sectionPlans.flatMap((plan) => plan.slots.flatMap((slot) =>
+    authoredSlotIds.has(slot.slot_id) ? [slot.kind] : []))
   const text = collectText(payload)
   const sentences = meaningfulSentences(text)
   const uniqueRatio = ratio(new Set(sentences.map(normalize)).size, sentences.length)
-  const hasExample = kinds.some((kind) => /example/i.test(kind)) || /(?:例如|示例|观察|步骤)/u.test(text)
-  const hasContrast = kinds.some((kind) => /contrast|misconception/i.test(kind)) || /(?:误区|容易误以为|区别|对比)/u.test(text)
-  const hasCheck = kinds.some((kind) => /check/i.test(kind)) || /(?:自查|判断|想一想)/u.test(text)
+  const hasExample = authoredKinds.some((kind) =>
+    kind === "guided_example" || kind === "procedure_steps" || kind === "comparison")
+    || /(?:例如|示例|观察|步骤)/u.test(text)
+  const hasContrast = authoredKinds.includes("misconception")
+    || /(?:误区|容易误以为|区别|对比)/u.test(text)
+  const hasCheck = objectives.some((objective) => {
+    const check = asRecord(objective.micro_check)
+    return String(check.prompt ?? "").trim().length > 0
+  }) || /(?:自查|判断|想一想)/u.test(text)
   const adaptationCount = design.objectives.flatMap((objective) => objective.adaptation_decisions).length
   return [
     dimension("objective_alignment", ratio(objectives.length, design.objectives.length), 1.3, true, "目标单元覆盖教学设计"),
     dimension("instructional_coherence", average([bool(hasExample), bool(hasCheck), clamp(sentences.length / Math.max(4, design.objectives.length * 4))]), 1.2, true, "解释、示例与即时检查形成教学链"),
     dimension("misconception_treatment", design.learner.misconceptions.length === 0 ? 0.85 : bool(hasContrast), 1, true, "显式辨析证据包中的误区"),
-    dimension("cognitive_progression", average([bool(hasExample), bool(hasCheck), bool(kinds.length >= design.objectives.length * 3)]), 1, false, "从解释逐步过渡到练习与检查"),
+    dimension("cognitive_progression", average([bool(hasExample), bool(hasCheck), bool(authoredKinds.length >= design.objectives.length * 3)]), 1, false, "从解释逐步过渡到练习与检查"),
     dimension("learner_adaptation", adaptationCount > 0 ? clamp(0.55 + adaptationSignals(text) * 0.15) : 0.6, 1, true, "表达与脚手架体现统一教学决策"),
     dimension("readability", readability(text), 0.8, false, "句长和段落密度适合阅读"),
     dimension("non_template_narrative", clamp(uniqueRatio), 0.8, false, "减少重复句式和事实原句拼贴"),

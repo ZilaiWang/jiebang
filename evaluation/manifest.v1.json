@@ -1,0 +1,1123 @@
+{
+  "manifest_version": "competition-v1",
+  "total_cases": 60,
+  "expected_artifacts": 180,
+  "cases": [
+    {
+      "case_id": "golden-cs-basic-01",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K001:F001",
+        "K001:F002",
+        "K001:F004"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-02",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K002:F001",
+        "K002:F002",
+        "K002:F004"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-03",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K003:F001",
+        "K003:F002",
+        "K003:F009"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-04",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K004:F001",
+        "K004:F003",
+        "K004:F008"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-05",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K005:F001",
+        "K005:F003",
+        "K005:F012"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-06",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=known，behavior=apply，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K006:F001",
+        "K006:F002",
+        "K006:F009"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-07",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K007:F001",
+        "K007:F002",
+        "K007:F004"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-08",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K008:F002",
+        "K008:F001",
+        "K008:F005"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-09",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K009:F001",
+        "K009:F002",
+        "K009:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-10",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K010:F003",
+        "K010:F002",
+        "K010:F008"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-11",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K011:F001",
+        "K011:F002",
+        "K011:F011"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-12",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K012:F002",
+        "K012:F008",
+        "K012:F001"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-13",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K013:F002",
+        "K013:F004",
+        "K013:F006"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-14",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K014:F003",
+        "K014:F002",
+        "K014:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-15",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K015:F003",
+        "K015:F001",
+        "K015:F008"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-16",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K016:F001",
+        "K016:F002",
+        "K016:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-17",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K017:F003",
+        "K017:F002",
+        "K017:F005"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-18",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K018:F001",
+        "K018:F002",
+        "K018:F010"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-01",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=known，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=known，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=known，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K001:F001",
+        "K001:F002",
+        "K001:F004"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-02",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K002:F001",
+        "K002:F002",
+        "K002:F004"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-03",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K003:F001",
+        "K003:F002",
+        "K003:F009"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-04",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K004:F001",
+        "K004:F003",
+        "K004:F008"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-05",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K005:F001",
+        "K005:F003",
+        "K005:F012"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-06",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K006:F001",
+        "K006:F002",
+        "K006:F009"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-07",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K007:F001",
+        "K007:F002",
+        "K007:F004"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-08",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K008:F002",
+        "K008:F001",
+        "K008:F005"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-09",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K009:F001",
+        "K009:F002",
+        "K009:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-10",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K010:F003",
+        "K010:F002",
+        "K010:F008"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-11",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K011:F001",
+        "K011:F002",
+        "K011:F011"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-12",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K012:F002",
+        "K012:F008",
+        "K012:F001"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-13",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K013:F002",
+        "K013:F004",
+        "K013:F006"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-14",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K014:F003",
+        "K014:F002",
+        "K014:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-15",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K015:F003",
+        "K015:F001",
+        "K015:F008"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-16",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K016:F001",
+        "K016:F002",
+        "K016:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-17",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K017:F003",
+        "K017:F002",
+        "K017:F005"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-18",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K018:F001",
+        "K018:F002",
+        "K018:F010"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-01",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K001:F001",
+        "K001:F002",
+        "K001:F004"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-02",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K002:F001",
+        "K002:F002",
+        "K002:F004"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-03",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K003:F001",
+        "K003:F002",
+        "K003:F009"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-04",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K004:F001",
+        "K004:F003",
+        "K004:F008"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-05",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K005:F001",
+        "K005:F003",
+        "K005:F012"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-06",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K006:F001",
+        "K006:F002",
+        "K006:F009"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-07",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K007:F001",
+        "K007:F002",
+        "K007:F004"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-08",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K008:F002",
+        "K008:F001",
+        "K008:F005"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-09",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K009:F001",
+        "K009:F002",
+        "K009:F007"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-10",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K010:F003",
+        "K010:F002",
+        "K010:F008"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-11",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K011:F001",
+        "K011:F002",
+        "K011:F011"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-12",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K012:F002",
+        "K012:F008",
+        "K012:F001"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-13",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K013:F002",
+        "K013:F004",
+        "K013:F006"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-14",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K014:F003",
+        "K014:F002",
+        "K014:F007"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-15",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K015:F003",
+        "K015:F001",
+        "K015:F008"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-16",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K016:F001",
+        "K016:F002",
+        "K016:F007"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-17",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K017:F003",
+        "K017:F002",
+        "K017:F005"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-18",
+      "expected_difficulty": {
+        "lesson": "beginner",
+        "lab": "beginner",
+        "assessment": "beginner"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；讲义多目标组合下限=beginner",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=1；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K018:F001",
+        "K018:F002",
+        "K018:F010"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-19",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak+unobserved，behavior=explain，target_count=3；讲义多目标组合下限=basic",
+        "lab": "生成前任务：knowledge_state=weak+unobserved，behavior=explain，target_count=3；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak+unobserved，behavior=explain，target_count=3；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K007:F001",
+        "K007:F002",
+        "K007:F004",
+        "K009:F001",
+        "K009:F002",
+        "K009:F007",
+        "K018:F001",
+        "K018:F002",
+        "K018:F010"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-20",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved+weak，behavior=explain，target_count=3；讲义多目标组合下限=basic",
+        "lab": "生成前任务：knowledge_state=unobserved+weak，behavior=explain，target_count=3；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved+weak，behavior=explain，target_count=3；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K004:F001",
+        "K004:F003",
+        "K004:F008",
+        "K005:F001",
+        "K005:F003",
+        "K005:F012",
+        "K006:F001",
+        "K006:F002",
+        "K006:F009"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-21",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=3；讲义多目标组合下限=basic",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=3；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=3；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K012:F002",
+        "K012:F008",
+        "K012:F001",
+        "K015:F003",
+        "K015:F001",
+        "K015:F008",
+        "K016:F001",
+        "K016:F002",
+        "K016:F007"
+      ]
+    },
+    {
+      "case_id": "golden-cs-basic-22",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved+weak，behavior=explain，target_count=3；讲义多目标组合下限=basic",
+        "lab": "生成前任务：knowledge_state=unobserved+weak，behavior=explain，target_count=3；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved+weak，behavior=explain，target_count=3；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K010:F003",
+        "K010:F002",
+        "K010:F008",
+        "K011:F001",
+        "K011:F002",
+        "K011:F011",
+        "K013:F002",
+        "K013:F004",
+        "K013:F006"
+      ]
+    },
+    {
+      "case_id": "golden-cross-major-23",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=3；讲义多目标组合下限=basic",
+        "lab": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=3；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=unobserved，behavior=explain，target_count=3；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K013:F002",
+        "K013:F004",
+        "K013:F006",
+        "K014:F003",
+        "K014:F002",
+        "K014:F007",
+        "K017:F003",
+        "K017:F002",
+        "K017:F005"
+      ]
+    },
+    {
+      "case_id": "golden-zero-beginner-24",
+      "expected_difficulty": {
+        "lesson": "basic",
+        "lab": "basic",
+        "assessment": "basic"
+      },
+      "expected_difficulty_basis": {
+        "lesson": "生成前任务：knowledge_state=weak+unobserved，behavior=explain，target_count=3；讲义多目标组合下限=basic",
+        "lab": "生成前任务：knowledge_state=weak+unobserved，behavior=explain，target_count=3；实验按可观测操作和目标组合定档",
+        "assessment": "生成前任务：knowledge_state=weak+unobserved，behavior=explain，target_count=3；测评按可观测操作和目标组合定档"
+      },
+      "required_fact_ids": [
+        "K002:F001",
+        "K002:F002",
+        "K002:F004",
+        "K003:F001",
+        "K003:F002",
+        "K003:F009",
+        "K009:F001",
+        "K009:F002",
+        "K009:F007"
+      ]
+    }
+  ]
+}

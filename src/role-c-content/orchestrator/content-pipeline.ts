@@ -43,6 +43,7 @@ import {
 } from "../providers/staged-generation"
 import type { RoundSemanticPlan, RoundSemanticPlanner } from "../planning/round-semantic-plan"
 import type { ReviewRevisionContext } from "../review/types"
+import { PublicQualityGateError } from "../quality/candidate-tournament"
 
 export interface CPipelineInput {
   generation_spec: GenerationSpec
@@ -753,6 +754,11 @@ async function runCPipelineCore(
       } catch { /* checkpoint is non-authoritative */ }
     }
   } catch (error) {
+    const qualityReason = publicQualityBlockedReason(error)
+    if (qualityReason) {
+      state = transitionCState(state, "BLOCKED")
+      return blockedResult(input.generation_spec, state, trace, qualityReason)
+    }
     state = transitionCState(state, "FAILED")
     const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
     pushTrace({
@@ -907,6 +913,15 @@ async function runCPipelineCore(
             ...checkpointRevisionFields({ concept: conceptFingerprint, assessment: assessmentFingerprint }, revisionContext),
           })
         } catch { /* checkpoint is non-authoritative */ }
+      }
+      const qualityReason = publicQualityBlockedReason(error)
+      if (qualityReason) {
+        state = transitionCState(state, "BLOCKED")
+        return blockedResult(input.generation_spec, state, trace, qualityReason, {
+          concept_lesson: concept,
+          ...(labOutcome.status === "fulfilled" ? { code_lab: labOutcome.value.public_artifact } : {}),
+          ...(assessmentOutcome.status === "fulfilled" ? { assessment: assessmentOutcome.value.public_artifact } : {}),
+        })
       }
       state = transitionCState(state, "FAILED")
       const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
@@ -1175,6 +1190,11 @@ async function runCPipelineCore(
         })
       }
     } catch (error) {
+      const qualityReason = publicQualityBlockedReason(error)
+      if (qualityReason) {
+        state = transitionCState(state, "BLOCKED")
+        return blockedResult(input.generation_spec, state, trace, qualityReason, publicArtifacts)
+      }
       state = transitionCState(state, "FAILED")
       const failure: FailureReason = { code: "PROVIDER_ERROR", message: errorMessage(error) }
       pushTrace({
@@ -1296,6 +1316,17 @@ async function runCPipelineCore(
     alignment_report: alignmentReport,
     trace_events: trace,
     fact_audit_packets: [],
+  }
+}
+
+export function publicQualityBlockedReason(error: unknown): BlockedReason | undefined {
+  if (!(error instanceof PublicQualityGateError)) return undefined
+  const details = [...new Set(error.evaluations.flatMap((evaluation) =>
+    evaluation.critical_findings))]
+  return {
+    code: "BLOCKED_INVALID_OUTPUT",
+    message: error.message,
+    ...(details.length > 0 ? { details } : {}),
   }
 }
 

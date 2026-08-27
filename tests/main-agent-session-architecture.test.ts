@@ -34,7 +34,7 @@ describe("main agent session architecture", () => {
   })
 
   test("uses A's live knowledge-base version for every reviewed C round", async () => {
-    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.7.0")
+    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.10.0")
     expect(await resolveRoleCKnowledgeBaseVersion()).not.toBe("python-basics-v1")
   })
 
@@ -156,6 +156,28 @@ describe("main agent session architecture", () => {
       assessment_blueprint: { tier_1_count: 2, tier_2_count: 2, tier_3_count: 1, required_modalities: ["mcq", "code"] },
     } as any, { results: [{ source_id: "K009", facts: [{ fact_id: "F001" }, { fact_id: "F002" }, { fact_id: "F003" }] }] } as any)
     expect(bound.objectives[0]?.required_fact_ids).toEqual(["F001"])
+  })
+
+  test("uses A's frozen core facts when B leaves the objective fact contract empty", () => {
+    const bound = bindPathNodeFactsForRoleC({
+      node_id: "FN-K013",
+      target_source_ids: ["K013"],
+      prerequisite_source_ids: [],
+      objectives: [{ objective_id: "OBJ-K013", source_id: "K013", required_fact_ids: [], observable_behavior: "recognize", importance: "core" }],
+      assessment_blueprint: { tier_1_count: 1, tier_2_count: 1, tier_3_count: 0, required_modalities: ["mcq", "short_answer"] },
+    } as any, {
+      results: [{
+        source_id: "K013",
+        coreFactIds: ["F002", "F004", "F006"],
+        facts: [
+          { fact_id: "F001", content: "def 用于定义函数。" },
+          { fact_id: "F002", content: "函数把可复用逻辑封装成命名代码块。" },
+          { fact_id: "F004", content: "函数定义以 def 开头，后跟函数名、圆括号与冒号。" },
+          { fact_id: "F006", content: "定义函数不会立即执行，只有调用时才运行函数体。" },
+        ],
+      }],
+    } as any)
+    expect(bound.objectives[0]?.required_fact_ids).toEqual(["F002", "F004", "F006"])
   })
   test("accepts a safe assessment code-run command through the main Agent schema gate", () => {
     expect(validateOrchestratorApiBody("command", {

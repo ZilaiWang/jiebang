@@ -16,6 +16,7 @@ export { classifyOutputContract } from "../contracts/output-contract"
 import { classifyOutputContract } from "../contracts/output-contract"
 import { stableId, type CitationRef } from "../contracts/common"
 import type { RagEvidencePack } from "../contracts/evidence-pack"
+import { selectEvidenceBundle } from "../../knowledge/capabilities"
 import type { GenerationSpec } from "../contracts/generation-spec"
 import { ModelOutputValidationError } from "../contracts/model-gateway"
 import { PLATFORM_PYTHON_IMPORT_ALLOWLIST } from "../security/python-static-analyzer"
@@ -688,6 +689,7 @@ export function buildLabIdentity(spec: GenerationSpec) {
 
 export function buildCodeLabObjectivePlan(
   spec: GenerationSpec,
+  evidence?: RagEvidencePack,
 ): CodeLabObjectivePlan[] {
   return spec.targets.map((target) => {
     const identity = {
@@ -703,7 +705,7 @@ export function buildCodeLabObjectivePlan(
       // GenerationSpec.required_fact_ids 是整轮目标的完整事实覆盖合同；代码实验
       // 只应携带足以完成当前练习的最小证据切片，否则一个简单练习会把整章事实
       // 全部堆进 instruction、公开测试和提示。讲义与测评仍负责完整覆盖。
-      citations: codeLabFactIdsForTarget(target).map((factId) => ({
+      citations: codeLabFactIdsForTarget(target, evidence).map((factId) => ({
         source_id: target.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
@@ -714,13 +716,71 @@ export function buildCodeLabObjectivePlan(
 
 function codeLabFactIdsForTarget(
   target: GenerationSpec["targets"][number],
+  evidence?: RagEvidencePack,
 ): string[] {
+  const sourceFacts = evidence?.results.find((entry) =>
+    entry.source_id === target.source_id)?.facts.filter((fact) =>
+      target.required_fact_ids.includes(fact.fact_id))
+  if (sourceFacts?.length) {
+    const selected = selectEvidenceBundle({
+      behavior: target.observable_behavior,
+      facts: sourceFacts,
+      preferred_fact_ids: target.required_fact_ids,
+      max_facts: target.observable_behavior === "recognize" ? 1 : 4,
+    })
+    if (selected.fact_ids.length > 0) {
+      const limit = target.observable_behavior === "recognize"
+        ? 1
+        : target.observable_behavior === "explain"
+          ? 2
+          : 6
+      // Capability 的最小充分束保证“能测”，代码实验还需要把实际要调用的
+      // 语法表面带给 author。优先补入带显式调用/运算/索引示例的事实，避免
+      // 模型从知识点标题猜出一个未引用 API。
+      const seenSurfaces = new Set(sourceFacts
+        .filter((fact) => selected.fact_ids.includes(fact.fact_id))
+        .flatMap((fact) => codeSurfaceKeys(fact.content)))
+      const operational = sourceFacts.flatMap((fact) => {
+        if (selected.fact_ids.includes(fact.fact_id) || !explicitCodeSurface(fact.content)) return []
+        const keys = codeSurfaceKeys(fact.content)
+        if (keys.length > 0 && keys.every((key) => seenSurfaces.has(key))) return []
+        keys.forEach((key) => seenSurfaces.add(key))
+        return [fact.fact_id]
+      })
+      return [...selected.fact_ids, ...operational].slice(0, limit)
+    }
+  }
   const limit = target.observable_behavior === "recognize"
     ? 1
     : target.observable_behavior === "explain"
       ? 2
-      : 4
+      : 6
   return target.required_fact_ids.slice(0, limit)
+}
+
+function explicitCodeSurface(content: string): boolean {
+  return /(?:[A-Za-z_][\w.]*\s*\([^)]*\)|(?:==|!=|<=|>=|\+=|-=|\*=|\/=|\*\*|\/\/)|\[[^\]]*\]|\{[^}]*\}|\s=\s|\b(?:for|while|if|elif|else|def|return|import|try|except|finally|with|break|continue|raise|del|print|input|len|sum|range)\b|调用函数|函数体|函数名.*(?:圆括号|冒号)|缩进)/u.test(content)
+}
+
+function codeSurfaceKeys(content: string): string[] {
+  const keys = new Set<string>()
+  for (const match of content.matchAll(/([A-Za-z_][\w.]*)\s*\(/gu)) keys.add(`call:${match[1]}`)
+  if (/\b(?:for|while)\b/u.test(content)) keys.add("loop")
+  if (/\b(?:if|elif|else)\b/u.test(content)) keys.add("branch")
+  if (/\b(?:def|return)\b/u.test(content)) keys.add("function")
+  if (/调用函数|函数调用/u.test(content)) keys.add("function_call")
+  if (/函数体/u.test(content)) keys.add("function_body")
+  if (/函数名.*(?:圆括号|冒号)/u.test(content)) keys.add("function_signature")
+  if (/缩进/u.test(content)) keys.add("indentation")
+  for (const name of ["print", "input", "len", "sum", "range"]) {
+    if (new RegExp(`\\b${name}\\b`, "u").test(content)) keys.add(`call:${name}`)
+  }
+  if (/(?:list|列表|字符串|字典|元组)?\s*\[[^\]]+\]/u.test(content)) keys.add("index")
+  else if (/\[\]/u.test(content)) keys.add("list_literal")
+  if (/\{[^}]*\}/u.test(content)) keys.add("mapping_literal")
+  if (/(?:==|!=|<=|>=|\+=|-=|\*=|\/=|\*\*|\/\/)/u.test(content)) keys.add("operator")
+  if (/\s=\s/u.test(content)) keys.add("assignment")
+  return [...keys]
 }
 
 export function validateCodeLabPublicAuthorAgainstPlan(
@@ -899,6 +959,7 @@ export function normalizeCodeLabPublic(
   labId: string,
   plan: CodeLabObjectivePlan[] = buildCodeLabObjectivePlan(
     request.generation_spec,
+    request.evidence_pack,
   ),
 ): CodeLabPublicPayload {
   const normalized = structuredClone(payload)
@@ -1249,7 +1310,16 @@ export function materializeRecallFactSecureAuthorPayload(
   }
   const literal = JSON.stringify(fact.content)
   const referenceSolution = `fact_text = ${literal}\nprint(fact_text)`
-  const mutationCode = 'fact_text = "TODO"\nprint(fact_text)'
+  const misconception = evidence?.misconceptions?.find((entry) =>
+    entry.factRefs.some((reference) =>
+      reference.sourceId === primary.source_id && reference.factId === factId))
+  // A mutation represents a completed but conceptually wrong learner answer,
+  // never the public TODO skeleton.  Reusing TODO here made the private
+  // mutation byte-for-byte visible in the public starter and correctly
+  // triggered MUTATION_CODE_LEAK on every recall-fact lab.
+  const incorrectText = misconception?.incorrectBelief
+    ?? `错误说法：${fact.content}`
+  const mutationCode = `fact_text = ${JSON.stringify(incorrectText)}\nprint(fact_text)`
   return {
     reference_solution: referenceSolution,
     hidden_tests: plan.hidden_tests.map((entry) => ({
@@ -1488,10 +1558,26 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
       .slice(0, index)
       .filter((entry) => entry.objective_id === objective.objective_id)
       .length
+    const cognitiveOperation = cognitiveOperationFor(
+      objective.observable_behavior,
+      modality,
+    )
+    const evidenceFacts = evidence?.results.find((entry) =>
+      entry.source_id === objective.source_id)?.facts
+    // Tier is the order inside this learner's form, not an absolute difficulty
+    // label.  An explain/recognize objective remains an understanding check in
+    // Tier 2; combining two rules would silently turn a remedial form into a
+    // basic transfer task.
+    const evidenceTier = tier === 2
+      && (objective.observable_behavior === "recognize" || objective.observable_behavior === "explain")
+      ? 1
+      : tier
     const plannedFactIds = assessmentFactIdsForItem(
       objective.required_fact_ids,
-      tier,
+      evidenceTier,
       objectiveOccurrence,
+      evidenceFacts,
+      cognitiveOperation,
     )
     const identity = { spec_id: spec.spec_id, index, objective_id: objective.objective_id, tier, modality }
     return {
@@ -1504,10 +1590,7 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
       tier,
       modality,
       max_score: tier === 1 ? 1 : tier === 2 ? 2 : 4,
-      cognitive_operation: cognitiveOperationFor(
-        objective.observable_behavior,
-        modality,
-      ),
+      cognitive_operation: cognitiveOperation,
       citations: plannedFactIds.map((factId) => ({
         source_id: objective.source_id,
         fact_id: factId,
@@ -1544,7 +1627,9 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
     const cognitiveDemand = item.tier === 1
       ? "understand" as const
       : item.tier === 2
-        ? "apply" as const
+        ? objective.observable_behavior === "recognize" || objective.observable_behavior === "explain"
+          ? "understand" as const
+          : "apply" as const
         : presentation.mode === "scenario_transfer"
           ? "transfer" as const
           : "analyze" as const
@@ -1591,12 +1676,32 @@ export function assessmentFactIdsForItem(
   factIds: string[],
   tier: 1 | 2 | 3,
   objectiveOccurrence: number,
+  evidenceFacts?: Array<{ fact_id: string; capabilities?: string[] }>,
+  operation?: AssessmentItemPlan["cognitive_operation"],
 ): string[] {
   if (factIds.length <= 1 || tier === 3) return [...factIds]
-  const start = objectiveOccurrence % factIds.length
+  const preferredCapabilities: Record<AssessmentItemPlan["cognitive_operation"], string[]> = {
+    recognize_fact: ["definition", "rule", "contrast"],
+    explain_reasoning: ["definition", "rule", "contrast", "boundary"],
+    trace_execution: ["state_transition", "procedure", "boundary", "example"],
+    apply_rule: ["procedure", "rule", "io_contract", "state_transition", "example"],
+    diagnose_error: ["boundary", "contrast", "state_transition", "procedure", "rule"],
+    construct_solution: ["procedure", "io_contract", "rule", "state_transition", "example"],
+  }
+  const capabilityOrder = operation ? preferredCapabilities[operation] : []
+  const factById = new Map((evidenceFacts ?? []).map((fact) => [fact.fact_id, fact]))
+  const ordered = [...factIds].sort((left, right) => {
+    const score = (factId: string) => {
+      const capabilities = factById.get(factId)?.capabilities ?? []
+      return capabilityOrder.reduce((total, capability, index) =>
+        total + (capabilities.includes(capability) ? capabilityOrder.length - index : 0), 0)
+    }
+    return score(right) - score(left) || factIds.indexOf(left) - factIds.indexOf(right)
+  })
+  const start = objectiveOccurrence % ordered.length
   const count = tier === 1 ? 1 : Math.min(2, factIds.length)
   return Array.from({ length: count }, (_, offset) =>
-    factIds[(start + offset) % factIds.length]!)
+    ordered[(start + offset) % ordered.length]!)
 }
 
 /** 同一知识来源上的同一可观察行为在路径/轮次变化后仍保持同一测量语义。 */
@@ -1639,7 +1744,7 @@ function preferredModalityForTier(
     Record<1 | 2 | 3, AssessmentItemPublic["modality"]>
   > = {
     recognize: { 1: "mcq", 2: "true_false", 3: "mcq" },
-    explain: { 1: "mcq", 2: "short_answer", 3: "short_answer" },
+    explain: { 1: "true_false", 2: "short_answer", 3: "short_answer" },
     trace: { 1: "mcq", 2: "trace", 3: "code" },
     apply: { 1: "mcq", 2: "trace", 3: "code" },
     debug: { 1: "mcq", 2: "trace", 3: "code" },

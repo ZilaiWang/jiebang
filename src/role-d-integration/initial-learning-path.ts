@@ -563,7 +563,9 @@ function selectRequiredFactIds(
   return bindObjectiveEvidence({
     source_id: item.sourceId,
     observable_behavior: behavior,
-    required_fact_ids: ranked.map((fact) => fact.factId),
+    required_fact_ids: item.coreFactIds?.length
+      ? [...item.coreFactIds]
+      : ranked.map((fact) => fact.factId),
   }, [evidence])
 }
 

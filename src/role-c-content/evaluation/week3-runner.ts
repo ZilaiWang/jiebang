@@ -6,7 +6,6 @@ import {
   type RagResultItem,
 } from "../../rag/retriever"
 import { retrieveStructuredEvidenceFromKnowledgeBase } from "../../rag/structured-evidence"
-import { bindObjectiveEvidence } from "../planning/objective-evidence-bundle"
 import type { LearnerProfile } from "../../role-b-profile/types"
 import { auditTeaching } from "../../role-b-profile/teaching-audit/auditor"
 import type { TeachingAuditStatus } from "../../role-b-profile/teaching-audit/types"
@@ -132,6 +131,12 @@ export interface RunRoleCWeek3CaseOptions {
   runId?: string
   knowledgeBase?: KnowledgeBase
   profile?: LearnerProfile
+  /** Internal evaluation sink. Receives public reviewed artifacts and evidence, never secure payloads. */
+  onCaseEvidence?: (input: {
+    evaluationCase: Week3EvaluationCase
+    prepared: RoleCWeek3PreparedInput
+    result: RoleCForRoleDResult
+  }) => void | Promise<void>
 }
 
 /**
@@ -195,6 +200,34 @@ export async function prepareRoleCWeek3Input(
   }
   const profile = options.profile
     ?? structuredClone(GOLDEN_LEARNER_PROFILES[evaluationCase.learner_profile_id])
+  const objectives = targetItems.map((item, index) => {
+    const objective_id = stableId("OBJECTIVE-WEEK3", {
+      case_id: evaluationCase.case_id,
+      source_id: item.sourceId,
+    })
+    const observable_behavior = planWeek3ObservableBehavior(
+      evaluationCase.learner_level,
+      index,
+      targetItems.length,
+      item,
+      profile,
+    )
+    // The formal metric covers the frozen course core, not every supplementary
+    // fact available in A's knowledge source. Capability binding may add facts
+    // required by an apply/trace task, while these core facts remain mandatory.
+    const required_fact_ids = item.coreFactIds
+    if (!required_fact_ids?.length) {
+      throw new Error(`WEEK3_TARGET_WITHOUT_CORE_FACTS:${item.sourceId}`)
+    }
+    return {
+      objective_id,
+      source_id: item.sourceId,
+      required_fact_ids: [...required_fact_ids],
+      observable_behavior,
+      importance: "core" as const,
+      is_primary: index === 0 ? (true as const) : undefined,
+    }
+  })
   const pathNode = defineLearningPathNode({
     node_id: stableId("PATH-WEEK3", {
       case_id: evaluationCase.case_id,
@@ -204,34 +237,9 @@ export async function prepareRoleCWeek3Input(
     target_source_ids: [...evaluationCase.target_source_ids],
     prerequisite_source_ids: prerequisiteSourceIds,
     goal: profile.goal,
-    objectives: targetItems.map((item, index) => {
-      const objective_id = stableId("OBJECTIVE-WEEK3", {
-        case_id: evaluationCase.case_id,
-        source_id: item.sourceId,
-      })
-      const observable_behavior = behaviorFor(
-        evaluationCase.resource_kind,
-        index,
-        targetItems.length,
-      )
-      const bundle = bindObjectiveEvidence({
-        source_id: item.sourceId,
-        required_fact_ids: [],
-        observable_behavior,
-      }, [{ source_id: item.sourceId, facts: item.facts }])
-      return {
-        objective_id,
-        source_id: item.sourceId,
-        required_fact_ids: bundle.required_fact_ids,
-        observable_behavior,
-        importance: "core" as const,
-        is_primary: index === 0 ? (true as const) : undefined,
-      }
-    }),
-    assessment_blueprint: assessmentBlueprint(
-      targetItems.length,
-      evaluationCase.resource_kind,
-    ),
+    objectives,
+    assessment_blueprint: assessmentBlueprint(objectives.map((entry) =>
+      entry.observable_behavior)),
   })
 
   return {
@@ -268,6 +276,7 @@ export async function runRoleCWeek3Case(
       runId: options.runId ?? `RUN-C-WEEK3-${evaluationCase.case_id}`,
       pathNode: prepared.pathNode,
     }, runtime)
+    await options.onCaseEvidence?.({ evaluationCase, prepared, result })
     return summarizeCase(
       evaluationCase,
       options.executionMode,
@@ -401,6 +410,29 @@ function targetLabel(item: RoleCWeek3CaseResult): string {
   return requested === final ? requested : `${requested} → ${final}`
 }
 
+/**
+ * 从 workflow 读取真实的代码执行验证结果（改进方案8 第七节1）。
+ * 只依据 Docker 执行验证事件（参考实现/隐藏测试）的状态，而非
+ * 流水线整体 ready 状态；ready 只代表资源生成成功，不代表代码跑通。
+ */
+function inferCodeExecution(result: RoleCForRoleDResult): "passed" | "failed" | "not_reached" {
+  const codeLab = result.status === "ready"
+    ? result.reviewedRelease?.artifacts.find((artifact) =>
+        artifact.artifact_type === "code_lab_public")
+    : undefined
+  if (codeLab?.quality.execution_verified === true
+    && (codeLab.quality.verified_test_count ?? 0) > 0) {
+    return "passed"
+  }
+  if (result.status !== "ready"
+    && result.failure.stage === "code_lab"
+    && result.failure.issueCodes.some((code) =>
+      /execution|reference|hidden|runner|docker|mutation/i.test(code))) {
+    return "failed"
+  }
+  return "not_reached"
+}
+
 function summarizeCase(
   evaluationCase: Week3EvaluationCase,
   executionMode: RoleCWeek3ExecutionMode,
@@ -457,16 +489,9 @@ function summarizeCase(
     prerequisite_covered: teaching.prerequisiteCovered,
     weak_concepts_covered: teaching.weakConceptsCovered,
     goal_aligned: teaching.goalAligned,
-    code_execution: result.status === "ready"
-      ? "passed"
-      : result.workflow.some((event) =>
-          event.status === "blocked"
-          && (
-            event.agent.toLowerCase().includes("docker")
-            || /(参考实现|隐藏测试|执行验证|代码验证)/.test(`${event.stage}${event.summary}`)
-          ))
-        ? "failed"
-        : "not_reached",
+    // 改进方案8 第七节1：不再把"资源生成成功"误当成"代码成功执行"，
+    // 读取 workflow 里真实的 Docker 执行验证事件状态。
+    code_execution: inferCodeExecution(result),
     recovery_code: result.recovery?.code ?? "not_used",
     recovery_attempts: result.recovery?.attempts ?? 0,
     ...(result.status === "ready" ? {} : {
@@ -652,54 +677,80 @@ function collectPrerequisites(
   return ordered
 }
 
-function behaviorFor(
-  kind: Week3ResourceKind,
+export function planWeek3ObservableBehavior(
+  learnerLevel: Week3EvaluationCase["learner_level"],
   index: number,
   targetCount: number,
+  item: KnowledgeItem,
+  profile?: Pick<LearnerProfile, "known_concepts" | "weak_concepts">,
 ): ObservableBehavior {
-  if (targetCount > 1) {
-    return (["trace", "apply", "create"] as const)[index]
-      ?? "apply"
+  if (learnerLevel === "beginner") return "explain"
+  if (learnerLevel === "basic") {
+    // 总体等级不能覆盖目标级画像。已明确薄弱或尚无掌握证据的目标先建立
+    // 基础理解；只有画像已掌握的可执行目标才进入简单迁移。
+    if (profile && week3TargetKnowledgeState(profile, item) !== "known") return "explain"
+    // “basic”表示要做简单迁移，不表示任何概念事实都能硬改成编程任务。
+    // 只有当前知识条目本身给出了可执行语法/操作表面，才规划 apply/trace；
+    // 纯概念条目保持 explain，避免生成器为了完成 apply 凭空引入 API。
+    if (!hasExecutableLearningSurface(item)) return "explain"
+    return targetCount > 1 && index > 0 ? "trace" : "apply"
   }
-  if (kind === "concept") return "explain"
-  if (kind === "code_lab") return "create"
-  return "apply"
+  if (learnerLevel === "intermediate") return targetCount > 1 && index > 0 ? "debug" : "apply"
+  return index === 0 ? "create" : "apply"
+}
+
+export function week3TargetKnowledgeState(
+  profile: Pick<LearnerProfile, "known_concepts" | "weak_concepts">,
+  item: Pick<KnowledgeItem, "sourceId" | "title" | "keywords">,
+): "known" | "weak" | "unobserved" {
+  const identities = [item.sourceId, item.title, ...item.keywords]
+    .map(normalizeConcept)
+    .filter(Boolean)
+  const matches = (concept: string) => {
+    const normalized = normalizeConcept(concept)
+    return identities.some((identity) =>
+      identity === normalized || identity.includes(normalized) || normalized.includes(identity))
+  }
+  if (profile.weak_concepts.some(matches)) return "weak"
+  if (profile.known_concepts.some(matches)) return "known"
+  return "unobserved"
+}
+
+function normalizeConcept(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, "").toLocaleLowerCase()
+}
+
+function hasExecutableLearningSurface(item: KnowledgeItem): boolean {
+  const facts = item.facts.map((fact) => fact.content).join("\n")
+  return /(?:\b(?:for|while|if|elif|else|def|return|import|try|except|finally|with|break|continue|raise|del)\b|[A-Za-z_][\w.]*\s*\(|(?:==|!=|<=|>=|\+=|-=|\*=|\/=|\*\*|\/\/)|\[[^\]]*\]|\{[^}]*\}|\s=\s)/u.test(facts)
 }
 
 function assessmentBlueprint(
-  targetCount: number,
-  focus: Week3ResourceKind,
+  behaviors: ObservableBehavior[],
 ): LearningPathNode["assessment_blueprint"] {
-  if (targetCount === 1 && focus === "concept") {
-    return {
-      tier_1_count: 1,
-      tier_2_count: 1,
-      tier_3_count: 0,
-      required_modalities: ["short_answer"],
-    }
-  }
-  if (targetCount === 1 && focus === "assessment") {
-    return {
-      tier_1_count: 1,
-      tier_2_count: 2,
-      tier_3_count: 0,
-      required_modalities: ["mcq", "trace", "short_answer"],
-    }
-  }
-  if (targetCount === 1) {
-    return {
-      tier_1_count: 1,
-      tier_2_count: 1,
-      tier_3_count: 1,
-      required_modalities: ["mcq", "trace", "code"],
-    }
+  const targetCount = behaviors.length
+  const preferred = behaviors.map((behavior) => behavior === "recognize"
+    ? "mcq" as const
+    : behavior === "explain"
+      ? "short_answer" as const
+      : behavior === "trace"
+        ? "trace" as const
+        : behavior === "apply"
+          ? "short_answer" as const
+          : "code" as const)
+  const required = [...new Set(preferred)]
+  if (targetCount === 1) return {
+    tier_1_count: 1,
+    tier_2_count: 1,
+    tier_3_count: 0,
+    required_modalities: required,
   }
   if (targetCount <= 3) {
     return {
       tier_1_count: 2,
       tier_2_count: 2,
       tier_3_count: 1,
-      required_modalities: ["mcq", "trace", "code"],
+      required_modalities: required,
     }
   }
   const total = Math.min(30, Math.max(targetCount, 3))

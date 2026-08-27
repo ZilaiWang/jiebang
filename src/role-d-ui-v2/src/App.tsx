@@ -626,7 +626,7 @@ function MetricDetailModal({ metric, onClose }: { metric: "hallucination" | "ada
   const contents = {
     hallucination: {
       title: "专业知识谬误率（幻觉率）< 5%",
-      badge: "样本实测 0% · 5 会话",
+      badge: "正式口径 · 逐声明审核",
       emoji: "🛡️",
       intro: "AI 讲课会不会「编造」？我们把「防幻觉」做成了架构级约束，而不是靠提示词求 AI 自觉。",
       points: [
@@ -634,7 +634,7 @@ function MetricDetailModal({ metric, onClose }: { metric: "hallucination" | "ada
         { head: "三道独立审核关卡", body: "事实审核 + 教学审核 + 资源适配审核逐层把关，未过审自动修复重生成。" },
         { head: "每句话都可溯源", body: "讲义每段都关联事实来源，前端「知识来源」可展开查看事实原文，一键核查。" },
       ],
-      evidence: "五组真实会话样本实测：183 条引用全部命中知识库事实，无效 0 条，幻觉率 0%（阈值 <5%）。",
+      evidence: "正式报告按已审核事实声明给出问题声明数、总声明数与审核覆盖率；结果以 evaluation/results 的冻结报告为准。",
       tech: ["RAG 检索", "fact_id 强制溯源", "三层审核流水线", "自动修复重生成"],
     },
     adaptation: {
@@ -652,7 +652,7 @@ function MetricDetailModal({ metric, onClose }: { metric: "hallucination" | "ada
     },
     coverage: {
       title: "核心知识点覆盖率 ≥ 90%",
-      badge: "样本实测 100% · 5 会话",
+      badge: "正式口径 · 案例—事实计数",
       emoji: "🗺️",
       intro: "学得深不难，难的是「该学的都学到了」。系统按知识图谱组织内容，确保每个学习目标都被完整覆盖。",
       points: [
@@ -660,7 +660,7 @@ function MetricDetailModal({ metric, onClose }: { metric: "hallucination" | "ada
         { head: "目标-资源覆盖对照", body: "生成讲义时为每个学习目标规划内容分区（讲解/示例/误区/小结/检查），并公开覆盖对照。" },
         { head: "讲义-实验-测评三件套", body: "每个核心知识点配齐定制讲义、代码实验、正式测评，学练测闭环覆盖。" },
       ],
-      evidence: "五组真实会话样本实测：5 个学习目标全部被讲义内容覆盖，覆盖率 100%（阈值 ≥90%）。",
+      evidence: "正式报告按每个案例的核心事实分别计数，只有内容实际表达、引用有效且审核支持时才计为覆盖。",
       tech: ["知识图谱", "前置依赖规划", "objective_coverage 对照", "学练测闭环"],
     },
   } as const
@@ -1433,7 +1433,7 @@ function HighlightShowcase() {
     { icon: "⚖️", cat: "制约", title: "客观封顶", desc: "自评说厉害但诊断全错？画像按客观数据封顶，不轻信自评" },
     { icon: "🔒", cat: "制约", title: "服务端评分", desc: "标准答案与隐藏测试锁在服务端，Docker 沙箱执行，前端抄不到" },
     { icon: "🚧", cat: "制约", title: "审核不过不放行", desc: "事实/教学/适配三道审核任一不过，自动修复重生成后才发布" },
-    { icon: "📊", cat: "实测", title: "五组学习者实测", desc: "幻觉率 0%（183 条引用全命中）、覆盖率 100%（5/5 学习目标）" },
+    { icon: "📊", cat: "实测", title: "正式评测协议", desc: "60 个真实生成案例、180 份资源，逐声明审核、逐资源难度分类并保留分子分母" },
   ]
   return <section className="highlight-showcase" aria-label="项目亮点">
     <header className="highlight-head"><span className="highlight-headline">独特机制与亮点</span><b className="highlight-sub">八角色协作 · 层层把关</b></header>

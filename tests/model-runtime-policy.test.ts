@@ -58,6 +58,17 @@ describe("project model runtime", () => {
     expect(() => budget.consumeModelCall()).toThrow(ModelExecutionBudgetExceededError)
   })
 
+  test("fails closed after the workflow hard deadline", () => {
+    const budget = new ModelExecutionBudget({
+      soft_deadline_ms: 5,
+      hard_deadline_ms: 10,
+      max_model_calls: 10,
+      max_transport_retries_total: 1,
+    })
+    expect(() => budget.consumeModelCall(budget.snapshot().deadline_at_ms + 1))
+      .toThrow("MODEL_EXECUTION_BUDGET_EXCEEDED:DEADLINE")
+  })
+
   test("default content budget covers three reviewed candidates", () => {
     expect(new ModelExecutionBudget().snapshot().max_model_calls).toBe(
       ROLE_C_CONTENT_MODEL_CALL_BUDGET,

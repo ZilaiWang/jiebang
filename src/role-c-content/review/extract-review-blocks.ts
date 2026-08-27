@@ -79,7 +79,13 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
   )
   return [
     ...payload.instructions.flatMap((block) =>
-      reviewRenderBlock("code_lab", block, objectiveByInstruction.get(block.block_id))),
+      reviewRenderBlock(
+        "code_lab",
+        block,
+        objectiveByInstruction.get(block.block_id),
+        "citation_only",
+        "normative_task",
+      )),
     ...payload.public_tests.map((test) => makeBlock(
       "code_lab",
       { field: "public_test", ref_id: test.test_id, objective_id: test.objective_id },
@@ -94,7 +100,7 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       hint.text,
       hint.citations,
       "citation_only",
-      "narrative_explanation",
+      "normative_task",
     ))),
     makeBlock(
       "code_lab",

@@ -57,6 +57,12 @@ export function validateCodeLabPublicStage(
   for (const test of publicPayload.public_tests) {
     if (!targetIds.has(test.objective_id)) issues.push(issue("unknown_public_test_objective", `$.public_tests.${test.test_id}`, `公开测试包含 Spec 外 objective ${test.objective_id}`))
   }
+  issues.push(...validateFrozenStdinLayout(
+    request,
+    publicPayload.starter_code,
+    publicPayload.public_tests.map((test) => ({ id: test.test_id, input: test.input })),
+    "$.public_tests",
+  ))
 
   let coveredCore = 0
   for (const target of coreTargets) {
@@ -152,6 +158,17 @@ export function validateCodeLabDraftStructure(
       ))
     }
   }
+  issues.push(...validateFrozenStdinLayout(
+    request,
+    securePayload.reference_solution,
+    securePayload.hidden_tests.map((test) => ({ id: test.test_id, input: test.input })),
+    "$.secure_draft.payload.hidden_tests",
+  ))
+  issues.push(...validateFrozenStdinTokenShapes(
+    request,
+    publicPayload.public_tests.map((test) => ({ id: test.test_id, input: test.input })),
+    securePayload.hidden_tests.map((test) => ({ id: test.test_id, input: test.input })),
+  ))
 
   const claims = publicPayload.instructions.flatMap((block) => "claims" in block ? block.claims : [])
   const contentCitations = deduplicate([
@@ -243,6 +260,94 @@ export function validateCodeLabDraftStructure(
   issues.push(...validateCodeLabPublicSecureSeparation(publicPayload, securePayload).issues)
   const objectiveCoverage = coreTargets.length === 0 ? 1 : coveredCore / coreTargets.length
   return { ok: issues.length === 0, issues, citations: contentCitations, objective_coverage: objectiveCoverage }
+}
+
+function validateFrozenStdinLayout(
+  request: CodeLabRequest,
+  source: string,
+  tests: Array<{ id: string; input: unknown }>,
+  path: string,
+): ValidationIssue[] {
+  const contract = request.resource_blueprint?.code_lab.task_contract
+  if (contract?.stdin_layout !== "single_line_text") return []
+  const issues: ValidationIssue[] = []
+  const inputCalls = source.match(/\binput\s*\(/gu)?.length ?? 0
+  if (inputCalls > 1) {
+    issues.push(issue(
+      "stdin_layout_mismatch",
+      path,
+      "single_line_text 只允许一次 input() 读取整行，不得用多次 input() 猜测多行协议",
+    ))
+  }
+  for (const test of tests) {
+    if (typeof test.input !== "string" || !isSingleInputLine(test.input)) {
+      issues.push(issue(
+        "stdin_layout_mismatch",
+        `${path}.${test.id}.input`,
+        "single_line_text 测试输入必须把全部字段放在同一行",
+      ))
+    }
+  }
+  return issues
+}
+
+function isSingleInputLine(value: string): boolean {
+  return value.replace(/\r?\n$/u, "").split(/\r?\n/u).length === 1
+}
+
+type StdinTokenKind = "integer" | "decimal" | "boolean" | "text"
+
+/**
+ * Public and hidden tests are different data for one task, not different input
+ * languages.  Free-form model generation previously kept both inputs on one
+ * line but changed integers into words (or vice versa), so a valid reference
+ * parser failed only in Docker.  Freeze the lexical token shape before trusted
+ * execution while still allowing variable-length homogeneous lists.
+ */
+function validateFrozenStdinTokenShapes(
+  request: CodeLabRequest,
+  publicTests: Array<{ id: string; input: unknown }>,
+  hiddenTests: Array<{ id: string; input: unknown }>,
+): ValidationIssue[] {
+  if (request.resource_blueprint?.code_lab.task_contract.stdin_layout !== "single_line_text") return []
+  const publicShapes = publicTests.flatMap((test) =>
+    typeof test.input === "string" ? [stdinTokenShape(test.input)] : [])
+  if (publicShapes.length === 0) return []
+  const homogeneousKind = publicShapes.every((shape) =>
+    shape.length > 0 && shape.every((kind) => kind === publicShapes[0]?.[0]))
+    ? publicShapes[0]?.[0]
+    : undefined
+  const issues: ValidationIssue[] = []
+  for (const test of hiddenTests) {
+    if (typeof test.input !== "string") continue
+    const hiddenShape = stdinTokenShape(test.input)
+    const compatible = homogeneousKind
+      ? hiddenShape.length > 0 && hiddenShape.every((kind) => kind === homogeneousKind)
+      : publicShapes.some((shape) => sameTokenShape(shape, hiddenShape))
+    if (!compatible) {
+      issues.push(issue(
+        "stdin_token_shape_mismatch",
+        `$.secure_draft.payload.hidden_tests.${test.id}.input`,
+        `隐藏输入的 token 类型序列 ${hiddenShape.join("/") || "empty"} 与公开输入合同不一致`,
+      ))
+    }
+  }
+  return issues
+}
+
+function stdinTokenShape(value: string): StdinTokenKind[] {
+  const text = value.replace(/\r?\n$/u, "").trim()
+  if (!text) return []
+  return text.split(/\s+/u).map((token) => {
+    if (/^[+-]?\d+$/u.test(token)) return "integer"
+    if (/^[+-]?(?:\d+\.\d*|\d*\.\d+)$/u.test(token)) return "decimal"
+    if (/^(?:true|false)$/iu.test(token)) return "boolean"
+    return "text"
+  })
+}
+
+function sameTokenShape(left: StdinTokenKind[], right: StdinTokenKind[]): boolean {
+  return left.length === right.length && left.every((kind, index) => kind === right[index])
 }
 
 function codeLabPlannedFactIds(

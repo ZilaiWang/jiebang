@@ -50,13 +50,9 @@ describe("改进方案5 第六节：讲义 Section Plan", () => {
       ["F010", "F011", "F012"],
     ])
     expect(explanationSlots.every((slot) => slot.fact_ids.length <= 3)).toBe(true)
-    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.fact_ids).toEqual([
-      "F001", "F002", "F003",
-    ])
-    expect(plan.slots.find((slot) => slot.kind === "recap")?.fact_ids).toEqual([
-      "F001", "F002", "F003",
-    ])
-    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.max_sentences).toBe(6)
+    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.fact_ids).toEqual(factIds)
+    expect(plan.slots.find((slot) => slot.kind === "recap")?.fact_ids).toEqual(factIds)
+    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.max_sentences).toBe(8)
   })
 
   test("未允许 procedure_trace 时不得生成 procedure_steps slot", () => {

@@ -1,4 +1,6 @@
 import type { CandidateSelectionResult, PublicCandidateEvaluation } from "./contracts"
+import { ModelGatewayError, ModelProviderUnavailableError } from "../contracts/model-gateway"
+import { ModelExecutionBudgetExceededError } from "../../model-runtime/execution-budget"
 
 export class PublicQualityGateError extends Error {
   readonly code = "PUBLIC_QUALITY_GATE_FAILED"
@@ -34,6 +36,16 @@ export async function runPublicCandidateTournament<T>(input: {
     result.status === "fulfilled"
       ? [{ candidate: result.value, variant_index: variantIndex }]
       : [])
+  const generationErrors = settled.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [])
+  // “候选质量不合格”和“模型服务根本没有返回候选”是两个不同终局。
+  // 余额、认证、网络、超时或工作流预算导致全部候选调用失败时，保留原始
+  // provider/runtime 错误，让上层进入 failed/retry；不能伪装成 C 内容门禁。
+  if (successful.length === 0
+    && generationErrors.length > 0
+    && generationErrors.every(isOperationalGenerationFailure)) {
+    throw generationErrors[0]
+  }
   let evaluations = successful.map((entry) => ({
     entry,
     evaluation: input.evaluate(entry.candidate, entry.variant_index),
@@ -75,4 +87,12 @@ export async function runPublicCandidateTournament<T>(input: {
     evaluations: evaluations.map((entry) => entry.evaluation),
     rejected_generation_count: settled.length - successful.length,
   }
+}
+
+function isOperationalGenerationFailure(error: unknown): boolean {
+  if (error instanceof ModelGatewayError
+    || error instanceof ModelProviderUnavailableError
+    || error instanceof ModelExecutionBudgetExceededError) return true
+  if (!(error instanceof Error)) return false
+  return /MODEL_PROVIDER_CIRCUIT_(?:OPEN|HALF_OPEN)|MODEL_WORKFLOW_(?:DEADLINE|CALL_BUDGET)|REVIEW_TRANSPORT_ERROR/u.test(error.message)
 }

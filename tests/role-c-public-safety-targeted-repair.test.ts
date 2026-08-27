@@ -6,8 +6,8 @@ import {
 } from "../src/role-c-content/providers/model-backed-provider"
 
 describe("Role C targeted public-safety repair", () => {
-  test("uses deterministic compression for reference solution leaks", () => {
-    expect(shouldUseDeterministicPublicSafetyRepair(["reference_solution_leak"])).toBe(true)
+  test("只在 starter 本身等于答案时确定性压缩，跨字段答案泄漏交给定向语义修订", () => {
+    expect(shouldUseDeterministicPublicSafetyRepair(["reference_solution_leak"])).toBe(false)
     expect(shouldUseDeterministicPublicSafetyRepair(["starter_equals_reference"])).toBe(true)
     expect(shouldUseDeterministicPublicSafetyRepair(["hidden_test_id_leak"])).toBe(false)
   })
@@ -58,6 +58,24 @@ describe("Role C targeted public-safety repair", () => {
     expect(patch.starter_code).toContain("TODO")
     expect(patch.starter_code).not.toContain("通用编程语言")
     expect(patch.starter_code).not.toContain("NotImplementedError")
+  })
+
+  test("安全修订清除分散在说明和提示中的参考实现行", () => {
+    const patch = conservativeCodeLabPublicSafetyPatch({
+      starter_code: "def greet(name):\n    # TODO\n    pass\n",
+      execution_contract: { execution_mode: "function", entry_point: "greet" },
+      instructions: [{ block_id: "B1", text: "先写 message = '你好，' + name" }],
+      public_tests: [{ test_id: "P1", description: "调用 greet", expected_behavior: "返回问候文本" }],
+      hint_ladders: [{ objective_id: "O1", hints: [
+        { text: "先拼接" }, { text: "使用 message = '你好，' + name" }, { text: "最后 return message" },
+      ] }],
+      reflection_questions: ["为什么 return message？"],
+    } as any, "def greet(name):\n    message = '你好，' + name\n    return message\n")
+    const visible = JSON.stringify(patch)
+    expect(visible).not.toContain("message = '你好，' + name")
+    expect(visible).not.toContain("return message")
+    expect(patch.instruction_texts).toHaveLength(1)
+    expect(patch.hint_texts[0]).toHaveLength(3)
   })
 
   test("compresses assessment code public fields when secure reference leaks", () => {

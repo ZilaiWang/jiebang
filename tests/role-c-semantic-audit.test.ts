@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { ModelGateway } from "../src/role-c-content/contracts/model-gateway"
+import type { ModelGateway, StructuredModelRequest } from "../src/role-c-content/contracts/model-gateway"
 import type { AssessmentPublicArtifact } from "../src/role-c-content/contracts/artifacts"
 import { extractAssessmentBlocks } from "../src/role-c-content/review/extract-review-blocks"
 import {
@@ -108,6 +108,33 @@ describe("Role C model semantic fact audit", () => {
     await expect(
       new ModelContentSemanticAuditPort(gateway).auditArtifact(auditInput()),
     ).rejects.toThrow("RESULT_COUNT_MISMATCH")
+  })
+
+  test("retries one malformed structured audit batch with a distinct format request", async () => {
+    let calls = 0
+    const requests: any[] = []
+    const gateway: ModelGateway = {
+      model_id: "semantic-audit-flaky",
+      model_config_hash: "MODEL-semantic-audit-flaky",
+      async generateStructured<T>(request: StructuredModelRequest): Promise<T> {
+        requests.push(request)
+        calls += 1
+        if (calls === 1) return { results: [{ block_index: 0, verdict: "maybe" }] } as T
+        return { results: [{
+          block_index: 0,
+          verdict: "supported",
+          reason: "引用事实足以判断。",
+          unsupported_text: [],
+          support_gap: "none",
+          suggested_scope: "artifact",
+        }] } as T
+      },
+    }
+    const result = await new ModelContentSemanticAuditPort(gateway).auditArtifact(auditInput())
+    expect(result[0]?.verdict).toBe("supported")
+    expect(requests).toHaveLength(2)
+    expect(requests[1]?.input.format_retry).toContain("结构合同")
+    expect(requests[0]?.idempotency_key).not.toBe(requests[1]?.idempotency_key)
   })
 
   test("keeps an unlocated unsupported verdict blocked without failing the pipeline contract", async () => {

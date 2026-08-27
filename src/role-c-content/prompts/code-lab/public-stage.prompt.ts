@@ -47,11 +47,12 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - execution_contract 里的 execution_mode 直接抄写 staged_contract.execution_mode，不要写成另一个值
 
 【task_contract 完整任务契约（存在时强制遵循）】
-- staged_contract.task_contract 给出本实验的完整判题契约：program_entry（程序入口）、input_form（输入形式）、output_form（输出形式）、grading_invocation（判题调用方式）、output_constraint（输出约束）。
+- staged_contract.task_contract 给出本实验的完整判题契约：program_entry（程序入口）、input_form（输入形式）、stdin_layout（stdin 确切布局）、output_form（输出形式）、grading_invocation（判题调用方式）、output_constraint（输出约束）。
 - 你创作的 instruction、starter_code、public_test、execution_contract 必须与这些字段一致：
   - learner_action=recall_fact / learner_owned_region=fact_literal 时，学习者只替换由当前 cited fact 直接给出的一个短词或短句占位；input_form=none，public_test.input 为空字符串。starter_code 必须已给出赋值和 print 胶水，用 TODO 标出唯一事实文本待填区；不得读取 input，不得要求学习者编写 if/elif、循环、函数或其他旁支逻辑。instruction、hints 和反思题不得要求学习者推断证据没有说明的参数、冒号、缩进、API、错误结果或运行机制。
   - learner_action=implement_program 时，学习者补完整程序的核心处理逻辑；learner_action=implement_function 时，学习者补入口函数体并返回结果。
   - input_form=stdin_lines 时，题目的外部输入是标准输入文本，不得把函数参数当作判题入口；output_form=stdout_lines 时，评分产物是标准输出文本，不得把函数返回值当作判题结果。完整程序内可以定义辅助函数来组织逻辑。
+  - stdin_layout=single_line_text 时，每个测试的全部输入都在一行，字段用空格分隔；starter、public_test.input、execution_contract.input_contract 必须使用这一布局，不得改成“首行 n，后续 n 行”。一次 input().strip().split() 应能读取全部 token。
   - input_form=function_arguments 时，判题器以参数调用入口函数；output_form=return_value 时，评分产物是函数返回值，不得把 print 输出作为评分结果。
 - 若 staged_contract 没有 task_contract（旧路径），按上方 execution_mode 规则执行。
 
@@ -61,6 +62,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - 核心逻辑必须留空（function 模式函数体写 pass 或 raise NotImplementedError("TODO")；stdin_stdout 模式只保留安全的读取/输出骨架或 TODO），不得包含实际答案逻辑
 - 绝对不可：写 return 语句返回计算结果、写完整的循环体或条件判断、写任何可能通过测试的代码
 - 宁可太简单被安全门禁退回，也不可写出接近答案的代码
+- learner_adaptation.level=beginner 时可保留完整外围骨架并逐步提示；level=basic 时只保留输入输出胶水、必要初始化和 TODO 边界，目标行为需要的两到三个相连操作必须由学习者完成，不得把核心循环、判断、调用或索引语句逐行写好。
 
 【public_test 公开测试】
 - 第一个测试覆盖最基本情况，让学习者快速获得正向反馈
@@ -68,6 +70,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - description 描述可观察行为，expected_behavior 描述正确运行时的预期
 - function 模式的 input 使用调用封装，expected_behavior 描述函数返回值；stdin_stdout 模式的 input 是标准输入文本，expected_behavior 描述标准输出文本
 - stdin_stdout 的公开测试按精确输出设计：除非提示文字本身就是学习目标，否则使用不带提示参数的 input()；starter、instruction 或题目要求产生的每一段输出都必须出现在 output_contract 与 expected_behavior 中，不能只描述其中一部分
+- stdin_layout=single_line_text 时，public_test.input 必须是单行文本（末尾可带一个换行），所有案例使用同一字段顺序。
 - 多目标实验仍然只是一个连贯任务：所有 objectives 共用同一个外部输入协议、输出协议和 starter，每个 public_test 只用不同数据检查该任务中的不同目标。不得把每个 objective 写成不同函数、不同输入形状或彼此无关的小题
 - stdin_stdout 多目标时，各测试的输入行数、字段含义和输出形式必须一致；不得通过“输入一行做判断、两行做加法、三行做平均值”这类分支把多道题塞进一个程序
 
@@ -75,6 +78,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - Level 1（方向）：指出思考方向，不涉及具体做法
 - Level 2（结构）：只依据当前 facts 指出要选择或填写的目标语义
 - Level 3（细节）：说明如何在 starter 已给骨架内应用当前事实；不得教授 evidence 未包含的函数、运算符、语法或运行机制
+- learner_adaptation.level=basic 时，三级提示可以指出已引用的事实或操作顺序，但不得给出可以逐字复制成完整答案的连续代码语句；学习者仍需自己把两到三个步骤连接起来。
 
 【reflection_question 反思题】
 - 只围绕当前 facts 与本实验已明示的输入输出合同提问；不得预设 evidence 未说明的语言行为、边界或泛化规则

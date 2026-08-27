@@ -10,6 +10,11 @@ import {
   normalizeGroundedClaimText,
   visibleTeachingTextExpressesFact,
 } from "../validators/claim-grounding"
+import {
+  inferFactCapabilities,
+  selectEvidenceBundle,
+  type CapabilityFactLike,
+} from "../../knowledge/capabilities"
 
 /**
  * 讲义 Section Plan（改进方案5 第六节）。
@@ -59,6 +64,11 @@ export interface ConceptSectionPlan {
   objective_id: string
   mode: ConceptAuthoringMode
   slots: ConceptSectionSlot[]
+  micro_check: {
+    mode: "recognition" | "guided_application" | "transfer"
+    fact_ids: string[]
+    minimum_reasoning_steps: 1 | 2 | 3
+  }
 }
 
 const MAX_FACTS_PER_EXPLANATION_SLOT = 3
@@ -106,6 +116,8 @@ export function buildConceptSectionPlan(input: {
   observable_behavior: ObservableBehavior
   fact_ids: string[]
   support: ObjectiveSupportPlan
+  learner_level?: "beginner" | "basic" | "intermediate" | "integrated"
+  micro_check_fact_ids?: string[]
 }): ConceptSectionPlan {
   const { fact_ids } = input
   const mode = conceptModeForSupport(input.support, fact_ids.length)
@@ -147,11 +159,18 @@ export function buildConceptSectionPlan(input: {
           allowed_block_types: ["comparison", "paragraph"],
         })]
       : [slot("guided_example", {
-          fact_ids: primaryFactGroup,
+          // A guided explanation may combine any facts already frozen for the
+          // objective. Restricting it to the first (usually definition-only)
+          // chunk forced basic learners back into a recall-only example even
+          // when later facts exposed safe application behavior.
+          fact_ids,
           allowed_moves: ["direct_instance", "recognition_check"],
           min_sentences: 1,
-          max_sentences: Math.max(4, primaryFactGroup.length * 2),
-          allowed_block_types: ["paragraph", "code"],
+          max_sentences: Math.max(4, Math.min(8, fact_ids.length + 2)),
+          // Only procedural evidence may author executable Python.  A pure
+          // definition/example objective otherwise tends to invent print,
+          // variables or string syntax merely to satisfy a code-shaped slot.
+          allowed_block_types: ["paragraph"],
         })]
 
   const misconceptionSlot = slot("misconception", {
@@ -162,17 +181,28 @@ export function buildConceptSectionPlan(input: {
     allowed_block_types: ["callout"],
   })
   const recapSlot = slot("recap", {
-    fact_ids: primaryFactGroup,
+    // Recap 压缩整个 objective，因此它的引用边界也必须覆盖
+    // 整个 objective。只绑首组事实会让正常总结后半段变成“内容
+    // 正确但引用错位”。
+    fact_ids,
     allowed_moves: ["direct_paraphrase"],
     min_sentences: 1,
     max_sentences: 3,
     allowed_block_types: ["paragraph"],
   })
 
+  const plannedMicroCheckFacts = input.micro_check_fact_ids?.length
+    ? input.micro_check_fact_ids
+    : primaryFactGroup
   return {
     objective_id: input.objective_id,
     mode,
     slots: [...commonSlots, ...modeSlots, misconceptionSlot, recapSlot],
+    micro_check: input.learner_level === "beginner"
+      ? { mode: "recognition", fact_ids: primaryFactGroup, minimum_reasoning_steps: 1 }
+      : input.observable_behavior === "create"
+        ? { mode: "transfer", fact_ids: plannedMicroCheckFacts.slice(0, 4), minimum_reasoning_steps: 3 }
+        : { mode: "guided_application", fact_ids: plannedMicroCheckFacts.slice(0, 4), minimum_reasoning_steps: 2 },
   }
 }
 
@@ -310,20 +340,15 @@ export function validateConceptSectionStructure(input: {
     if (section.code && !planned.allowed_block_types.includes("code")) {
       issues.push(`section ${section.slot_id} 不允许生成 code`)
     }
-    if (section.steps.length > 0 && planned.kind !== "procedure_steps") {
-      issues.push(`section ${section.slot_id} 仅 procedure_steps 可返回 steps`)
-    }
     const sentences = splitTeachingSentences(section.body)
     if (sentences.length < planned.min_sentences) {
       issues.push(
         `section ${section.slot_id} 至少需要 ${planned.min_sentences} 个有效句子，实际 ${sentences.length}`,
       )
     }
-    if (sentences.length > planned.max_sentences) {
-      issues.push(
-        `section ${section.slot_id} 最多允许 ${planned.max_sentences} 个句子，实际 ${sentences.length}`,
-      )
-    }
+    // max_sentences 是生成与质量评价的密度目标，不是事实正确性合同。
+    // 模型多写一两个有效句子，或确定性事实锚定补入权威句后，不应让整份
+    // 讲义失效。重复、空内容、事实覆盖和引用仍由下方独立规则严格检查。
     const distinctSentences = new Set(sentences.map(normalizeGroundedClaimText))
     if (distinctSentences.size < sentences.length) {
       issues.push(`section ${section.slot_id} 不得用重复句子填充篇幅`)
@@ -431,6 +456,71 @@ export interface ConceptSegmentAuthorPayloadV2 {
   }>
 }
 
+/**
+ * 将冻结证据的事实核心稳定地放入学习者可见讲义。
+ *
+ * 模型仍负责标题、解释、例子和教学组织；程序只在对应的
+ * fact_explanation slot 中补入没有完整表达的权威事实句。这使
+ * “事实真值”与“教学表达”分层，避免自由改写遗漏核心事实，也不会
+ * 把 citation 或内部 ID 暴露到正文。
+ */
+export function anchorConceptFactsInVisibleText(input: {
+  payload: ConceptSegmentAuthorPayloadV2
+  request: ConceptTutorRequest
+  plans: ConceptSectionPlan[]
+}): ConceptSegmentAuthorPayloadV2 {
+  const payload = structuredClone(input.payload)
+  payload.title = normalizeLearnerVisibleAuditLanguage(payload.title)
+  for (const objective of payload.objectives) {
+    for (const section of objective.sections) {
+      section.heading = normalizeLearnerVisibleAuditLanguage(section.heading)
+      section.body = normalizeLearnerVisibleAuditLanguage(section.body)
+      section.steps = section.steps.map(normalizeLearnerVisibleAuditLanguage)
+      if (section.code) section.code = normalizeLearnerVisibleAuditLanguage(section.code)
+    }
+    objective.micro_check.prompt = normalizeLearnerVisibleAuditLanguage(objective.micro_check.prompt)
+    objective.micro_check.options = objective.micro_check.options.map(normalizeLearnerVisibleAuditLanguage)
+    objective.micro_check.answer = normalizeLearnerVisibleAuditLanguage(objective.micro_check.answer)
+    objective.micro_check.explanation = normalizeLearnerVisibleAuditLanguage(objective.micro_check.explanation)
+    objective.hints = objective.hints.map(normalizeLearnerVisibleAuditLanguage)
+  }
+  const factsByKey = new Map(input.request.evidence_pack.results.flatMap((source) =>
+    source.facts.map((fact) => [`${source.source_id}:${fact.fact_id}`, fact.content] as const)))
+  const targetByObjective = new Map(input.request.generation_spec.targets.map((target) =>
+    [target.objective_id, target] as const))
+
+  for (const objective of payload.objectives) {
+    const target = targetByObjective.get(objective.objective_id)
+    const plan = input.plans.find((entry) => entry.objective_id === objective.objective_id)
+    if (!target || !plan) continue
+    const sectionBySlot = new Map(objective.sections.map((section) => [section.slot_id, section]))
+    for (const slot of plan.slots.filter((entry) => entry.kind === "fact_explanation")) {
+      const section = sectionBySlot.get(slot.slot_id)
+      if (!section) continue
+      const anchors = slot.fact_ids.flatMap((factId) => {
+        const fact = factsByKey.get(`${target.source_id}:${factId}`)?.trim()
+        if (!fact || visibleTeachingTextExpressesFact(section.body, fact)) return []
+        return [fact]
+      })
+      if (anchors.length > 0) section.body = `${anchors.join("。")}。${section.body}`
+    }
+  }
+  return payload
+}
+
+function normalizeLearnerVisibleAuditLanguage(value: string): string {
+  return value
+    .replace(/\b(?:source|fact)[-_ ]?id\s*[:：]?\s*[KF]?\d*\b/giu, "")
+    .replace(/(?:证据事实|引用事实|事实编号|知识库编号)\s*[:：]?\s*[KF]?\d*/gu, "")
+    .replace(/\bRAG\b/gu, "当前学习材料")
+    .replace(/\bevidence(?:_pack)?\b/giu, "当前学习材料")
+    .replace(/内部审核/gu, "内容检查")
+    .replace(/隐藏测试/gu, "额外检查")
+    .replace(/正确答案/gu, "本题答案")
+    .replace(/[ \t]{2,}/gu, " ")
+    .trim()
+}
+
 /** V2 模型输出必须与冻结的 objective/slot 身份一一对应。 */
 export function validateConceptSegmentV2AgainstPlans(
   payload: ConceptSegmentAuthorPayloadV2,
@@ -494,7 +584,29 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
   const identity = { spec_id, objective_id, source_id }
   const authoredBySlot = new Map(authored.sections.map((section) => [section.slot_id, section]))
 
-  const claimsFor = (slot: ConceptSectionSlot) => slot.fact_ids.map((factId, index) => ({
+  const visibleFactIdsFor = (
+    slot: ConceptSectionSlot,
+    section: AuthoredSection,
+  ): string[] => {
+    const visible = [section.heading, section.body, ...section.steps, section.code ?? ""].join("\n")
+    return [...new Set([
+      ...slot.fact_ids,
+      ...citations.flatMap((citation) => {
+        const fact = factTextByFactId.get(factKey({ source_id, fact_id: citation.fact_id }))
+          ?? factTextByFactId.get(citation.fact_id)
+        return fact && visibleTeachingTextExpressesFact(visible, fact)
+          ? [citation.fact_id]
+          : []
+      }),
+    ])]
+  }
+
+  // Claims/citations follow the final learner-visible text.  A model may reuse
+  // another authoritative fact from the same frozen objective in an example
+  // or recap; attaching that fact here is more accurate than rejecting the
+  // whole lesson merely because the prose crossed an internal slot boundary.
+  const claimsFor = (slot: ConceptSectionSlot, section: AuthoredSection) =>
+    visibleFactIdsFor(slot, section).map((factId, index) => ({
     claim_id: stableId("CONCEPT-CLAIM", { ...identity, slot_id: slot.slot_id, fact_id: factId, index }),
     text: factTextByFactId.get(factKey({ source_id, fact_id: factId }))
       ?? factTextByFactId.get(factId)
@@ -502,7 +614,7 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
     citations: citations
       .filter((citation) => citation.fact_id === factId)
       .map((citation) => structuredClone(citation)),
-  }))
+    }))
 
   const explanationBlocks: ConceptLessonPayload["explanation_blocks"] = []
   const workedExamples: ConceptLessonPayload["worked_examples"] = []
@@ -517,12 +629,13 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
       continue
     }
     if (slot.kind === "misconception") {
+      const visibleFactIds = visibleFactIdsFor(slot, section)
       misconceptions.push({
         misconception_tag: stableId("CONCEPT-MISCONCEPTION", { ...identity, slot_id: slot.slot_id }),
         explanation: section.body.trim() || "常见误解：请结合上文事实自查。",
         objective_id,
         citations: citations
-          .filter((citation) => slot.fact_ids.includes(citation.fact_id))
+          .filter((citation) => visibleFactIds.includes(citation.fact_id))
           .map((citation) => structuredClone(citation)),
       })
       continue
@@ -532,7 +645,7 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
         block_id: stableId("CONCEPT-SUMMARY", { ...identity, slot_id: slot.slot_id }),
         block_type: "paragraph",
         text: section.body.trim(),
-        claims: claimsFor(slot),
+        claims: claimsFor(slot, section),
       })
       coverageBlockIds.push(stableId("CONCEPT-SUMMARY", { ...identity, slot_id: slot.slot_id }))
       continue
@@ -544,7 +657,7 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
       objective_id,
       slot,
       section: sectionWithSteps,
-      claims: claimsFor(slot),
+      claims: claimsFor(slot, section),
     })
     const practiceSlot = slot.kind === "guided_example"
       || slot.kind === "procedure_steps"
@@ -556,8 +669,7 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
   // micro_check
   const optionIndex = authored.micro_check.options.findIndex((option) =>
     option.trim().toLocaleLowerCase() === authored.micro_check.answer.trim().toLocaleLowerCase())
-  const primaryFactIds = plan.slots.find((slot) =>
-    slot.kind === "fact_explanation")?.fact_ids ?? []
+  const primaryFactIds = plan.micro_check.fact_ids
   const primaryCitations = citations.filter((citation) =>
     primaryFactIds.includes(citation.fact_id))
   const micro_check: QuizBlock = {
@@ -604,10 +716,10 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
 export function buildConceptSectionPlansForSegment(
   request: ConceptTutorRequest,
 ): ConceptSectionPlan[] {
-  const factsByKey = new Map<string, { content: string }>()
+  const factsByKey = new Map<string, CapabilityFactLike>()
   for (const item of request.evidence_pack.results) {
     for (const fact of item.facts) {
-      factsByKey.set(`${item.source_id}:${fact.fact_id}`, { content: fact.content })
+      factsByKey.set(`${item.source_id}:${fact.fact_id}`, fact)
     }
   }
   return request.generation_spec.targets.map((target) => {
@@ -622,11 +734,32 @@ export function buildConceptSectionPlansForSegment(
       fact_refs: factRefs,
       facts,
     })
+    const selected = selectEvidenceBundle({
+      behavior: target.observable_behavior,
+      facts,
+      max_facts: 4,
+    }).fact_ids
+    // 应用型单选不仅要有“怎么做”的规则，还要有能排除干扰项的边界/对比事实。
+    // 否则作者容易写出合理但无法由局部引用唯一判定的选项。
+    const discriminatingFact = facts.find((fact) => {
+      const capabilities = fact.capabilities?.length
+        ? fact.capabilities
+        : inferFactCapabilities(fact.content)
+      return capabilities.includes("boundary") || capabilities.includes("contrast")
+    })
+    const discriminatingFactId = discriminatingFact?.fact_id ?? discriminatingFact?.factId
+    const microCheckFactIds = [...new Set([
+      ...selected,
+      ...(discriminatingFactId ? [discriminatingFactId] : []),
+      ...target.required_fact_ids,
+    ])]
     return buildConceptSectionPlan({
       objective_id: target.objective_id,
       observable_behavior: target.observable_behavior,
       fact_ids: target.required_fact_ids,
       support,
+      learner_level: request.generation_spec.learner_adaptation.level,
+      micro_check_fact_ids: microCheckFactIds,
     })
   })
 }

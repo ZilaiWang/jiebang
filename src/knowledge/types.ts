@@ -90,6 +90,11 @@ export interface KnowledgeItem {
   file: string
   snippet: string
   facts: KnowledgeFact[]
+  /**
+   * 课程验收与本轮教学必须覆盖的核心事实。其余 facts 仍可作为生成、
+   * 举例和边界说明的证据，但不会被强制塞进每一份初学者资源。
+   */
+  coreFactIds?: string[]
   examples: KnowledgeExample[]
   practiceTasks: string[]
   quizItems: KnowledgeQuizItem[]
