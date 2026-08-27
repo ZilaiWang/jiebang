@@ -9,6 +9,20 @@ playwright-report/
 opencode.json
 .env.role-c.local
 
+# Generated competition-evaluation artifacts. Commit a curated report under
+# docs/ instead of raw model outputs, runtime state, or audit payloads.
+evaluation/results/claims.json
+evaluation/results/difficulty-audits.json
+evaluation/results/judge-usage.json
+evaluation/results/latest.json
+evaluation/results/latest.md
+evaluation/results/manual-audit-template.csv
+evaluation/results/protocol.json
+evaluation/results/runs/
+evaluation/results/runtime/
+evaluation/results/showcase-comparison.json
+evaluation/results/showcase-comparison.md
+
 .opencode
 
 # Hermes 桌面附件（不入库）

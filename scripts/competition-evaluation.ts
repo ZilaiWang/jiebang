@@ -130,7 +130,13 @@ async function main(): Promise<void> {
   assertSelectionMatchesManifest(selectedCases, manifest.cases)
 
   const localEnv = await readEnvFile(resolve(ROOT, ".env.role-c.local"))
-  const env = { ...localEnv, ...process.env }
+  const explicitEnv = { ...localEnv, ...process.env }
+  const persistedGenerationEnv = await readPersistedGenerationProvider(resolve(
+    ROOT,
+    explicitEnv.COMPETITION_GENERATION_CONFIG_PATH
+      ?? ".tmp/integrated-orchestrator/provider-config.json",
+  ))
+  const env = { ...persistedGenerationEnv, ...explicitEnv }
   const judgeEnv = competitionJudgeEnv(env)
   const judgeUsage: Array<Record<string, unknown>> = []
   const judgeGateway = createRoleCModelGatewayFromEnv(judgeEnv, {
@@ -467,7 +473,7 @@ function renderMarkdownReport(report: FinalCompetitionReport): string {
     `- 记录：${report.operational.completed_case_records} / ${report.operational.expected_runs}`,
     `- ready / blocked / failed：${report.operational.ready} / ${report.operational.blocked} / ${report.operational.failed}`,
     `- Docker 可信执行 passed / failed / not_reached：${report.operational.code_execution_passed} / ${report.operational.code_execution_failed} / ${report.operational.code_execution_not_reached}`,
-    `- 独立评审异常案例：${report.operational.evaluation_error_cases}`, "",
+    `- 含生成/评测错误的案例：${report.operational.evaluation_error_cases}`, "",
     `## 总判定：${report.passed ? "通过" : "未通过"}`, "",
   )
   return `${lines.join("\n")}\n`
@@ -644,13 +650,40 @@ function option(values: string[], name: string): string | undefined {
 }
 
 function competitionJudgeEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const hasIndependentJudgeConfig = Boolean(
+    env.COMPETITION_JUDGE_ENDPOINT?.trim() || env.COMPETITION_JUDGE_MODEL_ID?.trim(),
+  )
+  const endpoint = env.COMPETITION_JUDGE_ENDPOINT
+    ?? env.MODEL_RUNTIME_ENDPOINT
+    ?? env.ROLE_C_MODEL_ENDPOINT
+  const model = env.COMPETITION_JUDGE_MODEL_ID
+    ?? env.MODEL_RUNTIME_MODEL_ID
+    ?? env.ROLE_C_MODEL_ID
+  const apiKey = hasIndependentJudgeConfig
+    ? env.COMPETITION_JUDGE_API_KEY
+    : env.MODEL_RUNTIME_API_KEY ?? env.ROLE_C_MODEL_API_KEY
+  const responseFormat = env.COMPETITION_JUDGE_RESPONSE_FORMAT
+    ?? env.MODEL_RUNTIME_RESPONSE_FORMAT
+    ?? env.ROLE_C_MODEL_RESPONSE_FORMAT
+  const schemaStrict = env.COMPETITION_JUDGE_SCHEMA_STRICT
+    ?? env.ROLE_C_MODEL_SCHEMA_STRICT
+  const thinking = env.COMPETITION_JUDGE_THINKING ?? "disabled"
+  const timeout = env.COMPETITION_JUDGE_TIMEOUT_MS ?? env.ROLE_C_MODEL_TIMEOUT_MS
   return {
     ...env,
-    ROLE_C_MODEL_ENDPOINT: env.COMPETITION_JUDGE_ENDPOINT ?? env.ROLE_C_MODEL_ENDPOINT,
-    ROLE_C_MODEL_ID: env.COMPETITION_JUDGE_MODEL_ID ?? env.ROLE_C_MODEL_ID,
-    ROLE_C_MODEL_API_KEY: env.COMPETITION_JUDGE_API_KEY ?? env.ROLE_C_MODEL_API_KEY,
-    ROLE_C_MODEL_THINKING: env.COMPETITION_JUDGE_THINKING ?? "disabled",
-    ROLE_C_MODEL_TIMEOUT_MS: env.COMPETITION_JUDGE_TIMEOUT_MS ?? env.ROLE_C_MODEL_TIMEOUT_MS,
+    // createRoleCModelGatewayFromEnv gives MODEL_RUNTIME_* precedence, so set
+    // both namespaces to keep judge overrides independent from generation.
+    MODEL_RUNTIME_ENDPOINT: endpoint,
+    MODEL_RUNTIME_MODEL_ID: model,
+    MODEL_RUNTIME_API_KEY: apiKey,
+    MODEL_RUNTIME_RESPONSE_FORMAT: responseFormat,
+    ROLE_C_MODEL_ENDPOINT: endpoint,
+    ROLE_C_MODEL_ID: model,
+    ROLE_C_MODEL_API_KEY: apiKey,
+    ROLE_C_MODEL_RESPONSE_FORMAT: responseFormat,
+    ROLE_C_MODEL_SCHEMA_STRICT: schemaStrict,
+    ROLE_C_MODEL_THINKING: thinking,
+    ROLE_C_MODEL_TIMEOUT_MS: timeout,
   }
 }
 
@@ -690,6 +723,24 @@ async function readEnvFile(path: string): Promise<Record<string, string>> {
     parsed[match[1]!] = value
   }
   return parsed
+}
+
+async function readPersistedGenerationProvider(path: string): Promise<Record<string, string>> {
+  const file = Bun.file(path)
+  if (!await file.exists()) return {}
+  const parsed = JSON.parse((await file.text()).replace(/^\uFEFF/, "")) as Record<string, unknown>
+  const endpoint = typeof parsed.endpoint === "string" ? parsed.endpoint.trim() : ""
+  const model = typeof parsed.model_id === "string" ? parsed.model_id.trim() : ""
+  const apiKey = typeof parsed.api_key === "string" ? parsed.api_key.trim() : ""
+  if (parsed.provider_mode !== "model" || !endpoint || !model || !apiKey) {
+    throw new Error(`INVALID_GENERATION_PROVIDER_CONFIG:${path}`)
+  }
+  return {
+    ROLE_C_PROVIDER_MODE: "model",
+    ROLE_C_MODEL_ENDPOINT: endpoint,
+    ROLE_C_MODEL_ID: model,
+    ROLE_C_MODEL_API_KEY: apiKey,
+  }
 }
 
 async function evaluationSourceTreeHash(): Promise<string> {
