@@ -2,11 +2,13 @@ import { stableId } from "../contracts/common"
 import type { RagEvidencePack } from "../contracts/evidence-pack"
 import type { GenerationSpec } from "../contracts/generation-spec"
 import type { AssessmentItemPlan } from "../providers/staged-generation"
+import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
 
 export interface LearningDesignSpecV2 {
   schema_version: "learning-design.v2"
   design_id: string
   spec_id: string
+  pedagogy_contract?: RoleCPedagogyContract
   learner: {
     level: GenerationSpec["learner_adaptation"]["level"]
     skills: Array<{
@@ -37,7 +39,7 @@ export interface LearningDesignSpecV2 {
   lesson_sequence: Array<{
     block_id: string
     objective_id: string
-    kind: "activation" | "explanation" | "worked_example" | "contrast" | "micro_check" | "guided_practice" | "transfer"
+    kind: "activation" | "explanation" | "worked_example" | "contrast" | "micro_check" | "guided_practice" | "debugging_clinic" | "transfer"
     purpose: string
     required_fact_ids: string[]
     target_misconception_ids: string[]
@@ -117,7 +119,11 @@ export function buildLearningDesignSpecV2(input: {
         : []),
       sequenceBlock(objective, "micro_check", "立即检查学习者是否形成目标判断", targetMisconceptionIds),
       sequenceBlock(objective, "guided_practice", "在保留脚手架的任务中应用目标行为", targetMisconceptionIds),
-      ...(objective.cognitive_target === "transfer"
+      ...(input.spec.learner_adaptation.pedagogy_contract?.lesson.require_debugging_clinic
+        ? [sequenceBlock(objective, "debugging_clinic", "识别错误信号、定位原因并说明修复步骤", targetMisconceptionIds)]
+        : []),
+      ...(input.spec.learner_adaptation.pedagogy_contract?.practice.transfer_distance !== "near"
+        || objective.cognitive_target === "transfer"
         ? [sequenceBlock(objective, "transfer", "在改变任务结构后迁移目标行为", targetMisconceptionIds)]
         : []),
     ]
@@ -125,6 +131,9 @@ export function buildLearningDesignSpecV2(input: {
   })
   const identity = {
     spec_id: input.spec.spec_id,
+    pedagogy_contract: input.spec.learner_adaptation.pedagogy_contract
+      ? structuredClone(input.spec.learner_adaptation.pedagogy_contract)
+      : undefined,
     learner: { level: input.spec.learner_adaptation?.level ?? "basic", skills, misconceptions },
     objectives,
     lesson_sequence: lessonSequence,

@@ -6,6 +6,7 @@ import type {
   ReceiveProgressResult,
 } from "./teaching-audit/types"
 import type { AbilityDimension, LearnerProfile } from "./types"
+import { buildRoleCPedagogyContract } from "./pedagogy-contract"
 
 export type LearningGoalUseCase =
   | "coursework"
@@ -649,6 +650,7 @@ export function updateLearnerProfileFromAnswers(
 
 /** Role C 现有画像快照适配器可直接消费的 options。 */
 export function buildRoleCProfileSnapshotOptions(profile: LearnerProfileV2): ProfileSnapshotOptions {
+  const pedagogyContract = buildRoleCPedagogyContract(profile)
   return {
     profile_id: profile.profile_id,
     profile_version: profile.profile_version,
@@ -656,10 +658,16 @@ export function buildRoleCProfileSnapshotOptions(profile: LearnerProfileV2): Pro
       ? [...profile.learning_preferences.preferred_contexts]
       : [],
     accommodations: profile.privacy.personalization_enabled
-      ? [...profile.learning_constraints.accommodations]
+      ? [...pedagogyContract.constraints.accommodations]
       : [],
+    pedagogy_contract: pedagogyContract,
     provenance_ref: `role-b:profile-v2:${profile.profile_id}:${profile.profile_version}`,
   }
+}
+
+/** Narrow structural guard used at legacy-compatible orchestration boundaries. */
+export function isLearnerProfileV2(profile: LearnerProfile): profile is LearnerProfileV2 {
+  return (profile as Partial<LearnerProfileV2>).schema_version === "2.0"
 }
 
 /** 面向路径、讲义、代码实验和测评负责人的稳定只读交接视图。 */

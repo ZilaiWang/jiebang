@@ -3,10 +3,16 @@ import { ORCHESTRATION_WORKER_SEQUENCE } from "./state-machine"
 import { loadKnowledgeBase } from "../knowledge/loader"
 import { resolveLearningGoalSpec } from "../knowledge/curriculum"
 import { synthesizeProfile } from "../role-b-profile/profile-synthesizer"
+import {
+  assessProfileIntake,
+  buildRoleCProfileSnapshotOptions,
+  createLearnerProfileV2,
+  isLearnerProfileV2,
+} from "../role-b-profile/learner-profile-v2"
 import { executeProfileRetrieval } from "../role-b-profile/rag-bridge"
 import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../rag/learning-evidence"
 import { buildFormalPath, startPath } from "../role-b-profile/teaching-audit/formal-path"
-import { adaptLearnerProfile } from "../role-c-content/contracts/profile-adapter"
+import { adaptLearnerProfile, type ProfileSnapshotOptions } from "../role-c-content/contracts/profile-adapter"
 import { adaptRagResult } from "../role-c-content/contracts/evidence-pack"
 import { buildGenerationSpec } from "../role-c-content/contracts/generation-spec"
 import { generateConceptLesson } from "../role-c-content/agents/concept-tutor"
@@ -220,13 +226,38 @@ async function runDeterministicWorkerAdapter(
       objectiveDiagnosis: objectiveDiagnosis.value,
       knowledgeBase,
     })
+    const intake = invocation.learner_request.profile_intake
+    if (intake) {
+      const intakeAssessment = assessProfileIntake(intake, { include_recommended: false, max_questions: 10 })
+      if (intakeAssessment.status !== "ready") {
+        return blockedResult(invocation, {
+          code: "PROFILE_INTAKE_INCOMPLETE",
+          message: `结构化画像缺少必要字段：${intakeAssessment.missing_required_fields.join("、")}`,
+          severity: "recoverable",
+          details: { questions: intakeAssessment.questions },
+        })
+      }
+    }
+    const profile = intake
+      ? createLearnerProfileV2({
+          core_profile: synthesis.profile,
+          intake,
+          profile_version: `${invocation.run_id}-profile-v2-r1`,
+        })
+      : synthesis.profile
+    const ragRequest: RagRequest = {
+      ...synthesis.rag_request,
+      learner_profile: profile,
+    }
 
     return completedResult(invocation, expected.to, {
       mode: "deterministic",
-      profile: synthesis.profile,
+      profile,
       provenance: synthesis.provenance,
-      rag_request: synthesis.rag_request,
-    }, "Synthesized deterministic Role B learner profile")
+      rag_request: ragRequest,
+    }, intake
+      ? "Synthesized structured Role B learner profile v2"
+      : "Synthesized deterministic Role B learner profile")
   }
 
   if (invocation.worker === "path-planner") {
@@ -250,10 +281,10 @@ async function runDeterministicWorkerAdapter(
       })
     }
 
-    const profileSnapshot = adaptLearnerProfile(profileArtifact.value.profile, {
-      profile_version: `${invocation.run_id}-profile-v1`,
-      provenance_ref: "profile-builder:deterministic-result",
-    })
+    const profileSnapshot = adaptLearnerProfile(
+      profileArtifact.value.profile,
+      snapshotOptions(profileArtifact.value.profile, `${invocation.run_id}-profile-v1`),
+    )
     const learningGoalSpec = resolveLearningGoalSpec(invocation.learner_request.learning_goal_spec ?? {
       mode: "custom_goal",
       custom_goal: invocation.learner_request.goal,
@@ -335,10 +366,10 @@ async function runDeterministicWorkerAdapter(
       })
     }
 
-    const profileSnapshot = adaptLearnerProfile(pathArtifact.value.profile, {
-      profile_version: `${invocation.run_id}-profile-v1`,
-      provenance_ref: "profile-builder:deterministic-result",
-    })
+    const profileSnapshot = adaptLearnerProfile(
+      pathArtifact.value.profile,
+      snapshotOptions(pathArtifact.value.profile, `${invocation.run_id}-profile-v1`),
+    )
     const knowledgeBase = await loadKnowledgeBase()
     const evidencePack = adaptRagResult(pathArtifact.value.a_rag_result, {
       kb_version: knowledgeBase.version,
@@ -646,6 +677,15 @@ interface ProfileBuilderArtifact {
   profile: LearnerProfile
   provenance: ProfileProvenance
   rag_request: RagRequest
+}
+
+function snapshotOptions(profile: LearnerProfile, fallbackVersion: string): ProfileSnapshotOptions {
+  return isLearnerProfileV2(profile)
+    ? buildRoleCProfileSnapshotOptions(profile)
+    : {
+        profile_version: fallbackVersion,
+        provenance_ref: "profile-builder:deterministic-result",
+      }
 }
 
 function extractProfileBuilderArtifact(

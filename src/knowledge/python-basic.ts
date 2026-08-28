@@ -1,6 +1,7 @@
 import type { KnowledgeBase } from "./types"
+import { applyAuthoredPythonBasicTeachingEvidence } from "./python-basic-teaching-evidence"
 
-export const PYTHON_BASIC_KNOWLEDGE_BASE: KnowledgeBase = {
+export const PYTHON_BASIC_KNOWLEDGE_BASE: KnowledgeBase = applyAuthoredPythonBasicTeachingEvidence({
   module: "Python基础",
   version: "0.2.0",
   updatedAt: "2026-07-31",
@@ -263,4 +264,4 @@ export const PYTHON_BASIC_KNOWLEDGE_BASE: KnowledgeBase = {
       quizItems: [{"level": 1, "type": "short", "question": "成绩统计器综合项目通常至少组合哪些知识？", "answer": "列表、循环和函数", "sourceId": "K018", "factId": "F001"}, {"level": 2, "type": "practice", "question": "请完成一个与“成绩统计器综合项目”相关的小练习。", "answer": "能正确运用该知识点并解释关键步骤。", "sourceId": "K018", "factId": "F002"}, {"level": 2, "type": "practice", "question": "给成绩统计器增加功能：输出成绩排名（从高到低）。", "answer": "能用 sorted() 对列表排序。", "sourceId": "K018", "factId": "F010"}],
     },
   ],
-}
+})

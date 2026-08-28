@@ -1,4 +1,5 @@
 import type { LearnerProfile } from "../../role-b-profile/types"
+import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
 import type { LearnerLevel, SchemaVersion } from "./common"
 import { C_SCHEMA_VERSION, stableId } from "./canonical"
 
@@ -23,6 +24,8 @@ export interface LearnerProfileSnapshot {
   preferred_contexts: string[]
   accommodations: string[]
   provenance_ref?: string
+  /** Deterministic B-owned teaching policy. Facts, objectives and answers stay locked. */
+  pedagogy_contract?: RoleCPedagogyContract
 }
 
 export interface LearningObjective {
@@ -57,6 +60,7 @@ export interface ProfileSnapshotOptions {
   preferred_contexts?: string[]
   accommodations?: string[]
   provenance_ref?: string
+  pedagogy_contract?: RoleCPedagogyContract
 }
 
 export function adaptLearnerProfile(
@@ -75,6 +79,9 @@ export function adaptLearnerProfile(
     preferred_contexts: [...(options.preferred_contexts ?? [])],
     accommodations: [...(options.accommodations ?? [])],
     provenance_ref: options.provenance_ref,
+    ...(options.pedagogy_contract
+      ? { pedagogy_contract: structuredClone(options.pedagogy_contract) }
+      : {}),
   }
 }
 

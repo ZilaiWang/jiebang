@@ -1725,7 +1725,11 @@ function buildAssessmentModalities(
   ]
   const modalities = tiers.map((tier, index) => {
     const target = objectives[index % objectives.length]!
-    return preferredModalityForTier(target.observable_behavior, tier)
+    const contractPreferences = spec.learner_adaptation?.pedagogy_contract?.assessment.preferred_modalities ?? []
+    return contractPreferences.find((modality) =>
+      modalityAllowedAtTier(modality, tier)
+      && modalityMeasuresBehavior(target.observable_behavior, modality))
+      ?? preferredModalityForTier(target.observable_behavior, tier)
   })
   ensureRequiredModalities(
     modalities,
@@ -1733,6 +1737,15 @@ function buildAssessmentModalities(
     spec.assessment_blueprint.required_modalities,
   )
   return modalities
+}
+
+function modalityAllowedAtTier(
+  modality: AssessmentItemPublic["modality"],
+  tier: 1 | 2 | 3,
+): boolean {
+  if (tier === 1) return modality === "mcq" || modality === "true_false"
+  if (tier === 2) return modality !== "code"
+  return true
 }
 
 function preferredModalityForTier(

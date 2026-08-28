@@ -1,6 +1,6 @@
 # 学习者画像 v2 接口说明
 
-本模块把最新任务中的画像要求实现为独立、可组合的 TypeScript 接口，暂不接入 UI、主会话编排或资源生成策略。其他负责人可以先评审数据形状，再决定在哪个交互节点调用。
+本模块把结构化画像采集、主动追问、画像更新和教学策略交接实现为一条可运行的生产链路。旧画像仍按原协议运行；新建的 v2 画像会经主 Agent 传给 B，并以确定性教学合同约束 C 的讲义、代码实验和测评生成。
 
 统一导入入口：
 
@@ -11,6 +11,7 @@ import {
   createLearnerProfileV2,
   updateLearnerProfileFromAnswers,
   updateLearnerProfileV2,
+  buildRoleCPedagogyContract,
   buildRoleCProfileSnapshotOptions,
   buildPersonalizationProfileHandoff,
 } from "../src/role-b-profile"
@@ -25,6 +26,7 @@ import {
 | `createLearnerProfileV2` | 现有客观诊断画像 + 完整 intake | `LearnerProfileV2` | 建立富画像；必要信息缺失时拒绝创建 |
 | `updateLearnerProfileFromAnswers` | 现有 v2 画像 + 后续回答补丁 | 新 v2 画像 + 变更字段 | 接收用户后续补充或纠正，不重置客观诊断结果 |
 | `updateLearnerProfileV2` | 现有 v2 画像 + 学习进展观察 | 新 v2 画像 + B 侧变更 + C 侧适配参数 | 根据测评证据更新水平、已掌握项、薄弱项和进度 |
+| `buildRoleCPedagogyContract` | v2 画像 | `RoleCPedagogyContract` | 将画像转为版本绑定、可审计的教学策略，不改变事实、目标、答案和评分 |
 | `buildRoleCProfileSnapshotOptions` | v2 画像 | 现有 C 画像快照适配参数 | 复用当前 Role C 契约，传递场景、无障碍要求和版本来源 |
 | `buildPersonalizationProfileHandoff` | v2 画像 | `PersonalizationProfileHandoff` | 给路径、讲义、代码实验和测评负责人使用的稳定只读视图 |
 
@@ -121,15 +123,28 @@ const progressUpdate = updateLearnerProfileV2({
 - 时间、设备、软件和无障碍限制；
 - 来源画像的版本和修订号。
 
-资源负责人可以据此决定基础/进阶/综合内容、示例类型、实操指南、分层测试和支架强度。本模块只提供事实与偏好，不替资源生成方预设具体生成规则。
+资源负责人可以据此决定基础/进阶/综合内容、示例类型、实操指南、分层测试和支架强度。`buildRoleCPedagogyContract` 将这些选择固化为 C 可直接消费的教学合同，并保留来源画像的版本和修订号。
 
-## 当前接入边界
+## 生产链路
 
-本次没有修改：
+1. D 创建会话时可提交 `learner_request.profile_intake`；缺少必要字段时，主 Agent 返回最多 3 个结构化问题。
+2. D 通过 `submit_profile_answers` 提交当前问题的答案。信息完整后，主 Agent 继续生成客观诊断题。
+3. B 根据 intake 与诊断结果创建 `LearnerProfileV2`，同时生成 `RoleCPedagogyContract`。
+4. 主 Agent 将画像版本和教学合同写入 C 的画像快照及不可变 `GenerationSpec`。
+5. C 在模型调用前构造 `TeachingUnitContract`，并据此规划讲义段落与示例、代码练习形态、提示层级和测评模态。
+6. 每轮测评后，B 更新 v2 画像的客观进展并重新生成教学合同；不会降级为旧画像。
 
-- `role-d-ui-v2` 的表单和展示；
-- 主交互会话的命令 schema 与持久化；
-- Role C 的生成规则、提示词或资源模板；
-- 已验收 Day 0–7 证据与结论。
+教学合同只影响教学呈现和练习组织，以下内容保持冻结：
 
-因此这些 API 目前是可测试、可导入的能力层，尚不会自动影响现有演示流程。
+- RAG 事实和引用范围；
+- 学习路径目标及其必需事实；
+- 测评标准答案和评分规则；
+- 代码实验的执行接口与隐藏测试。
+
+旧会话和未携带 `profile_intake` 的调用继续使用原画像协议，不要求调用方一次性迁移。
+
+## 发布前教学证据审计
+
+`bun scripts/audit-teaching-evidence.ts --strict` 检查知识库中的示例、误区、练习任务、验收标准及其事实绑定。它审计的是人工编写的教学证据，不会用模型生成内容反向填充知识库。严格模式存在错误时应补充相应知识条目后再发布。
+
+`bun run smoke:profile-v2:lesson` 使用真实模型，在冻结同一学习目标和事实集合的前提下，对两种不同画像分别生成讲义，并校验教学合同差异、目标覆盖、引用闭包、讲义结构和占位文本。该命令用于确认画像只改变教学呈现，不改变知识事实边界。

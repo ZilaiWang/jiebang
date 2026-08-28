@@ -104,6 +104,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 2. evidence 是唯一专业事实来源。
 3. section_plan 是本轮讲义结构的冻结合同。不得遗漏 required slot，不得添加计划外的专业主题。
 4. 学习者画像只能影响表达密度、例子组织、提示强度和阅读节奏，不能改变事实、目标和答案。
+5. 若 learning_design.pedagogy_contract 存在，它是 B 根据学习者明确选择生成的教学合同：lesson.opening 决定开篇顺序，scaffold_strength 决定步骤粒度，worked_example_count 决定例题数量，require_step_trace/require_debugging_clinic 决定是否安排追踪与排错；practice.shape 和 transfer_distance 决定练习组织与迁移跨度；pacing 控制单元长度。locked_core 中的事实、目标、答案、评分和安全边界始终不可改变。
+6. 若 section_plan 中存在 teaching_unit_contract，required=true 的教学功能必须由对应 slot、micro-check、提示阶梯、代码实验或正式测评明确承担；不得用空泛的“请完成相关练习”代替具体任务。
 
 ══════════════════════════════════════
 一、按 Section Plan 写作

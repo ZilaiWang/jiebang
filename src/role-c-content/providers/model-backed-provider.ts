@@ -346,6 +346,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         mode: plan.mode,
         slots: plan.slots,
         micro_check: plan.micro_check,
+        ...(plan.teaching_unit_contract
+          ? { teaching_unit_contract: plan.teaching_unit_contract }
+          : {}),
       }))
       const materialize = (payload: ConceptSegmentAuthorPayloadV2) =>
         normalizeConceptSegment(

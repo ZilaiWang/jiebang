@@ -105,6 +105,22 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
+        },
+        "pedagogy_contract": {
+          "type": "object",
+          "required": ["schema_version", "source_profile", "locked_core", "learner_state", "lesson", "practice", "assessment", "pacing", "constraints", "rationale"],
+          "properties": {
+            "schema_version": { "const": "1.0" },
+            "source_profile": { "type": "object" },
+            "locked_core": { "type": "object" },
+            "learner_state": { "type": "object" },
+            "lesson": { "type": "object" },
+            "practice": { "type": "object" },
+            "assessment": { "type": "object" },
+            "pacing": { "type": "object" },
+            "constraints": { "type": "object" },
+            "rationale": { "type": "array", "items": { "type": "string" } }
+          }
         }
       },
       "additionalProperties": false

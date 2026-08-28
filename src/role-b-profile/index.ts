@@ -92,6 +92,7 @@ export {
   updateLearnerProfileFromAnswers,
   buildRoleCProfileSnapshotOptions,
   buildPersonalizationProfileHandoff,
+  isLearnerProfileV2,
 } from "./learner-profile-v2"
 export type {
   LearnerProfileIntakeV2,
@@ -116,3 +117,6 @@ export type {
   UpdateLearnerProfileFromAnswersInput,
   UpdateLearnerProfileFromAnswersResult,
 } from "./learner-profile-v2"
+
+export { buildRoleCPedagogyContract } from "./pedagogy-contract"
+export type { RoleCPedagogyContract } from "./pedagogy-contract"

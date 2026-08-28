@@ -15,6 +15,11 @@ import {
 import { validateRoleCSchema } from "../../role-c-content/validators/runtime-schema-validator"
 import { canonicalizeConcept } from "../concept-canonicalizer"
 import type { LearnerProfile } from "../types"
+import {
+  buildRoleCProfileSnapshotOptions,
+  isLearnerProfileV2,
+  updateLearnerProfileV2,
+} from "../learner-profile-v2"
 import { applyProgressObservation } from "./progress-receiver"
 import type {
   ProgressObservation,
@@ -71,10 +76,13 @@ export class RoleBLearningProgressAdapter implements RoleBLearningProgressPort {
         throw new Error("ROLE_B_PROGRESS_DUPLICATE_LEARNER_REGISTRATION")
       }
       const currentProfile = structuredClone(learner.currentProfile)
-      const currentSnapshot = adaptLearnerProfile(currentProfile, {
-        profile_version: learner.profileVersion,
-        provenance_ref: "role-b:learning-progress:initial",
-      })
+      const currentSnapshot = adaptLearnerProfile(currentProfile,
+        isLearnerProfileV2(currentProfile)
+          ? buildRoleCProfileSnapshotOptions(currentProfile)
+          : {
+              profile_version: learner.profileVersion,
+              provenance_ref: "role-b:learning-progress:initial",
+            })
       this.learnerStates.set(learner.learnerIdHash, {
         learnerIdHash: learner.learnerIdHash,
         currentProfile,
@@ -105,18 +113,33 @@ export class RoleBLearningProgressAdapter implements RoleBLearningProgressPort {
     const nextRevision = state.profileRevision + 1
     const nextProfileVersion = buildNextProfileVersion(nextRevision, delivery.delivery_id)
     const observation = this.toProgressObservation(delivery)
-    const result = applyProgressObservation({
-      observation,
-      currentProfile: state.currentProfile,
-      profileVersion: nextProfileVersion,
-      conceptMatches: (profileConcept, evidence) =>
-        conceptMatchesSource(
-          profileConcept,
-          evidence.sourceId,
-          evidence.concept,
-          this.knowledgeBase,
-        ),
-    })
+    const conceptMatches = (profileConcept: string, evidence: ProgressObservation["conceptEvidence"][number]) =>
+      conceptMatchesSource(
+        profileConcept,
+        evidence.sourceId,
+        evidence.concept,
+        this.knowledgeBase,
+      )
+    const result: ReceiveProgressResult = isLearnerProfileV2(state.currentProfile)
+      ? (() => {
+          const updated = updateLearnerProfileV2({
+            profile: state.currentProfile,
+            observation,
+            next_profile_version: nextProfileVersion,
+            concept_matches: conceptMatches,
+          })
+          return {
+            profile: updated.profile,
+            snapshot: adaptLearnerProfile(updated.profile, updated.role_c_snapshot_options),
+            changes: updated.changes,
+          }
+        })()
+      : applyProgressObservation({
+          observation,
+          currentProfile: state.currentProfile,
+          profileVersion: nextProfileVersion,
+          conceptMatches,
+        })
 
     // 所有校验与画像计算成功后再一次性提交状态和幂等账本。
     state.currentProfile = structuredClone(result.profile)

@@ -44,8 +44,18 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
   if (typeof value.command_id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(value.command_id)) {
     errors.push("command_id is required and must be safe")
   }
-  if (!["submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(String(value.type))) {
+  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(String(value.type))) {
     errors.push("Unsupported command type")
+  }
+  if (value.type === "submit_profile_answers") {
+    const payload = isRecord(value.payload) ? value.payload : null
+    const answers = payload?.answers
+    if (!Array.isArray(answers) || answers.length === 0
+      || !answers.every((answer) => isRecord(answer)
+        && typeof answer.question_id === "string"
+        && "value" in answer)) {
+      errors.push("submit_profile_answers.payload.answers must be a non-empty profile answer array")
+    }
   }
   if (value.type === "run_code_lab") {
     const payload = isRecord(value.payload) ? value.payload : null
@@ -71,8 +81,65 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
 function validateLearnerRequest(value: unknown, errors: string[]): void {
   if (!isRecord(value)) {
     errors.push("learner_request is required")
-  } else if (typeof value.goal !== "string" || value.goal.trim().length === 0) {
+    return
+  }
+  if (typeof value.goal !== "string" || value.goal.trim().length === 0) {
     errors.push("learner_request.goal is required")
+  }
+  const intake = value.profile_intake
+  if (intake === undefined) return
+  if (!isRecord(intake)) {
+    errors.push("learner_request.profile_intake must be an object")
+    return
+  }
+  if (intake.learner_id !== value.learner_id) {
+    errors.push("profile_intake.learner_id must match learner_request.learner_id")
+  }
+  if (typeof intake.goal !== "string"
+    || typeof value.goal !== "string"
+    || intake.goal.trim() !== value.goal.trim()) {
+    errors.push("profile_intake.goal must match learner_request.goal")
+  }
+  validateOptionalEnum(intake, "self_rating", ["beginner", "basic", "intermediate", "integrated"], errors)
+  validateOptionalEnum(intake, "goal_use_case", ["coursework", "competition", "job", "project", "certification", "interest", "other"], errors)
+  validateOptionalEnum(intake, "explanation_preference", ["analogy_first", "principle_first", "example_first", "step_by_step", "balanced"], errors)
+  validateOptionalEnum(intake, "practice_preference", ["quiz", "coding", "project", "mixed"], errors)
+  validateOptionalEnum(intake, "pace_preference", ["slow", "steady", "fast"], errors)
+  for (const field of ["weekly_time_budget_minutes", "session_time_budget_minutes"] as const) {
+    if (intake[field] !== undefined
+      && (typeof intake[field] !== "number" || !Number.isFinite(intake[field]) || intake[field] <= 0)) {
+      errors.push(`profile_intake.${field} must be a positive number`)
+    }
+  }
+  for (const field of ["discipline_background", "prior_languages", "prior_topics", "preferred_contexts", "tool_constraints", "accommodations"] as const) {
+    if (intake[field] !== undefined
+      && (!Array.isArray(intake[field]) || !intake[field].every((item) => typeof item === "string"))) {
+      errors.push(`profile_intake.${field} must be a string array`)
+    }
+  }
+  if (intake.privacy !== undefined) {
+    if (!isRecord(intake.privacy)) {
+      errors.push("profile_intake.privacy must be an object")
+    } else {
+      validateOptionalEnum(intake.privacy, "retention", ["session_only", "cross_session"], errors, "profile_intake.privacy")
+      for (const field of ["personalization_enabled", "allow_profile_display"] as const) {
+        if (intake.privacy[field] !== undefined && typeof intake.privacy[field] !== "boolean") {
+          errors.push(`profile_intake.privacy.${field} must be boolean`)
+        }
+      }
+    }
+  }
+}
+
+function validateOptionalEnum(
+  value: Record<string, unknown>,
+  field: string,
+  allowed: string[],
+  errors: string[],
+  prefix = "profile_intake",
+): void {
+  if (value[field] !== undefined && !allowed.includes(String(value[field]))) {
+    errors.push(`${prefix}.${field} must be one of ${allowed.join(", ")}`)
   }
 }
 

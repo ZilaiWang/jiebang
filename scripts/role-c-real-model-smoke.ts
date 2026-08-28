@@ -53,10 +53,14 @@ try {
   })
   const ragRequest = buildRagRequest(profile)
   const rawPath = await Bun.file("examples/role-c-content/learning_path_node_score_project.json").json()
+  const requiredSourceCount = new Set([
+    ...rawPath.target_source_ids,
+    ...rawPath.prerequisite_source_ids,
+  ]).size
   const rag = await retrieveKnowledge({
     query: ragRequest.query,
     learnerLevel: profile.level,
-    topK: 5,
+    topK: Math.max(5, requiredSourceCount + 1),
     intent: {
       target_source_ids: rawPath.target_source_ids,
       prerequisite_source_ids: rawPath.prerequisite_source_ids,

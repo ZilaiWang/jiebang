@@ -361,7 +361,10 @@ export class BunDockerCommandExecutor implements DockerCommandExecutor {
     const terminate = (): Promise<void> => {
       if (termination) return termination
       try {
-        processHandle.kill()
+        // The Docker CLI may remain blocked after its container has already
+        // disappeared. SIGTERM is not sufficient on every Docker Desktop
+        // transport, so the outer deadline must terminate the CLI itself.
+        processHandle.kill("SIGKILL")
       } catch {
         // Process already exited.
       }

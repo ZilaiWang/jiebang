@@ -16,6 +16,7 @@ import type {
   LearningObjective,
   LearningPathNode,
 } from "./profile-adapter"
+import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
 import { assessmentBlueprintCanMeasureCoreObjectives } from "./assessment-measurement"
 import { modalityMeasuresBehavior } from "./assessment-measurement"
 
@@ -61,6 +62,7 @@ export interface GenerationSpec {
     scaffold_level: 0 | 1 | 2 | 3
     reading_density: "low" | "medium" | "high"
     accommodations: string[]
+    pedagogy_contract?: RoleCPedagogyContract
   }
   difficulty: DifficultyVector
   assessment_blueprint: AssessmentBlueprint
@@ -172,9 +174,17 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     known_concepts: [...input.profile_snapshot.known_concepts],
     weak_concepts: [...input.profile_snapshot.weak_concepts],
     preferred_contexts: [...input.profile_snapshot.preferred_contexts],
-    scaffold_level: input.adaptive_shell?.scaffold_level ?? defaults.scaffold_level,
-    reading_density: input.adaptive_shell?.reading_density ?? defaults.reading_density,
+    scaffold_level: input.adaptive_shell?.scaffold_level
+      ?? (input.profile_snapshot.pedagogy_contract
+        ? Math.max(0, Math.min(3, input.profile_snapshot.pedagogy_contract.lesson.scaffold_strength - 1)) as 0 | 1 | 2 | 3
+        : defaults.scaffold_level),
+    reading_density: input.adaptive_shell?.reading_density
+      ?? input.profile_snapshot.pedagogy_contract?.lesson.terminology_density
+      ?? defaults.reading_density,
     accommodations: [...input.profile_snapshot.accommodations],
+    ...(input.profile_snapshot.pedagogy_contract
+      ? { pedagogy_contract: structuredClone(input.profile_snapshot.pedagogy_contract) }
+      : {}),
   }
   const difficulty: DifficultyVector = { ...defaults.difficulty, ...input.difficulty }
   const pathNode = {
@@ -282,6 +292,18 @@ function validateInputShape(input: BuildGenerationSpecInput): string[] {
   if (new Set(objectiveIds).size !== objectiveIds.length) errors.push("objective_id 不得重复")
   const profileOverlap = input.profile_snapshot.known_concepts.filter((concept) => input.profile_snapshot.weak_concepts.includes(concept))
   if (profileOverlap.length > 0) errors.push(`画像的 known_concepts 与 weak_concepts 冲突：${profileOverlap.join("、")}`)
+  const pedagogy = input.profile_snapshot.pedagogy_contract
+  if (pedagogy) {
+    if (pedagogy.source_profile.profile_id !== input.profile_snapshot.profile_id
+      || pedagogy.source_profile.profile_version !== input.profile_snapshot.profile_version) {
+      errors.push("pedagogy_contract 必须绑定当前 profile_id/profile_version")
+    }
+    if (pedagogy.learner_state.level !== input.profile_snapshot.level
+      || !sameStringSet(pedagogy.learner_state.known_concepts, input.profile_snapshot.known_concepts)
+      || !sameStringSet(pedagogy.learner_state.weak_concepts, input.profile_snapshot.weak_concepts)) {
+      errors.push("pedagogy_contract.learner_state 必须与当前画像快照一致")
+    }
+  }
   for (const [name, values] of Object.entries({
     known_concepts: input.profile_snapshot.known_concepts,
     weak_concepts: input.profile_snapshot.weak_concepts,
@@ -361,6 +383,11 @@ function validateInputShape(input: BuildGenerationSpecInput): string[] {
     errors.push("assessment blueprint 的必选题型和剩余题量无法直接测量全部 core objective")
   }
   return errors
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && left.every((value) => right.includes(value))
 }
 
 function validateDifficulty(difficulty: Partial<DifficultyVector> | undefined, errors: string[]): void {
