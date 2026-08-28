@@ -1,4 +1,5 @@
 import { loadKnowledgeBase } from "../knowledge/loader"
+import { isSubstantivePythonExample } from "../knowledge/example-code"
 import type { KnowledgeBase, KnowledgeItem } from "../knowledge/types"
 import type { RagResultItem, RetrievalTrace } from "./retriever"
 
@@ -99,17 +100,34 @@ function toStructuredEvidenceItem(
     .filter((entry) => entry.steps.length > 0 && entry.steps.every((step) =>
       step.factIds.length > 0 && step.factIds.every(includesFact)))
     .map((entry) => structuredClone(entry))
+  const groundedExamples = item.examples.filter((example) => {
+    const refs = example.factIds ?? []
+    return refs.length > 0
+      && isSubstantivePythonExample(example.code)
+      && (includeAllFacts || refs.every((factId) => selectedFactIds.has(factId)))
+  })
   const projectedExamples = includeAllFacts
-    ? item.examples.map((example) => ({ ...example }))
-    : facts.map((fact) => ({
-        title: `${item.title} · ${fact.factId} 事实示例`,
-        // Identity hydration may not relabel an unreferenced chapter example
-        // as support for a smaller bundle. A comment is valid Python context
-        // and states exactly the authoritative fact, without adding an API or
-        // execution result that the fact cannot prove.
-        code: `# ${fact.content}`,
-        explanation: fact.content,
+    // Full-source discovery may expose reviewed chapter examples for ranking
+    // and human inspection.  Empty factIds make their non-citable status
+    // explicit; C's authoring projection will not treat them as evidence.
+    ? item.examples.map((example) => ({
+        ...example,
+        factIds: [...(example.factIds ?? [])],
       }))
+    : groundedExamples.length > 0
+      ? groundedExamples.map((example) => ({
+          ...example,
+          factIds: [...(example.factIds ?? [])],
+        }))
+      : facts.map((fact) => ({
+          title: `${item.title} · ${fact.factId} 事实示例`,
+          // No executable example is better than relabelling unrelated chapter
+          // code as evidence. This comment remains readable context, while C
+          // excludes comment-only entries from code-shaped examples.
+          code: `# ${fact.content}`,
+          explanation: fact.content,
+          factIds: [fact.factId],
+        }))
   const projectedPracticeTasks = includeAllFacts
     ? [...item.practiceTasks]
     : facts.map((fact) => `依据已审核事实“${fact.content}”完成一次识别、解释或应用，并说明判断依据。`)
@@ -136,10 +154,10 @@ function toStructuredEvidenceItem(
     snippet: item.snippet,
     facts,
     coreFactIds: (item.coreFactIds ?? []).filter((factId) => includeAllFacts || selectedFactIds.has(factId)),
-    // Legacy examples/practice tasks have no fact references. They remain
-    // useful during semantic discovery. A fact-specific identity lookup uses
-    // an exact projection of each selected fact instead of silently exposing
-    // the whole chapter as if it supported the smaller bundle.
+    // Legacy examples may lack fact references and remain discovery-only. A
+    // fact-specific identity lookup admits only an explicitly grounded example
+    // or an exact fact projection; it never relabels the whole chapter as the
+    // smaller evidence bundle.
     examples: projectedExamples,
     practiceTasks: projectedPracticeTasks,
     quizItems: item.quizItems

@@ -13,7 +13,7 @@ import type { ConceptTutorRequest } from "../src/role-c-content/agents/types"
 import type { ModelGateway, StructuredModelRequest } from "../src/role-c-content/contracts/model-gateway"
 import { ROLE_C_PROMPT_MANIFEST_VERSION } from "../src/role-c-content/prompts"
 
-function segmentRequest(targets: Array<{ objective_id: string; source_id: string; fact_ids: string[]; behavior: string }>, facts: Array<{ source_id: string; fact_id: string; content: string }>): ConceptTutorRequest {
+function segmentRequest(targets: Array<{ objective_id: string; source_id: string; fact_ids: string[]; behavior: string }>, facts: Array<{ source_id: string; fact_id: string; content: string; capabilities?: string[] }>): ConceptTutorRequest {
   return {
     generation_spec: {
       spec_id: "SPEC-1",
@@ -74,6 +74,50 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       fact_ids: ["F001", "F002"],
       minimum_reasoning_steps: 2,
     })
+  })
+
+  test("显式 Python 事实要求分步示例生成真实代码并拒绝注释占位", () => {
+    const request = segmentRequest(
+      [{ objective_id: "O1", source_id: "K007", fact_ids: ["F001", "F002"], behavior: "apply" }],
+      [
+        {
+          source_id: "K007",
+          fact_id: "F001",
+          content: "for 循环常用于遍历序列中的元素。",
+          capabilities: ["rule", "procedure", "example"],
+        },
+        {
+          source_id: "K007",
+          fact_id: "F002",
+          content: "for 循环适合对列表、字符串等对象逐个处理。",
+          capabilities: ["rule", "procedure", "state_transition"],
+        },
+      ],
+    )
+    const [plan] = buildConceptSectionPlansForSegment(request)
+    const exampleSlot = plan!.slots.find((slot) =>
+      slot.kind === "guided_example" || slot.kind === "procedure_steps")!
+    expect(exampleSlot.allowed_block_types).toEqual(["code"])
+    expect(exampleSlot.requires_executable_code).toBe(true)
+    expect(exampleSlot.fact_ids).toEqual(["F001", "F002"])
+
+    const authored = {
+      sections: plan!.slots.map((slot, index) => ({
+        slot_id: slot.slot_id,
+        heading: `教学单元 ${index + 1}`,
+        body: Array.from({ length: slot.min_sentences }, (_, sentenceIndex) =>
+          `第 ${index + 1} 单元的说明 ${sentenceIndex + 1}`).join("。") + "。",
+        steps: [],
+        code: slot.slot_id === exampleSlot.slot_id ? "# 遍历列表\n# 逐个处理元素" : null,
+      })),
+    }
+    expect(validateConceptSectionStructure({ plan: plan!, authored }).some((issue) =>
+      issue.includes("必须提供含可执行语句的 Python 示例"))).toBe(true)
+
+    authored.sections.find((section) => section.slot_id === exampleSlot.slot_id)!.code =
+      "for item in [1, 2, 3]:\n    print(item)"
+    expect(validateConceptSectionStructure({ plan: plan!, authored }).filter((issue) =>
+      issue.includes("code") || issue.includes("Python 示例"))).toEqual([])
   })
 
   test("零基础保留识别检查，basic 使用多事实应用检查", () => {

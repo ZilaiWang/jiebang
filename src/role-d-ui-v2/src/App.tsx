@@ -59,7 +59,7 @@ import {
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
 } from "./orchestrator-client"
-import { semanticLessonLines, indentParagraphText } from "./lesson-format"
+import { semanticLessonLines, indentParagraphText, normalizePythonDisplayIndentation } from "./lesson-format"
 import {
   buildFactIndex,
   lookupFact,
@@ -991,7 +991,7 @@ function RenderLessonBlock({ block }: { block: LessonPayload["explanation_blocks
   const bodyText = "text" in block ? stripClaimTextFromBody((block as any).text ?? "", claims) : ""
   if (block.block_type === "heading") return <h3 className="block-heading">{block.text}</h3>
   if (block.block_type === "paragraph") return <article className="prose-block"><p><SemanticLessonText text={bodyText} /></p><ClaimEvidence claims={claims} citations={citations} /></article>
-  if (block.block_type === "code") return <article className="code-example"><div className="code-head"><span>{block.caption ?? "Python 示例"}</span><small>{block.language}</small></div><CodeViewer code={block.code} /><ClaimEvidence claims={claims} citations={citations} /></article>
+  if (block.block_type === "code") return <article className="code-example"><div className="code-head"><span>{block.caption ?? "Python 示例"}</span><small>{block.language}</small></div><CodeViewer code={block.code} /><CitationChips citations={citations} /></article>
   if (block.block_type === "callout") return <article className={`callout callout-${block.tone}`}><b>{block.title}</b><p><SemanticLessonText text={bodyText} /></p><ClaimEvidence claims={claims} citations={citations} /></article>
   if (block.block_type === "comparison") return <article className="comparison-block"><h3>{block.title}</h3><div>{block.columns.map((column) => <section key={column.heading}><b>{column.heading}</b><p><SemanticLessonText text={stripClaimTextFromBody(column.content, claims)} /></p></section>)}</div><ClaimEvidence claims={claims} citations={citations} /></article>
   return null
@@ -1019,7 +1019,7 @@ function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Pytho
 function CodeViewer({ code }: { code: string }) {
   const [step, setStep] = useState(0)
   const [playing, setPlaying] = useState(false)
-  const lines = code.split("\n")
+  const lines = normalizePythonDisplayIndentation(code).split("\n")
   useEffect(() => {
     if (!playing || lines.length < 2) return
     const timer = window.setInterval(() => setStep((value) => {
@@ -1032,7 +1032,7 @@ function CodeViewer({ code }: { code: string }) {
     return () => window.clearInterval(timer)
   }, [playing, lines.length])
   const effectiveStep = Math.min(step, Math.max(0, lines.length - 1))
-  return <div className="code-viewer"><div className="code-lines">{lines.map((line, index) => <div className={index === effectiveStep ? "is-current" : index < effectiveStep ? "is-past" : ""} key={`${index}-${line}`}><span>{index + 1}</span><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(line || " ") }} /></div>)}</div><div className="code-controls"><button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))}><ChevronLeft size={15} /> 上一步</button><button type="button" onClick={() => { setPlaying((value) => !value); if (!playing && effectiveStep >= lines.length - 1) setStep(0) }}>{playing ? <Pause size={15} /> : <Play size={15} />} {playing ? "暂停播放" : "自动演示"}</button><button type="button" onClick={() => setStep((value) => Math.min(lines.length - 1, value + 1))}>下一步 <ChevronRight size={15} /></button></div></div>
+  return <div className="code-viewer"><div className="code-lines">{lines.map((line, index) => <div className={index === effectiveStep ? "is-current" : index < effectiveStep ? "is-past" : ""} key={`${index}-${line}`}><span>{index + 1}</span><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(line || " ") }} /></div>)}</div><div className="code-step-status" aria-live="polite"><span>步骤 {effectiveStep + 1} / {lines.length}</span><code>{lines[effectiveStep]?.trim() || "空行，用于分隔代码片段"}</code></div><div className="code-controls"><button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))}><ChevronLeft size={15} /> 上一步</button><button type="button" onClick={() => { setPlaying((value) => !value); if (!playing && effectiveStep >= lines.length - 1) setStep(0) }}>{playing ? <Pause size={15} /> : <Play size={15} />} {playing ? "暂停播放" : "自动演示"}</button><button type="button" onClick={() => setStep((value) => Math.min(lines.length - 1, value + 1))}>下一步 <ChevronRight size={15} /></button></div></div>
 }
 
 function LabContent({ lab, code, setCode, busy, execution, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onRun: () => Promise<void> }) {
@@ -1201,7 +1201,7 @@ function RedirectPage({ title, message, action, onAction }: { title: string; mes
 function CitationChips({ citations }: { citations: Citation[] }) {
   const unique = uniqueCitations(citations)
   if (!unique.length) return null
-  return <div className="citation-chips">{unique.map((citation) => <span key={`${citation.source_id}-${citation.fact_id}`}>{citation.source_id} · {citation.fact_id}</span>)}</div>
+  return <div className="citation-chips" aria-label="知识依据">{unique.map((citation) => <span className="citation-chip" key={`${citation.source_id}-${citation.fact_id}`}>{citation.source_id} · {citation.fact_id}</span>)}</div>
 }
 
 function blockCitations(block: LessonPayload["explanation_blocks"][number]): Citation[] {

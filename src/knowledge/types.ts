@@ -68,6 +68,12 @@ export interface KnowledgeExample {
   title: string
   code: string
   explanation: string
+  /**
+   * Source-local facts that justify this reviewed example.  Legacy source
+   * files may omit the field; the loader derives and validates it before the
+   * example can enter a fact-specific evidence pack.
+   */
+  factIds?: string[]
 }
 
 export interface KnowledgeQuizItem {

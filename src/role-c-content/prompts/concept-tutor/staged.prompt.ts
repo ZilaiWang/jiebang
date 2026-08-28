@@ -116,6 +116,9 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 4. body 的句子数量应位于 slot.min_sentences 与 slot.max_sentences 之间。
 5. 只能使用 slot.allowed_moves 中列出的展开方式。
 6. 只能生成 slot.allowed_block_types 允许的内容形式。
+   - 若 slot.requires_executable_code=true，code 必须是一段学习者可以阅读和执行的完整 Python 示例；至少包含一条真实执行语句，不得只写注释、pass、省略号或未完成骨架。
+   - 代码只能使用该 slot.fact_ids 与 evidence.examples 中对应 fact_refs 已支持的语法和行为。可以更换普通变量名和有限示例值，但不得添加证据未说明的新 API、异常、返回规则或边界。
+   - 若 requires_executable_code 不为 true，不要为了界面效果强行写代码。
 7. 一个事实可以形成多个教学单元，但这些单元必须分别承担不同功能，不能换句话重复同一句话。
 8. kind=fact_explanation 的 body 必须完整表达该 slot 所有 fact_ids 对应的事实原意，但必须按“先建立整体认识—再解释关键词或关系—最后用一个有意义的情境帮助理解”组织成连贯讲解。相关事实应融合表达，不得按 fact_id 逐条套用同一句式。当计划中有多个 fact_explanation slot 时，它们是同一讲义的连续教学单元：按计划顺序逐步深入，不重复前一单元的标题、例子或结论。
 9. heading 是给学习者看的短标题，不得照抄完整事实，也不得与 body 首句重复。正文不得出现 fact_id、source_id、“证据事实”或“引用事实”等审计标签。
@@ -146,6 +149,7 @@ mode=guided_explanation：
 
 mode=procedural：
 - 将 evidence 已明确提供的过程拆成有顺序的步骤；steps 中每一步必须能对应某条 cited fact；只有 evidence 明确支持代码或操作过程时，code 才可非 null；示例展示输入、已给过程和可直接复算的输出。
+- 当 section_plan 标记 requires_executable_code=true 时，应优先参考 fact_refs 完全落在当前 slot 内的 evidence.examples，生成或改写为同一事实闭包内的完整可运行示例；不能把知识事实原文改写成一行 # 注释充当代码。
 
 mode=comparative：
 - 对比对象必须都出现在 evidence 中；分别说明相同点和不同点；不得凭常识补充未给出的区别。

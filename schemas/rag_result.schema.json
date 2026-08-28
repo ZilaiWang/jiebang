@@ -81,7 +81,12 @@
               "properties": {
                 "title": { "type": "string" },
                 "code": { "type": "string" },
-                "explanation": { "type": "string" }
+                "explanation": { "type": "string" },
+                "factIds": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": { "type": "string", "pattern": "^F[0-9]{3,6}$" }
+                }
               }
             }
           },
