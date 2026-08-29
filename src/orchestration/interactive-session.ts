@@ -27,6 +27,7 @@ import {
   generateRoleCForRoleDWithRuntime,
   runRoleCAssessmentCode,
   runRoleCCodeLab,
+  runRoleCExampleCode,
   submitRoleCAssessment,
   createRoleCRecoveryEvidenceRefreshPort,
   type RoleCForRoleDRuntimeOptions,
@@ -266,7 +267,7 @@ export interface InteractiveSessionStoreOptions {
 
 export interface InteractiveSessionCommand {
   command_id: string
-  type: "submit_profile_answers" | "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "retry"
+  type: "submit_profile_answers" | "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "run_example_code" | "retry"
   payload?: {
     answers?: Record<string, string> | SubmissionAnswer[] | ProfileClarificationAnswer[]
     item_id?: string
@@ -752,6 +753,22 @@ export class InteractiveSessionStore {
       const roleC = record.private.role_c
       if (!roleC || !itemId || !code) throw new InteractiveSessionError("INVALID_COMMAND", "run_assessment_code requires item_id and code", 400)
       const result = await runRoleCAssessmentCode({ executionId: `EXEC-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id, runId: roleC.run_id, learnerId: roleC.learner_id, itemId, code }, roleCRuntime(this.data_root))
+      record.code_execution = result
+      record.updated_at = new Date().toISOString()
+      updated = record
+    } else if (command.type === "run_example_code") {
+      // 分步示例/讲义示例独立运行：Docker 真实执行，返回 stdout（不判分、不依赖 C 会话）
+      const code = command.payload?.code
+      if (typeof code !== "string" || code.trim().length === 0) {
+        throw new InteractiveSessionError("INVALID_COMMAND", "run_example_code requires code", 400)
+      }
+      const result = await runRoleCExampleCode({
+        executionId: `EXEC-${record.session_id}-${command.command_id}`,
+        sessionId: record.session_id,
+        runId: `RUN-${command.command_id}`,
+        learnerId: record.learner_request.learner_id ?? record.session_id,
+        code,
+      }, roleCRuntime(this.data_root))
       record.code_execution = result
       record.updated_at = new Date().toISOString()
       updated = record
@@ -2849,7 +2866,7 @@ function validateCommand(command: InteractiveSessionCommand): void {
   if (!command || typeof command !== "object" || !/^[A-Za-z0-9_-]{1,120}$/.test(command.command_id ?? "")) {
     throw new InteractiveSessionError("INVALID_COMMAND", "command_id is required and must be safe", 400)
   }
-  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(command.type)) {
+  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "run_example_code", "retry"].includes(command.type)) {
     throw new InteractiveSessionError("INVALID_COMMAND", "Unsupported command type", 400)
   }
 }

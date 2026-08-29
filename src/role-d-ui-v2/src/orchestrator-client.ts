@@ -195,6 +195,21 @@ export async function runCodeLab(
   }, fetcher)
 }
 
+/** 分步示例/讲义示例独立运行：Docker 真实执行，返回 stdout。 */
+export async function runExampleCode(
+  sessionId: string,
+  learnerId: string,
+  code: string,
+  fetcher: Fetcher = fetch,
+  commandId: string = newClientId("cmd"),
+): Promise<any> {
+  return command(sessionId, learnerId, {
+    command_id: commandId,
+    type: "run_example_code",
+    payload: { code },
+  }, fetcher)
+}
+
 export async function waitForOrchestratorSession(
   sessionId: string,
   learnerId: string,

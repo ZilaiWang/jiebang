@@ -798,3 +798,83 @@ function dockerCliEnvironment(): Record<string, string> {
 function compactDiagnostic(value: string): string {
   return value.replace(/\s+/g, " ").trim().slice(0, 240)
 }
+
+/**
+ * 独立运行一段示例代码（分步示例/讲义示例），不依赖测试判定：
+ * - 构造 stdin_stdout 恒真测试（expected 为空串），代码 print 的内容由
+ *   Docker harness 捕获为 actual；
+ * - 从 execute 的 failure_codes 中提取 actual（stdout 文本）作为运行结果；
+ * - 语法错误/运行时报错原样返回，绝不伪造输出。
+ */
+export interface StandaloneExecutionResult {
+  ok: boolean
+  stdout: string
+  error?: string
+  runner_image_digest?: string
+}
+
+export function executeStandaloneCode(
+  runner: CodeRunner,
+  input: { code: string; timeout_ms?: number },
+): Promise<StandaloneExecutionResult> {
+  const timeoutMs = Math.min(input.timeout_ms ?? 5_000, 5_000)
+  const suite: RunnerTestSuite = {
+    test_suite_id: "standalone-output",
+    execution_contract: {
+      language: "python",
+      execution_mode: "stdin_stdout",
+      allowed_imports: [...PLATFORM_PYTHON_IMPORT_ALLOWLIST],
+      input_contract: { type: "string", constraints: ["空输入"] },
+      output_contract: { kind: "string", type: "stdout_text", constraints: ["任意 stdout 文本"] },
+      resource_limits: { timeout_ms: timeoutMs, memory_mb: 128, max_output_bytes: 64_000 },
+    },
+    tests: [{
+      test_id: "standalone-output",
+      input: "",
+      expected: "",
+      objective_id: "standalone",
+      weight: 1,
+      comparison: { kind: "exact" },
+    }],
+  }
+  return runner.execute({
+    language: "python",
+    code: input.code,
+    test_suite_id: "standalone-output",
+    test_suite: suite,
+    timeout_ms: timeoutMs,
+    memory_mb: 128,
+    max_output_bytes: 64_000,
+    network_allowed: false,
+  }).then((result) => {
+    if (result.status === "runner_error") {
+      return { ok: false, stdout: "", error: "代码执行服务暂不可用", runner_image_digest: result.runner_image_digest }
+    }
+    if (result.status === "passed") {
+      // 恒真测试通过 = 代码无输出；不能伪造 stdout
+      return { ok: true, stdout: "", runner_image_digest: result.runner_image_digest }
+    }
+    // 从 failure_codes 提取 actual（stdout 文本，harness 以 JSON 字符串序列化）
+    const match = result.failure_codes[0]?.match(/actual=(.*)$/u)
+    if (match) {
+      const raw = match[1] ?? ""
+      let stdout = raw
+      try {
+        // harness actual 是 JSON 字符串（含转义），尝试解包为真实文本
+        const parsed = JSON.parse(raw)
+        if (typeof parsed === "string") stdout = parsed
+      } catch {
+        // 非 JSON 字符串（如数字输出），原样保留
+      }
+      return { ok: true, stdout, runner_image_digest: result.runner_image_digest }
+    }
+    // 语法错误/运行时报错
+    const code = result.failure_codes[0] ?? "unknown"
+    return {
+      ok: false,
+      stdout: "",
+      error: code.startsWith("runtime_") ? `运行错误：${code.slice("runtime_".length)}` : `代码错误：${code}`,
+      runner_image_digest: result.runner_image_digest,
+    }
+  })
+}

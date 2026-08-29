@@ -59,6 +59,7 @@ import {
   createRoleCAgents,
   defineLearningPathNode,
   createDockerPythonCodeRunnerFromEnv,
+  executeStandaloneCode,
   InMemoryLearningCycleStore,
   InMemoryMasteryStateStore,
   InMemorySecureArtifactStore,
@@ -1014,6 +1015,46 @@ export async function runRoleCCodeLab(
       code,
       message: codeLabFeedbackMessage(code),
     })),
+  }
+}
+
+export interface RunRoleCExampleCodeInput {
+  executionId: string
+  sessionId: string
+  runId: string
+  learnerId: string
+  code: string
+}
+
+export interface RunRoleCExampleCodeResult {
+  status: "ok" | "blocked"
+  executionId: string
+  stdout: string
+  error?: string
+}
+
+/** 分步示例/讲义示例的独立运行：Docker 真实执行，返回实际 stdout（不判分）。 */
+export async function runRoleCExampleCode(
+  input: RunRoleCExampleCodeInput,
+  runtime: RoleCForRoleDRuntimeOptions = {},
+): Promise<RunRoleCExampleCodeResult> {
+  let runner: CodeRunner
+  try {
+    runner = await resolveRoleCCodeRunner(runtime)
+  } catch {
+    return {
+      status: "blocked",
+      executionId: input.executionId,
+      stdout: "",
+      error: "代码执行服务暂不可用",
+    }
+  }
+  const result = await executeStandaloneCode(runner, { code: input.code })
+  return {
+    status: result.ok ? "ok" : "blocked",
+    executionId: input.executionId,
+    stdout: result.stdout,
+    ...(result.error ? { error: result.error } : {}),
   }
 }
 

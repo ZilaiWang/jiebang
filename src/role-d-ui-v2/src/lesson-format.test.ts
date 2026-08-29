@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { normalizePythonDisplayIndentation, semanticLessonLines } from "./lesson-format"
+import { lessonPointParagraphs, normalizePythonDisplayIndentation, semanticLessonLines } from "./lesson-format"
 
 describe("lesson semantic line breaks", () => {
   test("puts each explicit demonstration step on its own line", () => {
@@ -26,5 +26,27 @@ describe("lesson semantic line breaks", () => {
       .toBe('for item in ["a"]:\n    print(item)')
     expect(normalizePythonDisplayIndentation("if ready:\n    print('ok')"))
       .toBe("if ready:\n    print('ok')")
+  })
+})
+
+describe("lesson point paragraphs", () => {
+  test("splits single newline-separated lines into paragraphs (no blank lines in text)", () => {
+    expect(lessonPointParagraphs("概念说明。\n注意边界。"))
+      .toEqual(["概念说明。", "注意边界。"])
+  })
+
+  test("treats blank-line separated blocks as paragraphs and keeps inner newlines", () => {
+    expect(lessonPointParagraphs("第一段内容。\n\n第二段内容。\n它还有续行。"))
+      .toEqual(["第一段内容。", "第二段内容。\n它还有续行。"])
+  })
+
+  test("keeps a single paragraph intact and trims whitespace", () => {
+    expect(lessonPointParagraphs("  Python 使用 if 进行条件判断。  "))
+      .toEqual(["Python 使用 if 进行条件判断。"])
+  })
+
+  test("returns empty array for blank or whitespace-only text", () => {
+    expect(lessonPointParagraphs("")).toEqual([])
+    expect(lessonPointParagraphs("   \n  ")).toEqual([])
   })
 })

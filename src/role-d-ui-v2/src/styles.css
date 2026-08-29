@@ -255,6 +255,10 @@ html[data-theme="dark"] .hero-cat-illustration { filter: drop-shadow(0 20px 40px
 .lesson-topline h1 { max-width: 920px; margin: 10px 0 5px; font-size: clamp(27px, 3.5vw, 42px); line-height: 1.16; letter-spacing: -1.2px; }.lesson-adaptation-badge { display: inline-flex; margin-left: 8px; padding: 4px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }.lesson-adaptation-badge.is-remediate { color: #8d3c30; background: #fde9e4; }.lesson-adaptation-badge.is-reinforce { color: #245f80; background: #e4f2fa; }.lesson-adaptation-badge.is-advance { color: #267251; background: #e7f7ed; }.lesson-topline p { margin: 0; color: var(--muted); font-size: 13px; }
 .lesson-top-actions { display: flex; align-items: center; gap: 12px; }.lesson-top-actions > span { display: flex; align-items: center; gap: 5px; color: var(--green); font-size: 12px; }.lesson-top-actions button { display: flex; align-items: center; gap: 7px; min-height: 42px; padding: 0 15px; border: 0; border-radius: 8px; background: var(--navy); color: white; font-weight: 700; }
 .lesson-layout { max-width: 1530px; margin: 0 auto; display: grid; grid-template-columns: 230px minmax(520px, 1fr) 290px; gap: 14px; align-items: start; }
+/* 代码实验/理解检查无本节目录：主内容 + 右侧卡片两列，卡片保持最右 */
+.lesson-layout-no-outline { grid-template-columns: minmax(520px, 1fr) 290px; }
+/* 独立长条 tabs：置顶卡片 + 与下方讲义拉开距离；双类选择器覆盖 .lesson-tabs 的吸顶定位，固定在初始位置 */
+.lesson-tabs.lesson-tabs-standalone { position: static; max-width: 1530px; margin: 0 auto 26px; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 24px rgba(23,104,212,.06); }
 .lesson-outline, .lesson-main, .lesson-side { border: 1px solid var(--line); border-radius: 16px; background: var(--paper); box-shadow: 0 6px 20px rgba(35,45,40,.04); }
 .lesson-outline { position: sticky; top: 91px; padding: 14px; }
 .outline-head { display: flex; align-items: center; gap: 8px; padding: 8px; margin-bottom: 7px; color: var(--navy); }
@@ -267,7 +271,7 @@ html[data-theme="dark"] .hero-cat-illustration { filter: drop-shadow(0 20px 40px
 .lesson-tabs button { position: relative; z-index: 1; min-height: 48px; display: flex; justify-content: center; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: transparent; color: #6e7772; font-weight: 650; }.lesson-tabs button.is-active { color: var(--blue); background: transparent; }
 .lesson-document { position: relative; padding: 46px 22px 22px; }
 .lesson-document::before { content: ""; position: absolute; left: 22px; right: 22px; top: 20px; height: 1px; background: linear-gradient(90deg, transparent, rgba(23,104,212,.18), transparent); }
-.lesson-section { position: relative; scroll-margin-top: 140px; margin-bottom: 18px; padding: 23px; border: 1px solid #e4e7e2; border-radius: 14px; background: white; animation: section-in .45s ease both; }.summary-list { list-style: none; padding: 0; margin: 0; }.summary-list > li { display: flex; gap: 6px; align-items: baseline; margin-bottom: 6px; }.summary-list > li:last-child { margin-bottom: 0; }.summary-num { flex: none; color: #7c3aed; font-size: 13px; font-weight: 700; }.summary-line { margin: 0; color: #424b46; font-size: 14px; line-height: 1.7; }.lesson-section > header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }.lesson-section > header span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--blue); background: var(--blue-soft); }.lesson-section > header h2 { margin: 0; font-size: 21px; }.tone-warm { background: #fffaf0; }.tone-blue { background: #f7fbff; }.tone-amber { background: #fffaf0; }.tone-mint { background: #f4fbf6; }
+.lesson-section { position: relative; scroll-margin-top: 140px; margin-bottom: 18px; padding: 23px; border: 1px solid #e4e7e2; border-radius: 14px; background: white; animation: section-in .45s ease both; }.summary-list { list-style: none; padding: 0; margin: 0; }.summary-list > li { margin-bottom: 6px; }.summary-list > li:last-child { margin-bottom: 0; }.summary-line { margin: 0; color: #424b46; font-size: 14px; line-height: 1.7; }.no-prerequisite-note { margin: 0; color: #6e7772; font-size: 14px; }.lesson-section > header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }.lesson-section > header span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--blue); background: var(--blue-soft); }.lesson-section > header h2 { margin: 0; font-size: 21px; }.tone-warm { background: #fffaf0; }.tone-blue { background: #f7fbff; }.tone-amber { background: #fffaf0; }.tone-mint { background: #f4fbf6; }
 .semantic-lesson-line {
   display: block;
   margin-bottom: 0.55em;
@@ -276,6 +280,20 @@ html[data-theme="dark"] .hero-cat-illustration { filter: drop-shadow(0 20px 40px
 .semantic-lesson-line:last-child {
   margin-bottom: 0;
 }
+
+/* 讲义圆点分段：每段前小圆点（与首行对齐），段间留空行，段内换行紧凑 */
+.lesson-point-list { list-style: none; margin: 0 0 18px; padding: 0; }
+.lesson-point-list:last-child { margin-bottom: 0; }
+.lesson-point-list > li { position: relative; margin-bottom: 18px; padding-left: 21px; color: #424b46; font-size: 15px; line-height: 1.9; }
+.lesson-point-list > li:last-child { margin-bottom: 0; }
+.lesson-point-list > li::before { content: ""; position: absolute; left: 1px; top: 0.72em; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 3px rgba(23,104,212,.12); }
+.lesson-point-list .point-line { display: block; }
+/* 常见误区：同一圆点列表，条目内目标编号、说明与引用分层紧凑排列 */
+.misconception-point-list > li { margin-bottom: 16px; }
+.misconception-point-list b { display: inline-block; margin-right: 7px; color: var(--orange); font-size: 12px; font-weight: 700; }
+.misconception-point-list .misconception-text { display: block; position: relative; padding-left: 16px; margin: 2px 0; }
+.misconception-point-list .misconception-text::before { content: ""; position: absolute; left: 1px; top: 0.68em; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 2px rgba(214,122,38,.15); }
+.misconception-point-list small { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
 
 .prose-block { margin: 11px 0; }.prose-block p { margin: 0; color: #424b46; line-height: 1.9; font-size: 15px; }
 .citation-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
@@ -310,8 +328,11 @@ html[data-theme="dark"] .hero-cat-illustration { filter: drop-shadow(0 20px 40px
 .loop-visualizer-controls button:disabled { opacity: .35; cursor: default; }
 .loop-visualizer-controls button:not(:disabled):hover { background: rgba(255,255,255,.11); }
 .code-viewer { padding: 8px 0 0; }.code-lines > div { display: grid; grid-template-columns: 36px 1fr; padding: 4px 12px; color: #aebfd1; font-family: Consolas, monospace; font-size: 13px; transition: background .18s ease, color .18s ease; }.code-lines > div > span { color: #5f7891; user-select: none; }.code-lines > div.is-current { color: #fff; background: rgba(68,162,122,.23); }.code-lines > div.is-past { color: #b9cadb; }
-.code-step-status { display: flex; align-items: center; gap: 9px; min-width: 0; margin: 8px 12px 0; padding: 8px 10px; border: 1px solid rgba(255,255,255,.1); border-radius: 7px; color: #b9c9d6; background: rgba(255,255,255,.04); font-size: 10px; }.code-step-status span { flex: none; color: #8fd1b3; font-weight: 750; }.code-step-status code { min-width: 0; overflow: hidden; color: #dce8f4; text-overflow: ellipsis; white-space: nowrap; }
-.code-controls { display: flex; justify-content: flex-end; gap: 6px; padding: 11px 12px; }.code-controls button { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; background: rgba(255,255,255,.06); color: #dce8f4; font-size: 10px; }
+.example-run-bar { display: flex; align-items: center; gap: 10px; padding: 11px 12px; }
+.example-run-button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border: 0; border-radius: 7px; background: #2d8e68; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; transition: background .18s ease; }.example-run-button:hover { background: #257a58; }.example-run-button:disabled { opacity: .6; cursor: default; }
+.example-run-button .spinner { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: example-spin .7s linear infinite; }@keyframes example-spin { to { transform: rotate(360deg) } }
+.example-run-status { font-size: 11px; font-weight: 700; }.example-run-status.is-ok { color: #7fd6a8; }.example-run-status.is-failed { color: #f0967d; }
+.example-run-output { margin: 0 12px 12px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: #0f1b28; color: #dce8f4; font-family: Consolas, "Liberation Mono", monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }.example-run-output.is-error { color: #f0967d; border-color: rgba(240,150,125,.3); }
 .callout { padding: 16px; border-radius: 10px; background: var(--blue-soft); }.callout p { margin: 5px 0; line-height: 1.75; }.callout-warning { background: #fff2dc; }.callout-tip { background: #eaf7ef; }
 .comparison-block > div { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }.comparison-block section { padding: 13px; border-radius: 9px; background: #f2f4f1; }
 .misconception-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }.misconception-grid article { padding: 15px; border-radius: 10px; background: rgba(255,255,255,.7); border: 1px solid #f0dfbd; }.misconception-grid b { color: var(--orange); font-size: 11px; }.misconception-grid p { margin: 6px 0; line-height: 1.7; font-size: 13px; }.misconception-grid small { color: var(--muted); }
