@@ -37,6 +37,12 @@ import type { LearningPathNode } from "../role-c-content/contracts/profile-adapt
 import { bindObjectiveEvidence } from "../role-c-content/planning/objective-evidence-bundle"
 import { buildFormalPath, advanceToNextNode, isFormalPathMastered, startPath, type FormalLearningPath } from "../role-b-profile/teaching-audit/formal-path"
 import { RoleBLearningProgressAdapter } from "../role-b-profile/teaching-audit/learning-progress-adapter"
+import {
+  applyProfileClarificationAnswer,
+  assessProfileIntake,
+  isLearnerProfileV2,
+  type ProfileClarificationAnswer,
+} from "../role-b-profile/learner-profile-v2"
 import { createLocalBPathPlanningPort } from "../role-c-content/review/local-b-path-planning-port"
 import type { KnowledgeBase } from "../knowledge/types"
 import type { LearnerProfileSnapshot } from "../role-c-content/contracts/profile-adapter"
@@ -177,7 +183,7 @@ export interface InteractiveSessionRecord {
   current_stage: InteractiveStage
   round_no: number
   waiting_for: null | {
-    type: "diagnosis_answers" | "assessment_answers" | "clarification_answer"
+    type: "profile_answers" | "diagnosis_answers" | "assessment_answers" | "clarification_answer"
     items: unknown[]
   }
   worker_ledger: PublicWorkerLedgerEntry[]
@@ -260,9 +266,9 @@ export interface InteractiveSessionStoreOptions {
 
 export interface InteractiveSessionCommand {
   command_id: string
-  type: "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "retry"
+  type: "submit_profile_answers" | "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "retry"
   payload?: {
-    answers?: Record<string, string> | SubmissionAnswer[]
+    answers?: Record<string, string> | SubmissionAnswer[] | ProfileClarificationAnswer[]
     item_id?: string
     lab_id?: string
     code?: string
@@ -381,6 +387,7 @@ export class InteractiveSessionStore {
     const operation = this.withSessionLock(sessionId, async () => {
       const record = await this.buildSessionShell({ ...input, session_id: sessionId }, true)
       await this.save(record, null)
+      if (record.waiting_for?.type === "profile_answers") return record
       await this.jobRunner.enqueue(createModelWorkflowJob({
         job_id: `JOB-${createHash("sha256").update(`${sessionId}:diagnostic`).digest("hex").slice(0, 32)}`,
         session_id: sessionId,
@@ -402,7 +409,7 @@ export class InteractiveSessionStore {
     const existing = await this.loadOptional(sessionId)
     if (existing) throw new InteractiveSessionError("SESSION_ALREADY_EXISTS", `Session ${sessionId} already exists`, 409)
     const record = await this.buildSessionShell(input, false)
-    await this.populateDiagnosis(record)
+    if (record.waiting_for?.type !== "profile_answers") await this.populateDiagnosis(record)
     await this.save(record, null)
     return record
   }
@@ -426,7 +433,7 @@ export class InteractiveSessionStore {
         ? [event(sessionId, "worker_invoked", "objective_diagnosis", "正在准备客观诊断题", now, "objective-diagnostician")]
         : []),
     ]
-    return {
+    const record: InteractiveSessionRecord = {
       schema_version: "1.0",
       revision: 0,
       session_id: sessionId,
@@ -486,6 +493,26 @@ export class InteractiveSessionStore {
       created_at: now,
       updated_at: now,
     }
+    const intake = record.learner_request.profile_intake
+    if (intake) {
+      const assessment = assessProfileIntake(intake)
+      if (assessment.status === "needs_clarification") {
+        record.status = "waiting_for_user"
+        record.waiting_for = { type: "profile_answers", items: assessment.questions }
+        record.worker_ledger = [
+          { worker: "background-collector", status: "waiting_for_user", summary: "等待补充结构化画像", updated_at: now },
+          { worker: "self-assessor", status: "pending", summary: "等待画像采集完成", updated_at: now },
+        ]
+        record.worker_ledger_history = [
+          createWorkerLedgerHistoryEntry(sessionId, runId, 1, 1, 1, "background-collector", "waiting_for_user", "等待补充结构化画像", "objective_diagnosis", now, null, "session_logic", true, [], []),
+        ]
+        record.events = [
+          event(sessionId, "session_created", "objective_diagnosis", "learning-orchestrator created a persistent session", now),
+          event(sessionId, "waiting_for_user", "objective_diagnosis", "waiting for structured profile answers", now, "background-collector"),
+        ]
+      }
+    }
+    return record
   }
 
   private async populateDiagnosis(record: InteractiveSessionRecord): Promise<void> {
@@ -646,7 +673,53 @@ export class InteractiveSessionStore {
     }
 
     let updated: InteractiveSessionRecord
-    if (command.type === "submit_diagnosis_answers") {
+    if (command.type === "submit_profile_answers") {
+      if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "profile_answers") {
+        throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for profile answers", 409)
+      }
+      const answers = command.payload?.answers
+      if (!Array.isArray(answers) || answers.length === 0) {
+        throw new InteractiveSessionError("INVALID_COMMAND", "submit_profile_answers requires a non-empty answers array", 400)
+      }
+      const asked = new Set((record.waiting_for.items as Array<{ id?: unknown }>)
+        .flatMap((item) => typeof item?.id === "string" ? [item.id] : []))
+      let intake = record.learner_request.profile_intake
+      if (!intake) throw new InteractiveSessionError("PROFILE_INTAKE_MISSING", "Structured profile intake is missing", 409)
+      for (const candidate of answers) {
+        if (!candidate || typeof candidate !== "object" || !("question_id" in candidate) || !("value" in candidate)) {
+          throw new InteractiveSessionError("INVALID_COMMAND", "Each profile answer requires question_id and value", 400)
+        }
+        const answer = candidate as ProfileClarificationAnswer
+        if (!asked.has(answer.question_id)) {
+          throw new InteractiveSessionError("INVALID_COMMAND", `Profile question was not requested: ${answer.question_id}`, 400)
+        }
+        intake = applyProfileClarificationAnswer(intake, answer)
+      }
+      if (intake.learner_id !== record.learner_request.learner_id
+        || intake.goal?.trim() !== record.learner_request.goal.trim()) {
+        throw new InteractiveSessionError("PROFILE_INTAKE_IDENTITY_MISMATCH", "Profile answers cannot change learner or learning goal", 400)
+      }
+      record.learner_request.profile_intake = intake
+      const assessment = assessProfileIntake(intake)
+      const now = new Date().toISOString()
+      record.events.push(event(record.session_id, "command_received", "objective_diagnosis", "received structured profile answers", now, "background-collector"))
+      if (assessment.status === "needs_clarification") {
+        record.waiting_for = { type: "profile_answers", items: assessment.questions }
+        record.status = "waiting_for_user"
+        record.updated_at = now
+        updated = record
+      } else {
+        record.status = "running"
+        record.waiting_for = null
+        record.worker_ledger = [
+          { worker: "background-collector", status: "completed", summary: "已收集结构化学习背景", updated_at: now },
+          { worker: "self-assessor", status: "completed", summary: "已收集学习者自评与偏好", updated_at: now },
+          { worker: "objective-diagnostician", status: "running", summary: "正在准备客观诊断题", updated_at: now },
+        ]
+        await this.populateDiagnosis(record)
+        updated = record
+      }
+    } else if (command.type === "submit_diagnosis_answers") {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "diagnosis_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for diagnosis answers", 409)
       }
@@ -1299,14 +1372,19 @@ async function continueAfterAssessment(
 
   const submissionId = `SUB-${record.session_id}-R${record.round_no}-${command.command_id}`
   const knowledgeBase = await loadKnowledgeBase()
-  const profileVersion = `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`
+  const currentProfile = record.profile as LearnerProfile
+  const profileVersion = isLearnerProfileV2(currentProfile)
+    ? currentProfile.profile_version
+    : `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`
   const progressAdapter = new RoleBLearningProgressAdapter({
     knowledgeBase,
     learners: [{
       learnerIdHash: roleC.learner_id,
-      currentProfile: record.profile as LearnerProfile,
+      currentProfile,
       profileVersion,
-      profileRevision: Math.max(0, record.round_no - 1),
+      profileRevision: isLearnerProfileV2(currentProfile)
+        ? currentProfile.revision
+        : Math.max(0, record.round_no - 1),
     }],
   })
   let outcome: Awaited<ReturnType<typeof submitRoleCAssessment>>
@@ -1835,12 +1913,15 @@ async function generateFormalRoleCRound(
   // B 已冻结当前路径节点后，A 按 source/fact 身份创建本轮独立取证结果。
   // 不追加或改写旧 RAG；旧结果只作为检索谱系的 parent。
   const profile = record.profile as LearnerProfile
+  const profileVersion = isLearnerProfileV2(profile)
+    ? profile.profile_version
+    : `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`
   const action = nextRoundContext?.action ?? "advance"
   const currentRagResult = await retrieveLearningEvidence(buildLearningEvidenceRequest({
     run_id: `${record.run_id}-ROUND-${record.round_no}`,
     retrieval_mode: "identity_hydration",
     learner_profile: {
-      profile_version: `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`,
+      profile_version: profileVersion,
       level: profile.level,
       known_concepts: [...profile.known_concepts],
       weak_concepts: [...profile.weak_concepts],
@@ -1885,7 +1966,7 @@ async function generateFormalRoleCRound(
       // 建 key。同一画像纪元（profile_epoch）内多轮 evidence 跨轮累积，
       // reprofile（连续高分/低分与画像冲突）才可触发；reprofile 后 epoch+1
       // 进入新纪元，新画像不与旧画像累积串扰。若改为每轮派生则退化为每轮独立评估。
-      profile_version: `${record.run_id}-profile-E${record.private.profile_epoch ?? 0}`,
+      profile_version: profileVersion,
       pathNode: boundPathNode,
       ...(nextRoundContext ? { next_round_context: nextRoundContext } : {}),
       ...(record.private.assessment_history.length > 0
@@ -2405,25 +2486,36 @@ async function continueAfterDiagnosis(
   record.events.push(event(record.session_id, "command_received", "objective_diagnosis", "received diagnosis answers", now, "objective-diagnostician"))
 
   const knowledgeBase = await loadKnowledgeBase()
+  const profileIntake = record.learner_request.profile_intake
+  const educationContext = profileIntake
+    ? [
+        profileIntake.background_summary,
+        profileIntake.education_stage,
+        ...(profileIntake.discipline_background ?? []),
+        profileIntake.role_context,
+      ].filter((value): value is string => Boolean(value?.trim())).join("；") || null
+    : record.learner_request.background ?? null
   const background: BackgroundEvidence = {
     evidence_type: "background",
     learner_id: record.learner_request.learner_id ?? record.session_id,
-    education_context: record.learner_request.background ?? null,
-    prior_languages: [],
-    prior_topics: [],
+    education_context: educationContext,
+    prior_languages: [...(profileIntake?.prior_languages ?? [])],
+    prior_topics: [...(profileIntake?.prior_topics ?? [])],
     goal_raw: record.learner_request.goal,
-    time_budget: null,
-    quotes: record.learner_request.background
-      ? [{ field: "education_context", text: record.learner_request.background }]
+    time_budget: profileIntake?.weekly_time_budget_minutes
+      ? `${profileIntake.weekly_time_budget_minutes} 分钟/周`
+      : null,
+    quotes: educationContext
+      ? [{ field: "education_context", text: educationContext }]
       : [],
   }
   const selfAssessment: SelfAssessmentEvidence = {
     evidence_type: "self_assessment",
-    self_rating: normalizeDifficulty(record.learner_request.self_rating),
+    self_rating: profileIntake?.self_rating ?? normalizeDifficulty(record.learner_request.self_rating),
     claimed_known: [],
     claimed_weak: [],
-    quotes: record.learner_request.self_rating
-      ? [{ field: "self_rating", text: record.learner_request.self_rating }]
+    quotes: (profileIntake?.self_rating ?? record.learner_request.self_rating)
+      ? [{ field: "self_rating", text: profileIntake?.self_rating ?? record.learner_request.self_rating! }]
       : [],
   }
   const diagnosisItems: DiagnosisItem[] = record.private.diagnosis_items.map((item) => {
@@ -2757,7 +2849,7 @@ function validateCommand(command: InteractiveSessionCommand): void {
   if (!command || typeof command !== "object" || !/^[A-Za-z0-9_-]{1,120}$/.test(command.command_id ?? "")) {
     throw new InteractiveSessionError("INVALID_COMMAND", "command_id is required and must be safe", 400)
   }
-  if (!["submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(command.type)) {
+  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "retry"].includes(command.type)) {
     throw new InteractiveSessionError("INVALID_COMMAND", "Unsupported command type", 400)
   }
 }
@@ -2948,7 +3040,10 @@ function artifactLocatorForWorker(sessionId: string, worker: WorkerName): string
 
 function nextActionForWorker(worker: WorkerName, status: PublicWorkerLedgerEntry["status"]): string | null {
   if (status === "blocked" || status === "failed") return `retry-or-replan:${worker}`
-  if (status === "waiting_for_user") return worker === "objective-diagnostician" ? "submit_diagnosis_answers" : "submit_assessment_answers"
+  if (status === "waiting_for_user") {
+    if (worker === "background-collector" || worker === "self-assessor") return "submit_profile_answers"
+    return worker === "objective-diagnostician" ? "submit_diagnosis_answers" : "submit_assessment_answers"
+  }
   const index = ORCHESTRATION_WORKER_SEQUENCE.findIndex((entry) => entry.worker === worker)
   return ORCHESTRATION_WORKER_SEQUENCE[index + 1]?.worker ?? null
 }

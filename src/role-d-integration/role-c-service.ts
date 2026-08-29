@@ -23,6 +23,10 @@ import { loadKnowledgeBase } from "../knowledge/loader"
 import type { KnowledgeBase } from "../knowledge/types"
 import { canonicalizeConcept } from "../role-b-profile/concept-canonicalizer"
 import {
+  buildRoleCProfileSnapshotOptions,
+  isLearnerProfileV2,
+} from "../role-b-profile/learner-profile-v2"
+import {
   type RagResult,
 } from "../rag/retriever"
 import {
@@ -274,12 +278,15 @@ export async function generateRoleCForRoleDWithRuntime(
     kb_version: input.kbVersion,
     rag_version: "rule-rag-0.1",
   })
-  const profileSnapshot = adaptLearnerProfile(input.profile, {
-    // 跨轮稳定标识：主 Agent 传入会话级 run_id 时，mastery 状态可跨轮累积
-    //（reprofile 才能被多轮高分/低分触发）；缺省时每轮 runId 派生 → 每轮独立评估。
-    profile_version: input.profile_version ?? `${input.runId}-profile-v1`,
-    provenance_ref: "role-d:new-learning-plan",
-  })
+  const profileSnapshot = adaptLearnerProfile(input.profile,
+    isLearnerProfileV2(input.profile)
+      ? buildRoleCProfileSnapshotOptions(input.profile)
+      : {
+          // 跨轮稳定标识：主 Agent 传入会话级 run_id 时，mastery 状态可跨轮累积
+          //（reprofile 才能被多轮高分/低分触发）；缺省时每轮 runId 派生 → 每轮独立评估。
+          profile_version: input.profile_version ?? `${input.runId}-profile-v1`,
+          provenance_ref: "role-d:new-learning-plan",
+        })
   const pathNode = structuredClone(input.pathNode)
 
   const runtimeEnv = runtime.env ?? process.env

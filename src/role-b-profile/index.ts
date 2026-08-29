@@ -82,3 +82,41 @@ export {
   buildBHandoffPayload,
 } from "./unified-adapter"
 export type { BuildBHandoffInput } from "./unified-adapter"
+
+// 画像构建 v2：结构化采集、有限主动追问、动态更新和资源侧交接接口。
+export {
+  assessProfileIntake,
+  applyProfileClarificationAnswer,
+  createLearnerProfileV2,
+  updateLearnerProfileV2,
+  updateLearnerProfileFromAnswers,
+  buildRoleCProfileSnapshotOptions,
+  buildPersonalizationProfileHandoff,
+  isLearnerProfileV2,
+} from "./learner-profile-v2"
+export type {
+  LearnerProfileIntakeV2,
+  LearnerProfileV2,
+  LearningGoalUseCase,
+  ExplanationPreference,
+  PracticePreference,
+  LearningPacePreference,
+  ProfileRetention,
+  ProfilePrivacyPreferences,
+  ProfileFieldSource,
+  ProfileFieldProvenance,
+  ProfileClarificationQuestionId,
+  ProfileClarificationOption,
+  ProfileClarificationQuestion,
+  ProfileClarificationAnswer,
+  ProfileIntakeAssessment,
+  CreateLearnerProfileV2Input,
+  PersonalizationProfileHandoff,
+  UpdateLearnerProfileV2Input,
+  UpdateLearnerProfileV2Result,
+  UpdateLearnerProfileFromAnswersInput,
+  UpdateLearnerProfileFromAnswersResult,
+} from "./learner-profile-v2"
+
+export { buildRoleCPedagogyContract } from "./pedagogy-contract"
+export type { RoleCPedagogyContract } from "./pedagogy-contract"

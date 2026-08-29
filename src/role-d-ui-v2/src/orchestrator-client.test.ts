@@ -9,6 +9,7 @@ import {
   saveProviderConfiguration,
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
+  submitProfileAnswers,
 } from "./orchestrator-client"
 
 const learnerId = "learner-ui-v2"
@@ -47,6 +48,45 @@ describe("orchestrator browser client", () => {
         learner_id: learnerId,
         goal: "学习 for 循环",
         learning_goal_spec: { mode: "curriculum_node", selected_node_ids: ["PY-CH02-S02"] },
+      },
+    })
+  })
+
+  test("sends profile v2 intake and structured clarification answers through the main Agent boundary", async () => {
+    const profileIntake = {
+      learner_id: learnerId,
+      goal: "用 Python 完成循环题",
+      background_summary: "学过变量",
+      self_rating: "basic" as const,
+      goal_use_case: "competition" as const,
+      weekly_time_budget_minutes: 180,
+    }
+    const { calls, fetcher } = fakeFetch([
+      { session_id: "SESSION-V2", status: "waiting_for_user" },
+      { session_id: "SESSION-V2", current_stage: "objective_diagnosis" },
+    ])
+
+    await createOrchestratorSession({
+      learnerId,
+      goal: profileIntake.goal,
+      profileIntake,
+    }, fetcher)
+    await submitProfileAnswers(
+      "SESSION-V2",
+      learnerId,
+      [{ question_id: "profile.desired_outcome", value: "独立完成并调试程序" }],
+      fetcher,
+      "CMD-PROFILE-1",
+    )
+
+    expect(JSON.parse(String(calls[0]!.init?.body))).toMatchObject({
+      learner_request: { profile_intake: profileIntake },
+    })
+    expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({
+      command_id: "CMD-PROFILE-1",
+      type: "submit_profile_answers",
+      payload: {
+        answers: [{ question_id: "profile.desired_outcome", value: "独立完成并调试程序" }],
       },
     })
   })

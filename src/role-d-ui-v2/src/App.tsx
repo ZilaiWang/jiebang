@@ -58,6 +58,7 @@ import {
   saveProviderConfiguration,
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
+  submitProfileAnswers,
 } from "./orchestrator-client"
 import { semanticLessonLines, indentParagraphText, normalizePythonDisplayIndentation } from "./lesson-format"
 import {
@@ -150,6 +151,7 @@ export type LiveContextValue = {
   clearAssessmentAnswers: () => void
   create: (input: { goal: string; nodeId?: string; custom?: boolean; planName: string }) => Promise<void>
   submitDiagnosis: () => Promise<void>
+  submitProfileClarification: (answers: Array<{ question_id: string; value: string | string[] | number }>) => Promise<void>
   submitAssessment: () => Promise<void>
   runAssessmentItemCode: (itemId: string, code: string) => Promise<void>
   runPublishedCodeLab: (labId: string, code: string) => Promise<void>
@@ -390,6 +392,30 @@ export function App() {
           learningGoalSpec: custom
             ? { mode: "custom_goal", custom_goal: goal }
             : { mode: "curriculum_node", selected_node_ids: nodeId ? [nodeId] : [] },
+          profileIntake: currentUser.intakeVersion === 2
+            ? {
+                learner_id: currentUser.id,
+                goal,
+                background_summary: currentUser.background,
+                prior_languages: currentUser.priorLanguages,
+                self_rating: profileSelfRating(currentUser.pythonLevel),
+                goal_use_case: currentUser.goalUseCase,
+                desired_outcome: currentUser.desiredOutcome || goal,
+                weekly_time_budget_minutes: currentUser.weeklyHours * 60,
+                session_time_budget_minutes: currentUser.sessionMinutes,
+                explanation_preference: currentUser.explanationPreference,
+                practice_preference: currentUser.practicePreference,
+                pace_preference: currentUser.pacePreference,
+                preferred_contexts: currentUser.preferredContexts,
+                tool_constraints: currentUser.toolConstraints,
+                accommodations: currentUser.accommodations,
+                privacy: {
+                  personalization_enabled: true,
+                  retention: currentUser.retention,
+                  allow_profile_display: true,
+                },
+              }
+            : undefined,
         })
         await applySession(created)
         setDiagnosisAnswers({})
@@ -409,6 +435,16 @@ export function App() {
         setAssessmentAnswers({})
       } catch (reason) { setError(reason instanceof Error ? reason.message : "提交诊断失败") }
       finally { setBusy("") }
+    },
+    submitProfileClarification: async (answers) => {
+      if (!liveSession || liveSession.waiting_for?.type !== "profile_answers") return
+      setBusy("正在补充结构化画像并准备客观诊断…")
+      setError("")
+      try {
+        await applySession(await submitProfileAnswers(liveSession.session_id, learnerId, answers))
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "提交画像信息失败")
+      } finally { setBusy("") }
     },
     submitAssessment: async () => {
       if (!liveSession || !assessmentComplete(liveSession, assessmentAnswers)) return
@@ -691,7 +727,66 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
   const [learningStyle, setLearningStyle] = useState<LearnerProfileDraft["learningStyle"]>("balanced")
   const [background, setBackground] = useState("")
   const [languages, setLanguages] = useState("")
-  return <Modal title="认识你，从更合适的第一步开始" subtitle="几项轻量信息会交给主 Agent和B，用于画像与路径设计。" onClose={onClose}><div className="form-grid"><label><span>怎么称呼你？</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：林晓" /></label><label><span>每周预计学习时长</span><select value={weeklyHours} onChange={(event) => setWeeklyHours(Number(event.target.value))}>{[2,3,5,7,10,14].map((hours) => <option value={hours} key={hours}>{hours} 小时 / 周</option>)}</select></label><label><span>你和 Python 的熟悉程度</span><select value={pythonLevel} onChange={(event) => setPythonLevel(event.target.value as LearnerProfileDraft["pythonLevel"])}><option value="new">完全没接触过</option><option value="beginner">了解一点基础</option><option value="intermediate">能写简单程序</option><option value="advanced">有项目经验</option></select></label><label><span>你更喜欢怎样学？</span><select value={learningStyle} onChange={(event) => setLearningStyle(event.target.value as LearnerProfileDraft["learningStyle"])}><option value="balanced">讲解与练习平衡</option><option value="practice">多动手、多练习</option><option value="concept">先理解原理</option><option value="project">跟着项目学习</option></select></label><label className="full-field"><span>目前的学习/工作背景</span><input value={background} onChange={(event) => setBackground(event.target.value)} placeholder="例如：高中生、计算机专业大一、转行学习" /></label><label className="full-field"><span>接触过其他编程语言吗？</span><input value={languages} onChange={(event) => setLanguages(event.target.value)} placeholder="选填，用顿号或逗号分隔" /></label></div><div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>以后再说</button><button className="primary-action" disabled={!name.trim()} type="button" onClick={() => onCreate({ id: newClientId("learner"), name: name.trim(), weeklyHours, pythonLevel, learningStyle, background: background.trim(), priorLanguages: languages.split(/[、,，]/).map((item) => item.trim()).filter(Boolean) })}>保存学习档案</button></div></Modal>
+  const [goalUseCase, setGoalUseCase] = useState<NonNullable<LearnerProfileDraft["goalUseCase"]>>("coursework")
+  const [desiredOutcome, setDesiredOutcome] = useState("")
+  const [sessionMinutes, setSessionMinutes] = useState(30)
+  const [pacePreference, setPacePreference] = useState<NonNullable<LearnerProfileDraft["pacePreference"]>>("steady")
+  const [preferredContexts, setPreferredContexts] = useState("")
+  const [toolConstraints, setToolConstraints] = useState("")
+  const [accommodations, setAccommodations] = useState("")
+  const [retention, setRetention] = useState<NonNullable<LearnerProfileDraft["retention"]>>("session_only")
+  const splitItems = (value: string) => value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
+  const save = () => onCreate({
+    id: newClientId("learner"),
+    name: name.trim(),
+    weeklyHours,
+    pythonLevel,
+    learningStyle,
+    background: background.trim(),
+    priorLanguages: splitItems(languages),
+    intakeVersion: 2,
+    goalUseCase,
+    desiredOutcome: desiredOutcome.trim(),
+    sessionMinutes,
+    explanationPreference: explanationPreferenceForStyle(learningStyle),
+    practicePreference: practicePreferenceForStyle(learningStyle),
+    pacePreference,
+    preferredContexts: splitItems(preferredContexts),
+    toolConstraints: splitItems(toolConstraints),
+    accommodations: splitItems(accommodations),
+    retention,
+  })
+  return <Modal title="认识你，从更合适的第一步开始" subtitle="这些明确选择会由 B 转换成教学策略，能力仍以客观诊断为准。" onClose={onClose}>
+    <div className="form-grid">
+      <label><span>怎么称呼你？</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：林晓" /></label>
+      <label><span>你和 Python 的熟悉程度</span><select value={pythonLevel} onChange={(event) => setPythonLevel(event.target.value as LearnerProfileDraft["pythonLevel"])}><option value="new">完全没接触过</option><option value="beginner">了解一点基础</option><option value="intermediate">能写简单程序</option><option value="advanced">有项目经验</option></select></label>
+      <label><span>这次学习主要用于</span><select value={goalUseCase} onChange={(event) => setGoalUseCase(event.target.value as typeof goalUseCase)}><option value="coursework">课程学习或作业</option><option value="competition">竞赛准备</option><option value="job">求职或岗位提升</option><option value="project">完成实际项目</option><option value="certification">考试或认证</option><option value="interest">个人兴趣</option><option value="other">其他</option></select></label>
+      <label><span>你更喜欢怎样学？</span><select value={learningStyle} onChange={(event) => setLearningStyle(event.target.value as LearnerProfileDraft["learningStyle"])}><option value="balanced">讲解与练习平衡</option><option value="practice">先看例子、多动手</option><option value="concept">先理解原理</option><option value="project">按步骤完成项目</option></select></label>
+      <label><span>每周预计学习时长</span><select value={weeklyHours} onChange={(event) => setWeeklyHours(Number(event.target.value))}>{[2,3,5,7,10,14].map((hours) => <option value={hours} key={hours}>{hours} 小时 / 周</option>)}</select></label>
+      <label><span>单次学习时长</span><select value={sessionMinutes} onChange={(event) => setSessionMinutes(Number(event.target.value))}>{[15,20,30,45,60,90].map((minutes) => <option value={minutes} key={minutes}>{minutes} 分钟</option>)}</select></label>
+      <label><span>学习节奏</span><select value={pacePreference} onChange={(event) => setPacePreference(event.target.value as typeof pacePreference)}><option value="slow">慢一些，多铺垫</option><option value="steady">稳定推进</option><option value="fast">快节奏、少重复</option></select></label>
+      <label><span>画像保留方式</span><select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="session_only">只用于当前会话</option><option value="cross_session">跨会话保留并更新</option></select></label>
+      <label className="full-field"><span>目前的学习/工作背景</span><input value={background} onChange={(event) => setBackground(event.target.value)} placeholder="必填，例如：高中生、计算机专业大一、转行学习" /></label>
+      <label className="full-field"><span>希望最终能够独立完成什么？</span><input value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="例如：能独立编写并调试一个成绩统计程序" /></label>
+      <label className="full-field"><span>熟悉的例子或应用场景</span><input value={preferredContexts} onChange={(event) => setPreferredContexts(event.target.value)} placeholder="选填，用顿号或逗号分隔" /></label>
+      <label className="full-field"><span>接触过其他编程语言吗？</span><input value={languages} onChange={(event) => setLanguages(event.target.value)} placeholder="选填，用顿号或逗号分隔" /></label>
+      <label className="full-field"><span>设备、软件或网络限制</span><input value={toolConstraints} onChange={(event) => setToolConstraints(event.target.value)} placeholder="选填，例如：只能使用浏览器、网络不稳定" /></label>
+      <label className="full-field"><span>阅读或无障碍需求</span><input value={accommodations} onChange={(event) => setAccommodations(event.target.value)} placeholder="选填，例如：短段落、减少术语密度" /></label>
+    </div>
+    <div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>以后再说</button><button className="primary-action" disabled={!name.trim() || !background.trim()} type="button" onClick={save}>保存学习档案</button></div>
+  </Modal>
+}
+
+function profileSelfRating(level: LearnerProfileDraft["pythonLevel"]): "beginner" | "basic" | "intermediate" | "integrated" {
+  return ({ new: "beginner", beginner: "basic", intermediate: "intermediate", advanced: "integrated" } as const)[level]
+}
+
+function explanationPreferenceForStyle(style: LearnerProfileDraft["learningStyle"]): NonNullable<LearnerProfileDraft["explanationPreference"]> {
+  return ({ practice: "example_first", concept: "principle_first", project: "step_by_step", balanced: "balanced" } as const)[style]
+}
+
+function practicePreferenceForStyle(style: LearnerProfileDraft["learningStyle"]): NonNullable<LearnerProfileDraft["practicePreference"]> {
+  return ({ practice: "coding", concept: "quiz", project: "project", balanced: "mixed" } as const)[style]
 }
 
 
@@ -779,9 +874,12 @@ export function GoalPage({ onContinue: _onContinue }: { onContinue: () => void }
 export function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => void }) {
   const { isLive, diagnosisAnswers: liveAnswers, setDiagnosisAnswer, submitDiagnosis, busy } = useLive()
   const activeSession = useRequiredSession()
+  const [index, setIndex] = useState(0)
+  if (activeSession.waiting_for?.type === "profile_answers") {
+    return <ProfileClarificationForm questions={activeSession.waiting_for.items as ProfileQuestionView[]} />
+  }
   const items = activeSession.waiting_for?.type === "diagnosis_answers" ? activeSession.waiting_for.items as any[] : []
   const previewItems = items
-  const [index, setIndex] = useState(0)
   const answers = isLive ? liveAnswers : {}
   const item = previewItems[index]
   if (!item) return <EmptyState title="当前会话没有公开题目" body="D 不会为了页面完整而自造诊断题。主 Agent 会在取得 A 的事实证据后调用 AI 当次命题。" />
@@ -789,6 +887,32 @@ export function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => v
     <section className="diagnosis-shell"><div className="diagnosis-progress"><span>问题 {index + 1} / {previewItems.length}</span><div><i style={{ width: `${((index + 1) / previewItems.length) * 100}%` }} /></div><b>{Math.round(((index + 1) / previewItems.length) * 100)}%</b></div><article className="question-card"><div className="question-meta"><span>{item.difficulty ?? "诊断题"}</span><span>{item.concept}</span><span>{item.source_id}</span></div><h2>{item.question}</h2>{item.options?.length ? <div className="diagnosis-options">{item.options.map((option: string, optionIndex: number) => <button type="button" className={answers[item.item_id] === option ? "is-selected" : ""} onClick={() => setDiagnosisAnswer(item.item_id, option)} key={`${optionIndex}-${option}`}><span>{String.fromCharCode(65 + optionIndex)}</span><b>{option}</b>{answers[item.item_id] === option && <Check size={18} />}</button>)}</div> : <textarea placeholder="写下你的回答" value={answers[item.item_id] ?? ""} onChange={(event) => setDiagnosisAnswer(item.item_id, event.target.value)} />}
       <details className="why-question"><summary><CircleHelp size={16} /> 为什么问我这道题？</summary><p>用于诊断：{item.concept}。题目来源：{item.source_id}{item.fact_id ? ` / ${item.fact_id}` : ""}。D 不在浏览器中保存答案键。</p></details></article>
       <div className="diagnosis-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}><ChevronLeft /> 上一题</button>{index < previewItems.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>下一题 <ChevronRight /></button> : <button className="primary-action" disabled={Boolean(busy) || !diagnosisComplete(activeSession, answers)} type="button" onClick={() => void submitDiagnosis()}>{busy ? "正在生成学习资源…" : "提交诊断并生成学习方案"} <ArrowRight /></button>}</div></section>
+  </div>
+}
+
+interface ProfileQuestionView {
+  id: string
+  prompt: string
+  reason: string
+  answer_type: "text" | "number" | "single_choice" | "multi_text"
+  options?: Array<{ value: string; label: string }>
+}
+
+function ProfileClarificationForm({ questions }: { questions: ProfileQuestionView[] }) {
+  const { submitProfileClarification, busy } = useLive()
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const complete = questions.every((question) => answers[question.id]?.trim())
+  const submit = () => submitProfileClarification(questions.map((question) => ({
+    question_id: question.id,
+    value: question.answer_type === "number"
+      ? Number(answers[question.id])
+      : question.answer_type === "multi_text"
+        ? answers[question.id]!.split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
+        : answers[question.id]!,
+  })))
+  return <div className="page narrow-page"><PageHeading kicker="画像补充 · B结构化采集" title="先补充几项会真正影响教学方式的信息" description="主 Agent逐项收集缺失字段；背景只用于表达与任务组织，能力仍由接下来的客观诊断确定。" />
+    <section className="custom-goal-card"><div className="form-grid">{questions.map((question) => <label className="full-field" key={question.id}><span>{question.prompt}</span>{question.answer_type === "single_choice" ? <select value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}><option value="">请选择</option>{question.options?.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select> : <input type={question.answer_type === "number" ? "number" : "text"} min={question.answer_type === "number" ? 1 : undefined} value={answers[question.id] ?? ""} onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))} placeholder={question.answer_type === "multi_text" ? "可填写多项，用顿号或逗号分隔" : "请填写"} />}<small>{question.reason}</small></label>)}</div></section>
+    <div className="page-actions"><button className="primary-action" disabled={!complete || Boolean(busy)} type="button" onClick={() => void submit()}>{busy ? "正在提交…" : "提交并继续客观诊断"} <ArrowRight /></button></div>
   </div>
 }
 

@@ -1,6 +1,7 @@
 import type { WorkflowAgentName } from "../agents/types"
 import type { LearningGoalSpecInput } from "../knowledge/curriculum"
 import type { PersistenceEvent } from "./learner-memory"
+import type { LearnerProfileIntakeV2 } from "../role-b-profile/learner-profile-v2"
 
 export type OrchestrationState =
   | "created"
@@ -58,6 +59,8 @@ export interface LearnerRequest {
   self_rating?: string
   diagnostic_seed?: string
   learning_goal_spec?: LearningGoalSpecInput
+  /** Structured learner-authored context. Legacy callers may omit it. */
+  profile_intake?: LearnerProfileIntakeV2
 }
 
 export interface MasteryUpdate {

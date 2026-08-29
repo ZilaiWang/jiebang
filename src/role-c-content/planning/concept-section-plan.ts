@@ -19,6 +19,12 @@ import {
   executableExampleFactIds,
   isSubstantivePythonExample,
 } from "../../knowledge/example-code"
+import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import {
+  buildTeachingUnitContract,
+  validateTeachingUnitPlan,
+  type TeachingUnitContract,
+} from "./teaching-unit-contract"
 
 /**
  * 讲义 Section Plan（改进方案5 第六节）。
@@ -75,6 +81,7 @@ export interface ConceptSectionPlan {
     fact_ids: string[]
     minimum_reasoning_steps: 1 | 2 | 3
   }
+  teaching_unit_contract?: TeachingUnitContract
 }
 
 const MAX_FACTS_PER_EXPLANATION_SLOT = 3
@@ -125,6 +132,9 @@ export function buildConceptSectionPlan(input: {
   learner_level?: "beginner" | "basic" | "intermediate" | "integrated"
   micro_check_fact_ids?: string[]
   executable_example_fact_ids?: string[]
+  pedagogy_contract?: RoleCPedagogyContract
+  teaching_unit_contract?: TeachingUnitContract
+  has_boundary_support?: boolean
 }): ConceptSectionPlan {
   const { fact_ids } = input
   const mode = conceptModeForSupport(input.support, fact_ids.length)
@@ -152,7 +162,7 @@ export function buildConceptSectionPlan(input: {
     })),
   ]
 
-  const modeSlots: ConceptSectionSlot[] = mode === "procedural"
+  const primaryModeSlots: ConceptSectionSlot[] = mode === "procedural"
     ? [slot("procedure_steps", {
         fact_ids: requiresExecutableCode ? executableExampleFactIds : primaryFactGroup,
         allowed_moves: ["procedure_trace", "direct_instance"],
@@ -185,6 +195,44 @@ export function buildConceptSectionPlan(input: {
           ...(requiresExecutableCode ? { requires_executable_code: true } : {}),
         })]
 
+  const requestedExamples = input.pedagogy_contract?.lesson.worked_example_count ?? 1
+  const modeSlots: ConceptSectionSlot[] = Array.from({ length: requestedExamples }, (_, index) => {
+    const base = primaryModeSlots[index === 0 ? 0 : primaryModeSlots.length - 1]!
+    return {
+      ...base,
+      slot_id: stableId("CONCEPT-SLOT", {
+        objective_id: input.objective_id,
+        kind: base.kind,
+        fact_ids: base.fact_ids,
+        example_index: index,
+      }),
+      min_sentences: index === 0 ? base.min_sentences : Math.max(1, base.min_sentences - 1),
+    }
+  })
+  const traceSlot = input.pedagogy_contract?.lesson.require_step_trace
+    && mode !== "procedural"
+    && (input.support.supported_behaviors.includes("trace") || executableExampleFactIds.length > 0)
+    ? [slot("procedure_steps", {
+        slot_id: stableId("CONCEPT-SLOT", { objective_id: input.objective_id, kind: "step_trace" }),
+        fact_ids: executableExampleFactIds.length > 0 ? executableExampleFactIds : fact_ids,
+        allowed_moves: ["procedure_trace"],
+        min_sentences: 2,
+        max_sentences: 6,
+        allowed_block_types: ["paragraph"],
+      })]
+    : []
+  const debuggingSlot = input.pedagogy_contract?.lesson.require_debugging_clinic
+    && input.has_boundary_support
+    ? [slot("boundary", {
+        slot_id: stableId("CONCEPT-SLOT", { objective_id: input.objective_id, kind: "debugging_clinic" }),
+        fact_ids,
+        allowed_moves: ["boundary_explanation", "fact_negation"],
+        min_sentences: 2,
+        max_sentences: 5,
+        allowed_block_types: ["callout", "paragraph"],
+      })]
+    : []
+
   const misconceptionSlot = slot("misconception", {
     fact_ids: fact_ids.slice(0, 1),
     allowed_moves: ["fact_negation"],
@@ -206,15 +254,22 @@ export function buildConceptSectionPlan(input: {
   const plannedMicroCheckFacts = input.micro_check_fact_ids?.length
     ? input.micro_check_fact_ids
     : primaryFactGroup
+  const orderedSlots = input.pedagogy_contract?.lesson.opening === "example_then_rule"
+    || input.pedagogy_contract?.lesson.opening === "task_then_explanation"
+    ? [commonSlots[0]!, ...modeSlots, ...commonSlots.slice(1), ...traceSlot, ...debuggingSlot, misconceptionSlot, recapSlot]
+    : [...commonSlots, ...modeSlots, ...traceSlot, ...debuggingSlot, misconceptionSlot, recapSlot]
   return {
     objective_id: input.objective_id,
     mode,
-    slots: [...commonSlots, ...modeSlots, misconceptionSlot, recapSlot],
+    slots: orderedSlots,
     micro_check: input.learner_level === "beginner"
       ? { mode: "recognition", fact_ids: primaryFactGroup, minimum_reasoning_steps: 1 }
       : input.observable_behavior === "create"
         ? { mode: "transfer", fact_ids: plannedMicroCheckFacts.slice(0, 4), minimum_reasoning_steps: 3 }
         : { mode: "guided_application", fact_ids: plannedMicroCheckFacts.slice(0, 4), minimum_reasoning_steps: 2 },
+    ...(input.teaching_unit_contract
+      ? { teaching_unit_contract: structuredClone(input.teaching_unit_contract) }
+      : {}),
   }
 }
 
@@ -780,7 +835,44 @@ export function buildConceptSectionPlansForSegment(
         ref.source_id === target.source_id && targetFactSet.has(ref.fact_id)))
     const codeSupportFactIds = executableExample?.fact_refs.map((ref) => ref.fact_id)
       ?? executableExampleFactIds(facts)
-    return buildConceptSectionPlan({
+    const pedagogy = request.generation_spec.learner_adaptation.pedagogy_contract
+    const prerequisiteFactIds = request.evidence_pack.results
+      .filter((entry) => request.generation_spec.path_node.prerequisite_source_ids.includes(entry.source_id))
+      .flatMap((entry) => entry.facts.map((fact) => `${entry.source_id}:${fact.fact_id}`))
+    const misconceptionFactIds = (evidenceItem?.misconceptions ?? [])
+      .flatMap((entry) => entry.factRefs)
+      .filter((ref) => ref.sourceId === target.source_id && targetFactSet.has(ref.factId))
+      .map((ref) => ref.factId)
+    const procedureFactIds = facts.flatMap((fact) => {
+      const capabilities = fact.capabilities?.length
+        ? fact.capabilities
+        : inferFactCapabilities(fact.content)
+      const factId = fact.fact_id ?? fact.factId
+      return factId && (capabilities.includes("procedure") || capabilities.includes("state_transition"))
+        ? [factId]
+        : []
+    })
+    const hasBoundarySupport = facts.some((fact) => {
+      const capabilities = fact.capabilities?.length
+        ? fact.capabilities
+        : inferFactCapabilities(fact.content)
+      return capabilities.includes("boundary") || capabilities.includes("contrast")
+    })
+    const teachingUnit = pedagogy
+      ? buildTeachingUnitContract({
+          objective_id: target.objective_id,
+          pedagogy,
+          evidence: {
+            fact_ids: [...target.required_fact_ids],
+            prerequisite_fact_ids: prerequisiteFactIds,
+            example_fact_ids: codeSupportFactIds,
+            misconception_fact_ids: misconceptionFactIds,
+            procedure_fact_ids: procedureFactIds,
+            supports_executable_code: codeSupportFactIds.length > 0,
+          },
+        })
+      : undefined
+    const plan = buildConceptSectionPlan({
       objective_id: target.objective_id,
       observable_behavior: target.observable_behavior,
       fact_ids: target.required_fact_ids,
@@ -788,7 +880,23 @@ export function buildConceptSectionPlansForSegment(
       learner_level: request.generation_spec.learner_adaptation.level,
       micro_check_fact_ids: microCheckFactIds,
       executable_example_fact_ids: codeSupportFactIds,
+      ...(pedagogy ? { pedagogy_contract: pedagogy } : {}),
+      ...(teachingUnit ? { teaching_unit_contract: teachingUnit } : {}),
+      has_boundary_support: hasBoundarySupport,
     })
+    if (teachingUnit) {
+      const issues = validateTeachingUnitPlan(teachingUnit, {
+        section_kinds: plan.slots.map((entry) => entry.kind),
+        worked_example_count: plan.slots.filter((entry) =>
+          entry.kind === "guided_example" || entry.kind === "procedure_steps").length,
+        has_micro_check: true,
+        hint_levels: pedagogy?.practice.hint_levels ?? 3,
+        independent_practice_planned: true,
+        transfer_assessment_planned: true,
+      })
+      if (issues.length > 0) throw new Error(`TEACHING_UNIT_PLAN_INVALID:${issues.join(";")}`)
+    }
+    return plan
   })
 }
 

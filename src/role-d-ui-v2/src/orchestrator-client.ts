@@ -18,12 +18,41 @@ export interface LearningGoalSpecInput {
   custom_goal?: string
 }
 
+export interface ProfileIntakeInput {
+  learner_id: string
+  goal: string
+  background_summary?: string
+  education_stage?: string
+  discipline_background?: string[]
+  role_context?: string
+  prior_languages?: string[]
+  prior_topics?: string[]
+  self_rating?: "beginner" | "basic" | "intermediate" | "integrated"
+  goal_use_case?: "coursework" | "competition" | "job" | "project" | "certification" | "interest" | "other"
+  desired_outcome?: string
+  deadline?: string
+  weekly_time_budget_minutes?: number
+  session_time_budget_minutes?: number
+  explanation_preference?: "analogy_first" | "principle_first" | "example_first" | "step_by_step" | "balanced"
+  practice_preference?: "quiz" | "coding" | "project" | "mixed"
+  pace_preference?: "slow" | "steady" | "fast"
+  preferred_contexts?: string[]
+  tool_constraints?: string[]
+  accommodations?: string[]
+  privacy?: {
+    personalization_enabled?: boolean
+    retention?: "session_only" | "cross_session"
+    allow_profile_display?: boolean
+  }
+}
+
 export interface CreateSessionInput {
   learnerId: string
   goal: string
   background?: string
   selfRating?: string
   learningGoalSpec?: LearningGoalSpecInput
+  profileIntake?: ProfileIntakeInput
 }
 
 export interface ProviderConfigurationView {
@@ -37,6 +66,11 @@ export type SubmissionAnswer =
   | { item_id: string; selected_option_id: string; hint_level_used: number }
   | { item_id: string; text_response: string; hint_level_used: number }
   | { item_id: string; code_response: string; hint_level_used: number }
+
+export interface ProfileClarificationAnswerInput {
+  question_id: string
+  value: string | string[] | number
+}
 
 export class OrchestratorClientError extends Error {
   constructor(readonly code: string, message: string, readonly status: number) {
@@ -58,6 +92,7 @@ export async function createOrchestratorSession(
         background: input.background,
         self_rating: input.selfRating,
         learning_goal_spec: input.learningGoalSpec,
+        profile_intake: input.profileIntake,
       },
     }),
   })
@@ -98,6 +133,20 @@ export async function submitDiagnosisAnswers(
   return command(sessionId, learnerId, {
     command_id: commandId,
     type: "submit_diagnosis_answers",
+    payload: { answers },
+  }, fetcher)
+}
+
+export async function submitProfileAnswers(
+  sessionId: string,
+  learnerId: string,
+  answers: ProfileClarificationAnswerInput[],
+  fetcher: Fetcher = fetch,
+  commandId: string = newClientId("cmd"),
+): Promise<any> {
+  return command(sessionId, learnerId, {
+    command_id: commandId,
+    type: "submit_profile_answers",
     payload: { answers },
   }, fetcher)
 }

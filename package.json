@@ -15,6 +15,7 @@
     "eval:competition:final": "bun scripts/competition-evaluation.ts --all --repeats=2 --assert-gates",
     "eval:competition:robustness": "bun scripts/competition-robustness.ts",
     "smoke:role-c:model": "bun scripts/role-c-real-model-smoke.ts",
+    "smoke:profile-v2:lesson": "bun scripts/profile-v2-real-model-lesson-smoke.ts",
     "role-d:v2:dev": "vite --config src/role-d-ui-v2/vite.config.ts",
     "role-d:v2:test": "bun test --isolate src/role-d-ui-v2/src/*.test.ts",
     "role-d:v2:build": "vite build --config src/role-d-ui-v2/vite.config.ts",

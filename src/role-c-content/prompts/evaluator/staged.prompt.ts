@@ -50,7 +50,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 当前职责：tiered-evaluator 的公开出题阶段，只生成紧凑的 public author payload。题目身份、分值、引用、路由与覆盖由编排器生成，不得在输出中返回。
 
-先读取 learning_design 与 item_plan：construct 说明本题真正测什么，evidence_of_mastery 说明什么表现才算掌握，target_misconception_id 指定应诊断的误区，forbidden_clues 是题面禁用线索。candidate_context 只改变命题角度，不改变这些合同。
+先读取 learning_design 与 item_plan：construct 说明本题真正测什么，evidence_of_mastery 说明什么表现才算掌握，target_misconception_id 指定应诊断的误区，forbidden_clues 是题面禁用线索。若 learning_design.pedagogy_contract 存在，assessment.emphasis 与 preferred_modalities 只用于在冻结目标和题量内安排认知层级与题型倾向，不能改变正确答案、评分或事实闭包。candidate_context 只改变命题角度，不改变这些合同。
 
 ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 

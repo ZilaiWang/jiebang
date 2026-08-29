@@ -1,5 +1,9 @@
 export type PythonLevel = "new" | "beginner" | "intermediate" | "advanced"
 export type LearningStyle = "practice" | "concept" | "project" | "balanced"
+export type GoalUseCase = "coursework" | "competition" | "job" | "project" | "certification" | "interest" | "other"
+export type ExplanationPreference = "analogy_first" | "principle_first" | "example_first" | "step_by_step" | "balanced"
+export type PracticePreference = "quiz" | "coding" | "project" | "mixed"
+export type PacePreference = "slow" | "steady" | "fast"
 
 export interface LearnerProfileDraft {
   id: string
@@ -9,6 +13,18 @@ export interface LearnerProfileDraft {
   learningStyle: LearningStyle
   background: string
   priorLanguages: string[]
+  /** Present only for profiles created with the structured v2 intake form. */
+  intakeVersion?: 2
+  goalUseCase?: GoalUseCase
+  desiredOutcome?: string
+  sessionMinutes?: number
+  explanationPreference?: ExplanationPreference
+  practicePreference?: PracticePreference
+  pacePreference?: PacePreference
+  preferredContexts?: string[]
+  toolConstraints?: string[]
+  accommodations?: string[]
+  retention?: "session_only" | "cross_session"
 }
 
 export interface LearningPlanDraft {
