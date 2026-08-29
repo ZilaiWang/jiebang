@@ -4,6 +4,7 @@ export type GoalUseCase = "coursework" | "competition" | "job" | "project" | "ce
 export type ExplanationPreference = "analogy_first" | "principle_first" | "example_first" | "step_by_step" | "balanced"
 export type PracticePreference = "quiz" | "coding" | "project" | "mixed"
 export type PacePreference = "slow" | "steady" | "fast"
+export type GoalProfile = "coursework" | "algorithm_competition" | "job_interview" | "general_learning"
 
 export interface LearnerProfileDraft {
   id: string
@@ -35,6 +36,10 @@ export interface LearningPlanDraft {
   stage?: string
   knownConcepts?: string[]
   masteredConcepts?: string[]
+  goalProfile?: "coursework" | "algorithm_competition" | "job_interview" | "general_learning"
+  level?: "beginner" | "basic" | "intermediate" | "integrated"
+  pauseReason?: "goal_changed" | "manual" | "unknown"
+  resumeDiagnosisRequired?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -81,14 +86,34 @@ export function selectUser(workspace: WorkspaceState, userId: string): Workspace
 export function addPlan(
   workspace: WorkspaceState,
   userId: string,
-  input: Pick<LearningPlanDraft, "id" | "name">,
+  input: Pick<LearningPlanDraft, "id" | "name"> & Partial<Pick<LearningPlanDraft, "goalProfile" | "level" | "status" | "pauseReason" | "resumeDiagnosisRequired">>,
   now = new Date().toISOString(),
 ): WorkspaceState {
   return updateUser(workspace, userId, (user) => {
     if (user.plans.some((plan) => plan.id === input.id)) throw new Error("plan id already exists")
-    const plan: LearningPlanDraft = { ...input, createdAt: now, updatedAt: now }
+    const plan: LearningPlanDraft = { ...input, status: input.status ?? "active", createdAt: now, updatedAt: now }
     return { ...user, activePlanId: plan.id, plans: [...user.plans, plan] }
   })
+}
+
+export function pausePlanForGoalChange(workspace: WorkspaceState, userId: string, planId: string): WorkspaceState {
+  return updateUser(workspace, userId, (user) => ({
+    ...user,
+    plans: user.plans.map((plan) => plan.id === planId
+      ? { ...plan, status: "paused", pauseReason: "goal_changed", resumeDiagnosisRequired: false, updatedAt: new Date().toISOString() }
+      : plan),
+  }))
+}
+
+export function resumePlanAfterShortDiagnosis(workspace: WorkspaceState, userId: string, planId: string, level: LearningPlanDraft["level"]): WorkspaceState {
+  if (!level) throw new Error("resume diagnosis level is required")
+  return updateUser(workspace, userId, (user) => ({
+    ...user,
+    activePlanId: planId,
+    plans: user.plans.map((plan) => plan.id === planId
+      ? { ...plan, status: "active", level, resumeDiagnosisRequired: false, updatedAt: new Date().toISOString() }
+      : plan),
+  }))
 }
 
 export function renamePlan(workspace: WorkspaceState, userId: string, planId: string, name: string): WorkspaceState {
@@ -136,7 +161,13 @@ export function deletePlan(workspace: WorkspaceState, userId: string, planId: st
 export function selectPlan(workspace: WorkspaceState, userId: string, planId: string): WorkspaceState {
   return updateUser(workspace, userId, (user) => {
     if (!user.plans.some((plan) => plan.id === planId)) throw new Error("plan does not exist")
-    return { ...user, activePlanId: planId }
+    return {
+      ...user,
+      activePlanId: planId,
+      plans: user.plans.map((plan) => plan.id === planId && plan.status === "paused"
+        ? { ...plan, resumeDiagnosisRequired: true, updatedAt: new Date().toISOString() }
+        : plan),
+    }
   })
 }
 

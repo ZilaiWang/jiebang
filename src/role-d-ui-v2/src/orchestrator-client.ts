@@ -49,10 +49,16 @@ export interface ProfileIntakeInput {
 export interface CreateSessionInput {
   learnerId: string
   goal: string
+  goalProfile?: "coursework" | "algorithm_competition" | "job_interview" | "general_learning"
   background?: string
   selfRating?: string
   learningGoalSpec?: LearningGoalSpecInput
   profileIntake?: ProfileIntakeInput
+}
+export interface GoalPathChangeInput {
+  pathId: string
+  goal: string
+  goalProfile: "coursework" | "algorithm_competition" | "job_interview" | "general_learning"
 }
 
 export interface ProviderConfigurationView {
@@ -91,6 +97,7 @@ export async function createOrchestratorSession(
         goal: input.goal,
         background: input.background,
         self_rating: input.selfRating,
+        goal_profile: input.goalProfile,
         learning_goal_spec: input.learningGoalSpec,
         profile_intake: input.profileIntake,
       },
@@ -121,6 +128,43 @@ export async function getOrchestratorSession(sessionId: string, learnerId: strin
 
 export async function getOrchestratorEvents(sessionId: string, learnerId: string, fetcher: Fetcher = fetch): Promise<any> {
   return requestJson(`/orchestrator/sessions/${encodeURIComponent(sessionId)}/events`, learnerId, fetcher)
+}
+
+export async function changeGoalPath(
+  sessionId: string,
+  learnerId: string,
+  input: GoalPathChangeInput,
+  fetcher: Fetcher = fetch,
+): Promise<any> {
+  return requestJson(`/orchestrator/sessions/${encodeURIComponent(sessionId)}/path/change-goal`, learnerId, fetcher, {
+    method: "POST",
+    body: JSON.stringify({ path_id: input.pathId, goal: input.goal, goal_profile: input.goalProfile }),
+  })
+}
+
+export async function requestResumePath(
+  sessionId: string,
+  learnerId: string,
+  pathId: string,
+  fetcher: Fetcher = fetch,
+): Promise<any> {
+  return requestJson(`/orchestrator/sessions/${encodeURIComponent(sessionId)}/path/resume`, learnerId, fetcher, {
+    method: "POST",
+    body: JSON.stringify({ path_id: pathId }),
+  })
+}
+
+export async function submitResumeDiagnosisAnswers(
+  sessionId: string,
+  learnerId: string,
+  pathId: string,
+  answers: Record<string, string>,
+  fetcher: Fetcher = fetch,
+): Promise<any> {
+  return requestJson(`/orchestrator/sessions/${encodeURIComponent(sessionId)}/path/resume/diagnosis`, learnerId, fetcher, {
+    method: "POST",
+    body: JSON.stringify({ path_id: pathId, answers }),
+  })
 }
 
 export async function submitDiagnosisAnswers(

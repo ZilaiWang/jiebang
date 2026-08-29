@@ -3,6 +3,7 @@
 // 作用: 三类证据 JSON、标准画像、溯源记录、rag_request 的统一类型来源。
 // 词表约定: level 四档枚举与 schemas/rag_request.schema.json 及知识库难度完全一致。
 import type { KnowledgeDifficulty } from "../knowledge/types"
+import type { GoalProfile } from "../role-c-content/planning/personalization-policy"
 
 // 每条抽取字段的原文引用：field 指向被支撑的字段名，text 是学习者原话逐字片段
 export interface EvidenceQuote {
@@ -63,6 +64,7 @@ export interface LearnerProfile {
   known_concepts: string[]
   weak_concepts: string[]
   goal: string
+  goal_profile?: GoalProfile
   ability_dimensions?: AbilityDimension[]
 }
 

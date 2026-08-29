@@ -92,6 +92,10 @@ function validateLearnerRequest(value: unknown, errors: string[]): void {
   if (typeof value.goal !== "string" || value.goal.trim().length === 0) {
     errors.push("learner_request.goal is required")
   }
+  if (value.goal_profile !== undefined
+    && !["coursework", "algorithm_competition", "job_interview", "general_learning"].includes(String(value.goal_profile))) {
+    errors.push("learner_request.goal_profile is invalid")
+  }
   const intake = value.profile_intake
   if (intake === undefined) return
   if (!isRecord(intake)) {

@@ -1,5 +1,6 @@
 import type { LearnerProfile } from "../../role-b-profile/types"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import type { GoalProfile } from "../planning/personalization-policy"
 import type { LearnerLevel, SchemaVersion } from "./common"
 import { C_SCHEMA_VERSION, stableId } from "./canonical"
 
@@ -21,6 +22,7 @@ export interface LearnerProfileSnapshot {
   known_concepts: string[]
   weak_concepts: string[]
   goal: string
+  goal_profile?: GoalProfile
   preferred_contexts: string[]
   accommodations: string[]
   provenance_ref?: string
@@ -57,6 +59,7 @@ export interface LearningPathNode {
 export interface ProfileSnapshotOptions {
   profile_version: string
   profile_id?: string
+  goal_profile?: GoalProfile
   preferred_contexts?: string[]
   accommodations?: string[]
   provenance_ref?: string
@@ -76,6 +79,9 @@ export function adaptLearnerProfile(
     known_concepts: [...profile.known_concepts],
     weak_concepts: [...profile.weak_concepts],
     goal: profile.goal,
+    ...(options.goal_profile ?? profile.goal_profile
+      ? { goal_profile: options.goal_profile ?? profile.goal_profile }
+      : {}),
     preferred_contexts: [...(options.preferred_contexts ?? [])],
     accommodations: [...(options.accommodations ?? [])],
     provenance_ref: options.provenance_ref,

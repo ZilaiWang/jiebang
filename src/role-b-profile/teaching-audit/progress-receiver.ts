@@ -132,6 +132,7 @@ export function applyProgressObservation(
     known_concepts: [...newProfile.known_concepts],
     weak_concepts: [...newProfile.weak_concepts],
     goal: newProfile.goal,
+    goal_profile: newProfile.goal_profile,
     preferred_contexts: [],
     accommodations: [],
     provenance_ref: `role-b:receive-progress:${observation.observationId}`,
