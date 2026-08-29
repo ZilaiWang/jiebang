@@ -172,6 +172,49 @@ export interface CodeLabPublicObjectiveCoverage {
   public_test_ids: string[]
 }
 
+export type ProgrammingTaskKind =
+  | "code_completion"
+  | "function_implementation"
+  | "stdin_stdout_program"
+  | "debugging_repair"
+
+export interface CodeGapSpec {
+  gap_id: string
+  label: string
+  kind: "identifier" | "literal" | "expression" | "statement" | "block"
+  answer_format?: "python_string_literal" | "python_expression" | "python_statement" | "python_identifier"
+  max_chars: number
+  max_lines: number
+  placeholder?: string
+}
+
+export interface CodeGapTemplate {
+  schema_version: "code-gap-template.v1"
+  template_code: string
+  gaps: CodeGapSpec[]
+}
+
+export interface ProgrammingTaskPublic {
+  schema_version: "programming-task.v1"
+  task_id: string
+  blueprint_id: string
+  task_kind: ProgrammingTaskKind
+  submission_mode: "full_code" | "gap_answers"
+  statement: string
+  input_description: string
+  output_description: string
+  constraints: string[]
+  starter_code?: string
+  gap_template?: CodeGapTemplate
+  public_examples: Array<{
+    case_id: string
+    description: string
+    input: unknown
+    expected_behavior: string
+  }>
+  hint_ladders: Array<{ level: 1 | 2 | 3; text: string }>
+}
+
 export interface CodeLabPublicPayload {
   lab_id: string
   title: string
@@ -182,6 +225,8 @@ export interface CodeLabPublicPayload {
   public_tests: PublicTest[]
   hint_ladders: HintLadder[]
   reflection_questions: string[]
+  /** Rich learner-facing programming task, planned before model authoring. */
+  programming_task?: ProgrammingTaskPublic
   /** Competition-facing, task-specific hands-on guide authored against a frozen plan. */
   practical_guide?: PracticalGuidePublicPayload
   objective_coverage: CodeLabPublicObjectiveCoverage[]
@@ -199,6 +244,8 @@ export interface HiddenTest {
   objective_id: string
   weight: number
   comparison: TestComparison
+  partition_id?: "nominal" | "boundary" | "anti_hardcode" | "error_path"
+  note?: string
 }
 
 export interface CodeLabScoringGroup {
@@ -228,6 +275,8 @@ export interface CodeLabSecurePayload {
   test_suite_id: string
   execution_contract: ExecutionContract
   reference_solution: string
+  /** Optional independent algorithm used only by the trusted verifier. */
+  secondary_reference_solution?: string
   hidden_tests: HiddenTest[]
   scoring_groups: CodeLabScoringGroup[]
   misconception_map: Array<{ failed_test_id: string; misconception_tag: string }>

@@ -17,7 +17,10 @@ describe("Role C public-safety patch preserves secure identity", () => {
       reflection_questions: ["为什么 x+1"],
       stable_private_free_field: "keep",
     }
-    const candidate: any = applyCodeLabPublicSafetyPatch(prior, conservativeCodeLabPublicSafetyPatch(prior))
+    const candidate: any = applyCodeLabPublicSafetyPatch(
+      prior,
+      conservativeCodeLabPublicSafetyPatch(prior, prior.starter_code),
+    )
     expect(candidate.lab_id).toBe(prior.lab_id)
     expect(candidate.objective_ids).toEqual(prior.objective_ids)
     expect(candidate.execution_contract).toEqual(prior.execution_contract)

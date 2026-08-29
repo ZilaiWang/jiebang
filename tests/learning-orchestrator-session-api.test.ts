@@ -368,12 +368,28 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
       : diagnosisAccepted
 
     const lab = prepared.learning_resources.code_lab.payload
+    const debugExecution = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        command_id: "CMD-DEBUG-LAB-001",
+        type: "debug_code_lab",
+        payload: {
+          lab_id: lab.lab_id,
+          code: lab.starter_code,
+          public_case_id: lab.public_tests[0].test_id,
+        },
+      }),
+    })))
+    expect(debugExecution.code_execution.labId).toBe(lab.lab_id)
+    expect(debugExecution.code_execution.mode).toBe("debug")
+
     const labExecution = await json(await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-INTERACTIVE-001/commands", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        command_id: "CMD-RUN-LAB-001",
-        type: "run_code_lab",
+        command_id: "CMD-SUBMIT-LAB-001",
+        type: "submit_code_lab",
         payload: { lab_id: lab.lab_id, code: lab.starter_code },
       }),
     })))

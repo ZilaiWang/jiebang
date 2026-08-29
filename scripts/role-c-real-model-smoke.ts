@@ -10,6 +10,7 @@ import {
   buildGenerationSpec,
   buildResourceBlueprint,
   createRoleCModelGatewayFromEnv,
+  createDockerPythonCodeRunnerFromEnv,
   defineLearningPathNode,
   generateConceptLesson,
   modelBackedProviderOptionsFromEnv,
@@ -18,6 +19,7 @@ import {
   ROLE_C_PROMPT_MANIFEST_VERSION,
   validateAssessmentDraftStructure,
   validateCodeLabDraftStructure,
+  TrustedCodeLabVerifier,
 } from "../src/role-c-content"
 import { bindObjectiveEvidence } from "../src/role-c-content/planning/objective-evidence-bundle"
 
@@ -51,6 +53,9 @@ try {
       console.error(JSON.stringify({ event: "role_c_model_usage", ...safeUsage }))
     },
   })
+  const dockerRunner = selectedAgents.has("code-lab")
+    ? await createDockerPythonCodeRunnerFromEnv(env)
+    : undefined
   const ragRequest = buildRagRequest(profile)
   const rawPath = await Bun.file("examples/role-c-content/learning_path_node_score_project.json").json()
   const requiredSourceCount = new Set([
@@ -97,6 +102,7 @@ try {
     versions: {
       prompt_version: ROLE_C_PROMPT_MANIFEST_VERSION,
       model_config_hash: gateway.model_config_hash,
+      ...(dockerRunner ? { runner_image_digest: dockerRunner.runner_image_digest } : {}),
     },
     seed: 42,
   })
@@ -158,9 +164,20 @@ try {
       allValid = false
       authorResults.code_lab = failedAttempt(attempt.error)
     } else {
-      const validation = validateCodeLabDraftStructure(labRequest, attempt.value)
+      const verified = dockerRunner
+        ? await new TrustedCodeLabVerifier(dockerRunner).verifyCodeLab(labRequest, attempt.value)
+        : undefined
+      const verifiedDraft = verified?.materialized_draft ?? attempt.value
+      const validation = validateCodeLabDraftStructure(labRequest, verifiedDraft)
+      if (verified && !verified.execution_verified) {
+        validation.ok = false
+        validation.issues.push(...verified.issues.map((message) => ({ code: "trusted_execution", path: "$.secure_draft", message })))
+      }
       allValid &&= validation.ok
-      authorResults.code_lab = summarizeValidation(validation)
+      authorResults.code_lab = {
+        ...summarizeValidation(validation),
+        trusted_execution: verified?.execution_verified ? "passed" : verified ? "failed" : "not_run",
+      }
     }
   }
 
@@ -196,7 +213,9 @@ try {
     },
     author_results: authorResults,
     upstream_fixture: modelConcept?.status === "ready" ? "validated_model_concept" : "validated_deterministic_concept",
-    publication_boundary: "Drafts were not marked execution/answer verified; ready publication still requires the isolated Docker runner.",
+    publication_boundary: dockerRunner
+      ? "Author outputs were validated and the code lab reference/tests passed the isolated Docker verifier; reviewed publication still belongs to the central C pipeline."
+      : "Author outputs were validated without a Docker runner; code-lab publication requires the central pipeline's isolated execution check.",
     usage,
     candidate_selections: candidateSelections,
   }

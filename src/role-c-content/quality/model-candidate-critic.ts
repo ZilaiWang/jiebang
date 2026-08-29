@@ -3,7 +3,7 @@ import { contentHash } from "../contracts/common"
 import type { ModelGateway } from "../contracts/model-gateway"
 import type { PublicArtifactKind, PublicCandidateEvaluation } from "./contracts"
 
-const CRITIC_POLICY_VERSION = "role-c-public-candidate-critic-v4"
+const CRITIC_POLICY_VERSION = "role-c-public-candidate-critic-v5"
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -51,7 +51,9 @@ const SYSTEM_PROMPT = `你是独立的公开教学候选审查者。作者已经
 7. 定义或分类事实只支持直接识别、分类和原意解释，不自动支持用于检查该分类的 API、函数调用、输出形式或运行结果；候选若使用此类 API，必须在当前局部 evidence 中另有直接事实支持。
 8. assessment 的题干与全部选项必须逐项审查。概括事实（如“通用语言”）不能支持作者自行列出的具体用途或领域；任一具体用途/API/运行结果未在该题局部 evidence 中出现，都应列为 unsupported_specialization critical issue，不能仅在 groundedness 分数中轻微扣分。
 9. 若局部 fact 已明确列出一组组成要素、步骤或对象，要求学习者识别、依次列出或原意说明这些已列出的内容属于直接受支持的测量，不是 unsupported_specialization。short_answer 允许不同自然语言措辞和合理粒度；只要正确答案边界能由 item_plan citations 中的有限事实确定，就不能以“表达方式不唯一”为由报告 answer_ambiguity。
-10. 每个 candidate_index 恰好返回一次，按升序排列。分数使用 0 到 1。只输出 Schema JSON。`
+10. code_lab 是按可执行行为判分，不是按源码字符串判分。code_completion 中变量名、等价表达式或分步写法可以不同，只要均满足冻结 execution contract 并通过可信测试，就不属于 answer_ambiguity。只有题面允许两种行为语义、而测试与合同无法区分时才报告答案歧义。
+11. code_lab 的外围骨架、输入胶水、变量名和平台约定不是学习目标事实。不要要求 evidence 逐字提供这些胶水；但学习者负责的核心专业操作仍须由 objective citations 支撑。
+12. 每个 candidate_index 恰好返回一次，按升序排列。分数使用 0 到 1。只输出 Schema JSON。`
 
 export async function reviewPublicCandidatesWithModel<T>(input: {
   gateway: ModelGateway

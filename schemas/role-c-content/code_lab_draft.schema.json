@@ -294,6 +294,65 @@
         "used_evidence": { "type": "array", "items": { "$ref": "#/$defs/citation" } }
       }
     },
+    "code_gap_template": {
+      "type": "object",
+      "required": ["schema_version", "template_code", "gaps"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "code-gap-template.v1" },
+        "template_code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "gaps": {
+          "type": "array", "minItems": 1, "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["gap_id", "label", "kind", "max_chars", "max_lines"],
+            "additionalProperties": false,
+            "properties": {
+              "gap_id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$" },
+              "label": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["identifier", "literal", "expression", "statement", "block"] },
+              "answer_format": { "enum": ["python_string_literal", "python_expression", "python_statement", "python_identifier"] },
+              "max_chars": { "type": "integer", "minimum": 1, "maximum": 20000 },
+              "max_lines": { "type": "integer", "minimum": 1, "maximum": 100 },
+              "placeholder": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "programming_task_author": {
+      "type": "object",
+      "required": ["statement", "input_description", "output_description", "constraints"],
+      "additionalProperties": false,
+      "properties": {
+        "statement": { "type": "string", "minLength": 20, "maxLength": 4000 },
+        "input_description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "output_description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "constraints": { "type": "array", "minItems": 2, "maxItems": 12, "items": { "type": "string", "minLength": 1 } },
+        "gap_template": { "$ref": "#/$defs/code_gap_template" },
+        "additional_public_examples": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "object", "required": ["description", "input", "expected_behavior"], "additionalProperties": false, "properties": { "description": { "type": "string", "minLength": 1 }, "input": {}, "expected_behavior": { "type": "string", "minLength": 1 } } } }
+      }
+    },
+    "programming_task_public": {
+      "type": "object",
+      "required": ["schema_version", "task_id", "blueprint_id", "task_kind", "submission_mode", "statement", "input_description", "output_description", "constraints", "public_examples", "hint_ladders"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "programming-task.v1" },
+        "task_id": { "type": "string", "minLength": 1 },
+        "blueprint_id": { "type": "string", "minLength": 1 },
+        "task_kind": { "enum": ["code_completion", "function_implementation", "stdin_stdout_program", "debugging_repair"] },
+        "submission_mode": { "enum": ["full_code", "gap_answers"] },
+        "statement": { "type": "string", "minLength": 20 },
+        "input_description": { "type": "string", "minLength": 1 },
+        "output_description": { "type": "string", "minLength": 1 },
+        "constraints": { "type": "array", "minItems": 2, "items": { "type": "string", "minLength": 1 } },
+        "starter_code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "gap_template": { "$ref": "#/$defs/code_gap_template" },
+        "public_examples": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["case_id", "description", "input", "expected_behavior"], "additionalProperties": false, "properties": { "case_id": { "type": "string", "minLength": 1 }, "description": { "type": "string", "minLength": 1 }, "input": {}, "expected_behavior": { "type": "string", "minLength": 1 } } } },
+        "hint_ladders": { "type": "array", "minItems": 3, "items": { "type": "object", "required": ["level", "text"], "additionalProperties": false, "properties": { "level": { "type": "integer", "minimum": 1, "maximum": 3 }, "text": { "type": "string", "minLength": 1 } } } }
+      }
+    },
     "public_author_payload": {
       "type": "object",
       "required": ["title", "execution_contract", "starter_code", "objectives", "practical_guide"],
@@ -302,6 +361,7 @@
         "execution_contract": { "$ref": "#/$defs/execution_contract" },
         "starter_code": { "type": "string", "minLength": 1, "maxLength": 20000 },
         "practical_guide": { "$ref": "#/$defs/practical_guide_author" },
+        "programming_task": { "$ref": "#/$defs/programming_task_author" },
         "objectives": {
           "type": "array",
           "minItems": 1,
@@ -368,6 +428,7 @@
           "items": { "type": "string", "minLength": 1 }
         },
         "practical_guide": { "$ref": "#/$defs/practical_guide_public" },
+        "programming_task": { "$ref": "#/$defs/programming_task_public" },
         "objective_coverage": {
           "type": "array", "minItems": 1,
           "items": { "$ref": "#/$defs/public_coverage" }
@@ -406,6 +467,8 @@
         "objective_id": { "type": "string", "minLength": 1 },
         "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
         "comparison": { "$ref": "#/$defs/test_comparison" }
+        ,"partition_id": { "enum": ["nominal", "boundary", "anti_hardcode", "error_path"] }
+        ,"note": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
@@ -476,13 +539,12 @@
           "maxItems": 64,
           "items": {
             "type": "object",
-            "required": ["test_id", "input", "expected"],
+            "required": ["test_id", "input"],
             "properties": {
               "test_id": { "type": "string", "minLength": 1 },
-              "input": {},
-              "expected": {},
-              "comparison": { "$ref": "#/$defs/lenient_test_comparison" }
-            }
+              "input": {}
+            },
+            "additionalProperties": false
           }
         },
         "mutation_repairs": {
@@ -517,24 +579,68 @@
         "tolerance": { "type": "number" }
       }
     },
+    "secure_reference_author_payload": {
+      "type": "object",
+      "required": ["reference_solution", "mutation_variants"],
+      "properties": {
+        "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "secondary_reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "mutation_variants": {
+          "type": "array", "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["code", "misconception_tag"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+              "misconception_tag": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "secure_test_inputs_author_payload": {
+      "type": "object",
+      "required": ["hidden_tests"],
+      "properties": {
+        "hidden_tests": {
+          "type": "array", "minItems": 1, "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["input", "partition_id", "note", "misconception_tag"],
+            "properties": {
+              "input": {},
+              "partition_id": { "enum": ["nominal", "boundary", "anti_hardcode", "error_path"] },
+              "note": { "type": "string", "minLength": 1 },
+              "misconception_tag": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "secure_author_payload": {
       "type": "object",
       "required": ["reference_solution", "hidden_tests", "mutation_variants"],
       "properties": {
         "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "secondary_reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
         "hidden_tests": {
           "type": "array",
           "minItems": 1,
           "maxItems": 64,
           "items": {
             "type": "object",
-            "required": ["input", "expected", "misconception_tag"],
+            "required": ["input", "partition_id", "note", "misconception_tag"],
             "properties": {
               "input": {},
-              "expected": {},
-              "comparison": { "$ref": "#/$defs/lenient_test_comparison" },
+              "partition_id": { "enum": ["nominal", "boundary", "anti_hardcode", "error_path"] },
+              "note": { "type": "string", "minLength": 1 },
               "misconception_tag": { "type": "string", "minLength": 1 }
-            }
+            },
+            "additionalProperties": false
           }
         },
         "mutation_variants": {
@@ -559,6 +665,7 @@
         "test_suite_id": { "type": "string", "minLength": 1 },
         "execution_contract": { "$ref": "#/$defs/execution_contract" },
         "reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
+        "secondary_reference_solution": { "type": "string", "minLength": 1, "maxLength": 20000 },
         "hidden_tests": {
           "type": "array", "minItems": 1, "maxItems": 64,
           "items": { "$ref": "#/$defs/hidden_test" }

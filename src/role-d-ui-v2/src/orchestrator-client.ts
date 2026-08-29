@@ -228,14 +228,51 @@ export async function runCodeLab(
   sessionId: string,
   learnerId: string,
   labId: string,
-  code: string,
+  submission: string | { gap_answers: Record<string, string> },
   fetcher: Fetcher = fetch,
   commandId: string = newClientId("cmd"),
 ): Promise<any> {
   return command(sessionId, learnerId, {
     command_id: commandId,
     type: "run_code_lab",
-    payload: { lab_id: labId, code },
+    payload: typeof submission === "string"
+      ? { lab_id: labId, code: submission }
+      : { lab_id: labId, gap_answers: submission.gap_answers },
+  }, fetcher)
+}
+
+export async function submitCodeLab(
+  sessionId: string,
+  learnerId: string,
+  labId: string,
+  submission: string | { gap_answers: Record<string, string> },
+  fetcher: Fetcher = fetch,
+  commandId: string = newClientId("cmd"),
+): Promise<any> {
+  return command(sessionId, learnerId, {
+    command_id: commandId,
+    type: "submit_code_lab",
+    payload: typeof submission === "string" ? { lab_id: labId, code: submission } : { lab_id: labId, gap_answers: submission.gap_answers },
+  }, fetcher)
+}
+
+export async function debugCodeLab(
+  sessionId: string,
+  learnerId: string,
+  labId: string,
+  submission: string | { gap_answers: Record<string, string> },
+  target: { public_case_id: string } | { custom_input: unknown },
+  fetcher: Fetcher = fetch,
+  commandId: string = newClientId("cmd"),
+): Promise<any> {
+  return command(sessionId, learnerId, {
+    command_id: commandId,
+    type: "debug_code_lab",
+    payload: {
+      lab_id: labId,
+      ...(typeof submission === "string" ? { code: submission } : { gap_answers: submission.gap_answers }),
+      ...target,
+    },
   }, fetcher)
 }
 

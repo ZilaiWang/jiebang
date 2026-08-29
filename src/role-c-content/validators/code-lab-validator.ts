@@ -14,6 +14,8 @@ import { validateCodeLabPublicSecureSeparation, validatePublicArtifactNoSecrets 
 import { validateRoleCSchema, validateRoleCSchemaFragment } from "./runtime-schema-validator"
 import { validatePracticalGuideForRelease } from "./section-six-resource-validator"
 import { classifyExpectedValue, classifyOutputContract } from "../contracts/output-contract"
+import { validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
+import { validateInputCandidates } from "../programming/test-plan"
 
 export interface CodeLabDraftValidationReport {
   ok: boolean
@@ -36,6 +38,33 @@ export function validateCodeLabPublicStage(
 
   const issues: ValidationIssue[] = [...validatePublicArtifactNoSecrets(publicPayload).issues]
   const guidePlan = request.resource_blueprint?.code_lab.practical_guide_plan
+  const programmingPlan = request.resource_blueprint?.code_lab.programming_problem
+  const programmingTask = publicPayload.programming_task
+  if (programmingPlan && !programmingTask) {
+    issues.push(issue("missing_programming_task", "$.programming_task", "生产代码实验必须包含编程题任务"))
+  } else if (programmingPlan && programmingTask) {
+    if (programmingTask.blueprint_id !== programmingPlan.blueprint_id
+      || programmingTask.task_kind !== programmingPlan.task_kind
+      || programmingTask.submission_mode !== programmingPlan.submission_mode) {
+      issues.push(issue("programming_blueprint_mismatch", "$.programming_task", "编程题未遵守冻结蓝图"))
+    }
+    if (programmingPlan.submission_mode === "gap_answers") {
+      if (!programmingTask.gap_template) {
+        issues.push(issue("missing_gap_template", "$.programming_task.gap_template", "程序填空必须提供 gap_template"))
+      } else {
+        validateGapTemplate(programmingTask.gap_template).forEach((message) =>
+          issues.push(issue("invalid_gap_template", "$.programming_task.gap_template", message)))
+        validateGapLearnerContract({ ...programmingTask, gap_template: programmingTask.gap_template }).forEach((message) =>
+          issues.push(issue("unclear_gap_task", "$.programming_task", message)))
+      }
+      if (programmingTask.starter_code) {
+        issues.push(issue("unsafe_gap_submission_surface", "$.programming_task.starter_code", "程序填空不得向浏览器开放完整代码提交"))
+      }
+    } else {
+      if (programmingTask.gap_template) issues.push(issue("unexpected_gap_template", "$.programming_task.gap_template", "当前题型不得提供 gap_template"))
+      if (!programmingTask.starter_code?.trim()) issues.push(issue("missing_programming_starter", "$.programming_task.starter_code", "当前题型必须提供可编辑 starter_code"))
+    }
+  }
   const publicGuide = publicPayload.practical_guide
   if (guidePlan && !publicGuide) {
     issues.push(issue("missing_practical_guide", "$.practical_guide", "生产代码实验必须包含实操指南"))
@@ -168,6 +197,27 @@ export function validateCodeLabDraftStructure(
   const hiddenTests = uniqueMap(securePayload.hidden_tests, "test_id", "$.secure_draft.payload.hidden_tests", issues)
   const scoringGroups = uniqueMap(securePayload.scoring_groups, "group_id", "$.secure_draft.payload.scoring_groups", issues)
   const hintLadders = uniqueMap(publicPayload.hint_ladders, "objective_id", "$.public_draft.payload.hint_ladders", issues)
+  const programmingProblem = request.resource_blueprint?.code_lab.programming_problem
+  if (programmingProblem) {
+    const quality = validateInputCandidates(
+      programmingProblem,
+      publicPayload.programming_task?.public_examples ?? publicPayload.public_tests,
+      securePayload.hidden_tests.map((test) => ({
+        case_id: test.test_id,
+        partition_id: test.partition_id ?? "nominal",
+        input: test.input,
+        note: test.note ?? "",
+      })),
+    )
+    quality.issues.forEach((message) => issues.push(issue(
+      message.includes("重叠") ? "public_hidden_input_overlap"
+        : message.includes("重复") ? "duplicate_test_input"
+          : message.includes("分区") || message.includes("测试不足") ? "insufficient_partition_cases"
+            : "invalid_test_partition",
+      "$.secure_draft.payload.hidden_tests",
+      message,
+    )))
+  }
 
   for (const test of publicPayload.public_tests) {
     if (!targetIds.has(test.objective_id)) issues.push(issue("unknown_public_test_objective", `$.public_tests.${test.test_id}`, `公开测试包含 Spec 外 objective ${test.objective_id}`))
@@ -462,10 +512,10 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
   }
 
   async verifyCodeLab(request: CodeLabRequest, draft: CodeLabDraft) {
-    const report = validateCodeLabDraftStructure(request, draft)
-    const deferredExpectedIssues = report.issues.filter((entry) =>
+    let report = validateCodeLabDraftStructure(request, draft)
+    let deferredExpectedIssues = report.issues.filter((entry) =>
       isTrustedExpectedDerivationIssue(entry.code))
-    const blockingStructureIssues = report.issues.filter((entry) =>
+    let blockingStructureIssues = report.issues.filter((entry) =>
       !isTrustedExpectedDerivationIssue(entry.code))
     const issues = blockingStructureIssues.map((entry) => `${entry.path}: ${entry.message}`)
     const expectedDigest = request.generation_spec.versions.runner_image_digest
@@ -474,6 +524,63 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
       issues.push("GenerationSpec.runner_image_digest 与 CodeRunner 不一致")
     }
     if (blockingStructureIssues.length > 0 || issues.length > 0) return result(false, issues, this.runner.runner_image_digest, 0, 0, report.objective_coverage)
+
+    let materializedDraft: CodeLabDraft | undefined
+    if (draft.secure_draft.payload.hidden_tests.some((test) => isPendingTrustedExpected(test.expected))) {
+      const pendingSuite: RunnerTestSuite = {
+        test_suite_id: draft.secure_draft.payload.test_suite_id,
+        execution_contract: draft.public_draft.payload.execution_contract,
+        tests: draft.secure_draft.payload.hidden_tests,
+      }
+      const oracle = await executeTrustedReferenceWithRetry(this.runner, {
+        language: "python",
+        code: draft.secure_draft.payload.reference_solution,
+        test_suite_id: pendingSuite.test_suite_id,
+        test_suite: pendingSuite,
+        timeout_ms: draft.public_draft.payload.execution_contract.resource_limits.timeout_ms,
+        memory_mb: draft.public_draft.payload.execution_contract.resource_limits.memory_mb,
+        max_output_bytes: draft.public_draft.payload.execution_contract.resource_limits.max_output_bytes,
+        network_allowed: false,
+        derive_expected: true,
+      }, request.generation_spec.policies.max_tool_retry)
+      if (oracle.status !== "passed" || oracle.derived_outputs?.length !== pendingSuite.tests.length) {
+        return result(false, [
+          `可信参考解无法物化 expected：${oracle.failure_codes.join("、") || oracle.status}`,
+        ], this.runner.runner_image_digest, 0, 0, report.objective_coverage)
+      }
+      if (draft.secure_draft.payload.secondary_reference_solution) {
+        const secondary = await executeTrustedReferenceWithRetry(this.runner, {
+          language: "python",
+          code: draft.secure_draft.payload.secondary_reference_solution,
+          test_suite_id: pendingSuite.test_suite_id,
+          test_suite: pendingSuite,
+          timeout_ms: draft.public_draft.payload.execution_contract.resource_limits.timeout_ms,
+          memory_mb: draft.public_draft.payload.execution_contract.resource_limits.memory_mb,
+          max_output_bytes: draft.public_draft.payload.execution_contract.resource_limits.max_output_bytes,
+          network_allowed: false,
+          derive_expected: true,
+        }, request.generation_spec.policies.max_tool_retry)
+        if (secondary.status !== "passed"
+          || !outputsEquivalent(
+            oracle.derived_outputs,
+            secondary.derived_outputs,
+            classifyOutputContract(draft.public_draft.payload.execution_contract.output_contract),
+          )) {
+          return result(false, ["secondary oracle 与主参考解输出不一致"], this.runner.runner_image_digest, 0, 0, report.objective_coverage)
+        }
+      }
+      materializedDraft = structuredClone(draft)
+      materializedDraft.secure_draft.payload.hidden_tests.forEach((test, index) => {
+        test.expected = structuredClone(oracle.derived_outputs![index])
+      })
+      draft = materializedDraft
+      report = validateCodeLabDraftStructure(request, draft)
+      deferredExpectedIssues = report.issues.filter((entry) => isTrustedExpectedDerivationIssue(entry.code))
+      blockingStructureIssues = report.issues.filter((entry) => !isTrustedExpectedDerivationIssue(entry.code))
+      if (report.issues.length > 0) {
+        return result(false, report.issues.map((entry) => `${entry.path}: ${entry.message}`), this.runner.runner_image_digest, 0, 0, report.objective_coverage)
+      }
+    }
 
     const publicPayload = draft.public_draft.payload
     const securePayload = draft.secure_draft.payload
@@ -595,7 +702,7 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
     const mutationKillRate = securePayload.mutation_variants.length === 0
       ? undefined
       : killed / securePayload.mutation_variants.length
-    return result(
+    const verified = result(
       issues.length === 0,
       issues,
       this.runner.runner_image_digest,
@@ -609,7 +716,30 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
         failed_mutations: failedMutations,
       },
     )
+    return materializedDraft ? { ...verified, materialized_draft: materializedDraft } : verified
   }
+}
+
+function isPendingTrustedExpected(value: unknown): boolean {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value)
+    && (value as Record<string, unknown>).__trusted_expected_pending__ === true)
+}
+
+function outputsEquivalent(
+  left: unknown[] | undefined,
+  right: unknown[] | undefined,
+  outputKind: ReturnType<typeof classifyOutputContract>,
+): boolean {
+  if (!left || !right || left.length !== right.length) return false
+  return left.every((entry, index) => {
+    const candidate = right[index]
+    if (outputKind === "number" && typeof entry === "number" && typeof candidate === "number") {
+      const absolute = Math.abs(entry - candidate)
+      const scale = Math.max(1, Math.abs(entry), Math.abs(candidate))
+      return absolute <= 1e-9 || absolute / scale <= 1e-9
+    }
+    return JSON.stringify(entry) === JSON.stringify(candidate)
+  })
 }
 
 export function isTrustedExpectedDerivationIssue(code: string): boolean {

@@ -33,6 +33,11 @@ import {
   buildPracticalGuidePlan,
   type PracticalGuidePlan,
 } from "./practical-guide-plan"
+import {
+  buildProgrammingProblemBlueprint,
+  selectProgrammingTaskKind,
+} from "../programming/problem-blueprint"
+import type { ProgrammingProblemBlueprint } from "../programming/contracts"
 
 export interface ResourceBlueprintObjective {
   objective_id: string
@@ -95,6 +100,8 @@ export interface CodeLabTaskContract {
   grading_invocation: "call_entry_function" | "feed_stdin_compare_stdout"
   /** 返回值或标准输出约束（模型命制题面/评测时遵循，不得混用）。 */
   output_constraint: string
+  /** Function tasks use one planning-owned entry point across authoring and judging. */
+  entry_point?: string
 }
 
 /**
@@ -124,6 +131,7 @@ export interface ResourceBlueprint {
     secure_plan: CodeLabSecurePlan
     task_contract: CodeLabTaskContract
     practical_guide_plan: PracticalGuidePlan
+    programming_problem: ProgrammingProblemBlueprint
   }
   assessment: {
     item_plan: AssessmentItemPlan[]
@@ -201,11 +209,6 @@ export function buildResourceBlueprint(
     return [target.objective_id, misconception?.misconceptionId
       ?? `MIS-${target.objective_id}-COMMON-ERROR`]
   }))
-  const codeSecurePlan = buildCodeLabSecurePlan(
-    spec,
-    identity.test_suite_id,
-    misconceptionIdsByObjective,
-  )
   const assessmentSpec = options.assessment_blueprint
     ? { ...spec, assessment_blueprint: options.assessment_blueprint }
     : spec
@@ -235,6 +238,41 @@ export function buildResourceBlueprint(
     evidence,
     assessment_plan: baseAssessmentPlan,
   })
+  const primarySkill = initialLearningDesign.learner.skills.find((skill) =>
+    skill.objective_id === taskContract.primary_objective_id)!
+  const primaryTarget = spec.targets.find((target) =>
+    target.objective_id === taskContract.primary_objective_id)!
+  const primaryEvidence = evidence.results.find((entry) =>
+    entry.source_id === primaryTarget.source_id)
+  const goalProfile = spec.personalization_policy?.goal_profile ?? "general_learning"
+  const learnerLevel = spec.learner_adaptation.level ?? evidence.learner_level ?? "basic"
+  const preferredProgrammingKind = taskContract.learner_action === "recall_fact"
+    ? "code_completion" as const
+    : selectProgrammingTaskKind(goalProfile, learnerLevel, primarySkill.progress_band)
+  const programmingProblem = buildProgrammingProblemBlueprint({
+    objective_ids: codeObjectivePlan.map((entry) => entry.objective_id),
+    source_ids: [...new Set(spec.targets.map((target) => target.source_id))],
+    fact_refs: codeObjectivePlan.flatMap((entry) => entry.citations.map((citation) => ({
+      source_id: citation.source_id,
+      fact_id: citation.fact_id,
+    }))),
+    goal_profile: goalProfile,
+    learner_level: learnerLevel,
+    progress_band: primarySkill.progress_band,
+    preferred_task_kind: preferredProgrammingKind,
+    title_brief: primaryEvidence?.title ?? spec.path_node.goal ?? primaryTarget.source_id,
+    scenario_brief: spec.learner_adaptation.preferred_contexts?.[0]
+      ?? spec.path_node.goal
+      ?? "通用学习任务",
+    learner_owned_behavior: primaryTarget.observable_behavior,
+    execution_contract: plannedProgrammingExecutionContract(taskContract),
+  })
+  const codeSecurePlan = buildCodeLabSecurePlan(
+    spec,
+    identity.test_suite_id,
+    misconceptionIdsByObjective,
+    programmingProblem,
+  )
   const taxonomy = buildAssessmentTaxonomyPlan({
     items: baseAssessmentPlan,
     emphasis: assessmentSpec.learner_adaptation.pedagogy_contract?.assessment.emphasis
@@ -353,6 +391,7 @@ export function buildResourceBlueprint(
       secure_plan: codeSecurePlan,
       task_contract: taskContract,
       practical_guide_plan: practicalGuidePlan,
+      programming_problem: programmingProblem,
     },
     assessment: { item_plan: assessmentPlan, taxonomy, capacity: assessmentCapacity },
     cross_artifact_contract: crossArtifactContract,
@@ -374,6 +413,7 @@ export function buildResourceBlueprint(
       secure_plan: codeSecurePlan,
       task_contract: taskContract,
       practical_guide_plan: practicalGuidePlan,
+      programming_problem: programmingProblem,
     },
     assessment: {
       item_plan: assessmentPlan,
@@ -785,5 +825,29 @@ function decideCodeLabTaskContract(
         : inputForm === "none"
           ? "判题器使用空 stdin 并比较 stdout；任务数据由程序骨架给出，学习者完成目标逻辑，不得改造为另一套输入协议"
           : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
+    ...(callable ? { entry_point: "solve" } : {}),
+  }
+}
+
+function plannedProgrammingExecutionContract(task: CodeLabTaskContract) {
+  return {
+    language: "python" as const,
+    execution_mode: task.execution_mode,
+    ...(task.entry_point ? { entry_point: task.entry_point } : {}),
+    allowed_imports: [],
+    input_contract: {
+      type: task.input_form,
+      constraints: [task.program_entry],
+    },
+    output_contract: {
+      kind: task.execution_mode === "stdin_stdout" ? "string" as const : "object" as const,
+      type: task.output_form,
+      constraints: [task.output_constraint],
+    },
+    resource_limits: {
+      timeout_ms: 2_000,
+      memory_mb: 128,
+      max_output_bytes: 32_768,
+    },
   }
 }

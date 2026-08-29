@@ -125,6 +125,39 @@
       },
       "additionalProperties": false
     },
+    "personalization_policy": {
+      "type": "object",
+      "required": ["policy_version", "path_id", "goal_profile", "learner_level", "progress_state", "teaching_strategy", "reasons"],
+      "properties": {
+        "policy_version": { "const": "personalization.v1" },
+        "path_id": { "type": "string", "minLength": 1 },
+        "goal_profile": { "enum": ["coursework", "algorithm_competition", "job_interview", "general_learning"] },
+        "learner_level": { "enum": ["beginner", "basic", "intermediate", "integrated"] },
+        "progress_state": { "enum": ["starting", "building", "stable", "mastered", "struggling"] },
+        "teaching_strategy": {
+          "type": "object",
+          "required": ["explanation_depth", "abstraction_order", "example_style", "practice_mode", "scaffold_level", "reading_density", "review_ratio", "challenge_ratio", "project_ratio", "extension_ratio"],
+          "properties": {
+            "explanation_depth": { "enum": ["introductory", "standard", "deep"] },
+            "abstraction_order": { "enum": ["concrete_first", "balanced", "formal_first"] },
+            "example_style": { "enum": ["textbook_context", "technical_context", "workplace_context", "neutral"] },
+            "practice_mode": { "enum": ["recognition", "guided_application", "integrated_practice", "project_practice"] },
+            "scaffold_level": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "reading_density": { "enum": ["low", "medium", "high"] },
+            "review_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+            "challenge_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+            "project_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+            "extension_ratio": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
     "difficulty": {
       "type": "object",
       "required": ["domain_complexity", "cognitive_demand", "reasoning_steps", "code_complexity", "prerequisite_load", "scaffold_strength"],

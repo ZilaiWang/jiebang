@@ -14,6 +14,8 @@ import type {
   RouteRoleCAssessmentAnchorsInput,
   RouteRoleCAssessmentAnchorsResult,
   RunRoleCCodeLabInput,
+  DebugRoleCCodeLabInput,
+  DebugRoleCCodeLabResult,
   RunRoleCAssessmentCodeInput,
   RunRoleCAssessmentCodeResult,
   RunRoleCCodeLabResult,
@@ -993,7 +995,8 @@ export async function runRoleCCodeLab(
     run_id: input.runId,
     authenticated_learner_id_hash: input.learnerId,
     lab_id: input.labId,
-    code: input.code,
+    ...(input.code ? { code: input.code } : {}),
+    ...(input.gapAnswers ? { gap_answers: input.gapAnswers } : {}),
   })
   if (result.status === "blocked") {
     return {
@@ -1012,11 +1015,44 @@ export async function runRoleCCodeLab(
     passedChecks: result.passed_checks,
     totalChecks: result.total_checks,
     scoreRatio: result.score_ratio,
+    verdict: result.verdict,
     feedback: result.feedback_codes.map((code) => ({
       code,
       message: codeLabFeedbackMessage(code),
     })),
   }
+}
+
+/** Public/custom debugging only; secure tests are never opened on this path. */
+export async function debugRoleCCodeLab(
+  input: DebugRoleCCodeLabInput,
+  runtime: RoleCForRoleDRuntimeOptions = {},
+): Promise<DebugRoleCCodeLabResult> {
+  let runner: CodeRunner
+  try { runner = await resolveRoleCCodeRunner(runtime) }
+  catch {
+    return { status: "blocked", executionId: input.executionId, labId: input.labId, code: "RUNNER_UNAVAILABLE", message: "代码执行服务暂不可用" }
+  }
+  const persistence = resolveRoleCLearningPersistence(runtime)
+  const service = new LearningCycleService({
+    cycle_store: persistence.cycleStore,
+    secure_store: persistence.secureStore,
+    mastery_store: persistence.masteryStore,
+    code_runner: runner,
+  })
+  const result = await service.debugPublishedCodeLab({
+    execution_id: input.executionId, session_id: input.sessionId, run_id: input.runId,
+    authenticated_learner_id_hash: input.learnerId, lab_id: input.labId,
+    ...(input.code ? { code: input.code } : {}),
+    ...(input.gapAnswers ? { gap_answers: input.gapAnswers } : {}),
+    ...(input.publicCaseId ? { public_case_id: input.publicCaseId } : {}),
+    ...(input.customInput !== undefined ? { custom_input: input.customInput } : {}),
+  })
+  if (result.status === "completed") return {
+    status: "completed", executionId: result.execution_id, runId: result.run_id, labId: result.lab_id,
+    mode: result.mode, input: result.input, ...(result.expected_behavior ? { expectedBehavior: result.expected_behavior } : {}), actual: result.actual,
+  }
+  return { status: result.status, executionId: result.execution_id, labId: input.labId, code: result.code, message: result.message }
 }
 
 export interface RunRoleCExampleCodeInput {
@@ -1810,6 +1846,7 @@ function toRoleDCodeLab(
       })),
     })),
     reflection_questions: [...payload.reflection_questions],
+    ...(payload.programming_task ? { programming_task: structuredClone(payload.programming_task) } : {}),
     ...(payload.practical_guide ? { practical_guide: structuredClone(payload.practical_guide) } : {}),
   }
 }

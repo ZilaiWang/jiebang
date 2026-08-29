@@ -58,6 +58,25 @@ export interface CodeLabPayload {
   }>
   hint_ladders: LessonPayload["hint_ladders"]
   reflection_questions: string[]
+  programming_task?: {
+    schema_version: "programming-task.v1"
+    task_id: string
+    blueprint_id: string
+    task_kind: "code_completion" | "function_implementation" | "stdin_stdout_program" | "debugging_repair"
+    submission_mode: "full_code" | "gap_answers"
+    statement: string
+    input_description: string
+    output_description: string
+    constraints: string[]
+    starter_code?: string
+    gap_template?: {
+      schema_version: "code-gap-template.v1"
+      template_code: string
+      gaps: Array<{ gap_id: string; label: string; kind: string; answer_format?: "python_string_literal" | "python_expression" | "python_statement" | "python_identifier"; max_chars: number; max_lines: number; placeholder?: string }>
+    }
+    public_examples: Array<{ case_id: string; description: string; input: unknown; expected_behavior: string }>
+    hint_ladders: Array<{ level: 1 | 2 | 3; text: string }>
+  }
   used_evidence: Citation[]
 }
 
@@ -168,14 +187,19 @@ export interface PublicSessionFixture {
   }
   assessment?: { artifact_id?: string; payload: AssessmentPayload; citations: Citation[]; status: string }
   code_execution?: {
-    status: "passed" | "failed" | "timeout" | "blocked"
+    status: "completed" | "passed" | "failed" | "timeout" | "blocked"
     itemId?: string
     labId?: string
     passedChecks?: number
     totalChecks?: number
     scoreRatio?: number
+    verdict?: "accepted" | "compile_error" | "wrong_answer" | "presentation_error" | "runtime_error" | "time_limit_exceeded" | "memory_limit_exceeded" | "output_limit_exceeded" | "security_violation" | "internal_error"
     message?: string
     feedback?: Array<{ code: string; message: string }>
+    mode?: "sample" | "custom"
+    input?: unknown
+    expectedBehavior?: string
+    actual?: unknown
   } | null
   feedback?: unknown
   blocked_reason?: string | null

@@ -16,14 +16,14 @@ staged-repair.prompt.ts     分阶段通用修复模板（所有 stage 失败重
 ```
 
 每个角色内部又分「**作者（author）**」和「**修复（repair）**」两个阶段：
-- 作者：首次生成内容（public stage / secure stage）
+- 作者：首次生成内容；代码实验依次生成 public、reference 和 test-inputs，可信程序再组装 secure
 - 修复：校验失败后，带着 `validator_report` 重新生成
 
 ## 二、生产（staged）vs 兼容（monolithic）
 
 | 策略 | 说明 | 文件特征 |
 |---|---|---|
-| **staged（生产默认）** | 分阶段：先公开、后私有、失败分阶段修复 | `*-stage.prompt.ts`、`execution-repair`、`staged-repair` |
+| **staged（生产默认）** | 分阶段：先公开、后参考实现和测试输入，失败只修当前阶段 | `*-stage.prompt.ts`、`execution-repair`、`staged-repair` |
 | **monolithic（兼容保留）** | 一次生成整个 draft | 各角色的 `system.prompt.ts` + `repair.prompt.ts` |
 
 `.env.role-c.local` 里 `ROLE_C_MODEL_GENERATION_STRATEGY=staged`，所以**排障优先看 staged 那套**；`system.prompt.ts` 只在切到 monolithic 时才生效。
@@ -35,9 +35,11 @@ staged-repair.prompt.ts     分阶段通用修复模板（所有 stage 失败重
 | 文件 | 阶段 | 职责 |
 |---|---|---|
 | `public-stage.prompt.ts` | 公开作者 | 生成 title / execution_contract / starter / 公开测试 / 提示 |
-| `secure-stage.prompt.ts` | 私有作者 | 生成 reference_solution / hidden_tests / 评分组 |
+| `reference-stage.prompt.ts` | 私有参考作者 | 只生成主参考实现和可选独立预言机 |
+| `test-input-stage.prompt.ts` | 私有测试作者 | 只生成按分区规划的测试输入，不生成可信 expected |
+| `secure-stage.prompt.ts` | 兼容私有作者 | 旧 secure 整体生成规则；生产分阶段链路不再让模型直接填写 hidden expected |
 | `starter-repair.prompt.ts` | 修复 | starter 已通过隐藏测试时，恢复为未完成骨架 |
-| `execution-repair.prompt.ts` | 修复 | 可信执行失败后修复 reference / hidden_tests |
+| `execution-repair.prompt.ts` | 修复 | 可信执行失败后修复参考实现或测试输入 |
 | `public-safety-repair.prompt.ts` | 修复 | 公开材料泄漏答案时的定点删改 |
 | `system.prompt.ts` | monolithic | 旧的整体生成 prompt（兼容） |
 | `repair.prompt.ts` | monolithic | 旧的整体修复 prompt（兼容） |

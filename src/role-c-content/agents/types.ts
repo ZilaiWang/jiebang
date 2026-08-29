@@ -159,6 +159,8 @@ export interface CodeLabDraftVerifier {
     mutation_kill_rate?: number
     verified_test_count?: number
     objective_coverage?: number
+    /** Trusted verifier may replace pending expected markers with Docker-derived values. */
+    materialized_draft?: CodeLabDraft
   }>
 }
 

@@ -27,6 +27,7 @@ import {
   generateRoleCForRoleDWithRuntime,
   runRoleCAssessmentCode,
   runRoleCCodeLab,
+  debugRoleCCodeLab,
   runRoleCExampleCode,
   submitRoleCAssessment,
   createRoleCRecoveryEvidenceRefreshPort,
@@ -265,14 +266,31 @@ export interface InteractiveSessionStoreOptions {
   model_environment?: Record<string, string | undefined>
 }
 
+export const INTERACTIVE_SESSION_COMMAND_TYPES = [
+  "submit_profile_answers",
+  "submit_diagnosis_answers",
+  "submit_assessment_answers",
+  "debug_code_lab",
+  "submit_code_lab",
+  "run_code_lab",
+  "run_assessment_code",
+  "run_example_code",
+  "retry",
+] as const
+
+export type InteractiveSessionCommandType = (typeof INTERACTIVE_SESSION_COMMAND_TYPES)[number]
+
 export interface InteractiveSessionCommand {
   command_id: string
-  type: "submit_profile_answers" | "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "run_example_code" | "retry"
+  type: InteractiveSessionCommandType
   payload?: {
     answers?: Record<string, string> | SubmissionAnswer[] | ProfileClarificationAnswer[]
     item_id?: string
     lab_id?: string
     code?: string
+    gap_answers?: Record<string, string>
+    public_case_id?: string
+    custom_input?: unknown
   }
 }
 
@@ -732,15 +750,34 @@ export class InteractiveSessionStore {
         await this.enqueueContentJob("initial_content_round", updated)
         return response
       }
-    } else if (command.type === "run_code_lab") {
+    } else if (command.type === "debug_code_lab") {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session does not have a published code lab", 409)
       }
       const labId = command.payload?.lab_id
       const code = command.payload?.code
+      const gapAnswers = command.payload?.gap_answers
       const roleC = record.private.role_c
-      if (!roleC || !labId || !code) throw new InteractiveSessionError("INVALID_COMMAND", "run_code_lab requires lab_id and code", 400)
-      const result = await runRoleCCodeLab({ executionId: `EXEC-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id, runId: roleC.run_id, learnerId: roleC.learner_id, labId, code }, roleCRuntime(this.data_root))
+      if (!roleC || !labId || (!code && !gapAnswers)) throw new InteractiveSessionError("INVALID_COMMAND", "debug_code_lab requires lab_id and a matching submission", 400)
+      record.code_execution = await debugRoleCCodeLab({
+        executionId: `DEBUG-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id,
+        runId: roleC.run_id, learnerId: roleC.learner_id, labId,
+        ...(code ? { code } : {}), ...(gapAnswers ? { gapAnswers } : {}),
+        ...(command.payload?.public_case_id ? { publicCaseId: command.payload.public_case_id } : {}),
+        ...(command.payload?.custom_input !== undefined ? { customInput: command.payload.custom_input } : {}),
+      }, roleCRuntime(this.data_root))
+      record.updated_at = new Date().toISOString()
+      updated = record
+    } else if (command.type === "run_code_lab" || command.type === "submit_code_lab") {
+      if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
+        throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session does not have a published code lab", 409)
+      }
+      const labId = command.payload?.lab_id
+      const code = command.payload?.code
+      const gapAnswers = command.payload?.gap_answers
+      const roleC = record.private.role_c
+      if (!roleC || !labId || (!code && !gapAnswers)) throw new InteractiveSessionError("INVALID_COMMAND", "run_code_lab requires lab_id and a matching submission", 400)
+      const result = await runRoleCCodeLab({ executionId: `EXEC-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id, runId: roleC.run_id, learnerId: roleC.learner_id, labId, ...(code ? { code } : {}), ...(gapAnswers ? { gapAnswers } : {}) }, roleCRuntime(this.data_root))
       record.code_execution = result
       record.updated_at = new Date().toISOString()
       updated = record
@@ -2866,7 +2903,7 @@ function validateCommand(command: InteractiveSessionCommand): void {
   if (!command || typeof command !== "object" || !/^[A-Za-z0-9_-]{1,120}$/.test(command.command_id ?? "")) {
     throw new InteractiveSessionError("INVALID_COMMAND", "command_id is required and must be safe", 400)
   }
-  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "run_example_code", "retry"].includes(command.type)) {
+  if (!INTERACTIVE_SESSION_COMMAND_TYPES.some((type) => type === command.type)) {
     throw new InteractiveSessionError("INVALID_COMMAND", "Unsupported command type", 400)
   }
 }

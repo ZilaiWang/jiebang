@@ -91,10 +91,12 @@ function conceptDimensions(
 
 function codeLabDimensions(payload: unknown, design: LearningDesignSpecV2): QualityDimensionScore[] {
   const record = asRecord(payload)
+  const programmingTask = asRecord(record.programming_task)
+  const gapTemplate = asRecord(programmingTask.gap_template)
   const objectives = Array.isArray(record.objectives) ? record.objectives.map(asRecord) : []
   const text = collectText(payload)
-  const starter = String(record.starter_code ?? "")
-  const hasIncompleteStarter = /TODO|pass|NotImplementedError|待完成/u.test(starter)
+  const starter = String(gapTemplate.template_code ?? record.starter_code ?? "")
+  const hasIncompleteStarter = /TODO|pass|NotImplementedError|待完成|\{\{gap:/u.test(starter)
   const tests = objectives.flatMap((objective) => objective.public_test ? [objective.public_test] : [])
   const reflections = objectives.filter((objective) => String(objective.reflection_question ?? "").trim().length > 0)
   const hints = objectives.flatMap((objective) => Array.isArray(objective.hints) ? objective.hints : [])

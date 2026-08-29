@@ -22,18 +22,18 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 输出字段固定为：
 - reference_solution：只在参考实现需要修改时返回完整新源码，否则为 null；
-- hidden_test_repairs：只列需要修改的隐藏测试，按 test_id 返回新的 input、expected、comparison；
+- hidden_test_repairs：只列需要修改的隐藏测试，按 test_id 返回新的 input；
 - mutation_repairs：固定返回空数组；mutation 只作质量诊断，不进入发布修订。
 
 要求：
-1. reference 必须通过全部隐藏测试，starter 必须保持未完成。参考实现失败既可能来自源码，也可能来自隐藏测试的 input/expected；应按任务合同修正真正错误的一侧。
+1. reference 必须通过全部隐藏测试，starter 必须保持未完成。参考实现失败既可能来自源码，也可能来自隐藏输入；应按任务合同修正真正错误的一侧。expected 与 comparison 由可信层重新派生，模型不得返回。
 2. 只修复参考实现或确有错误的隐藏测试，不修改 mutation 诊断材料。
 3. 不得删除测试、降低覆盖、改写 public payload、访问网络/宿主文件/进程，或泄露答案。
 4. function 模式的隐藏输入仍使用 {"args": [...], "kwargs": {...}}；文件类任务仍使用内存文本或 io.StringIO 合同。
 5. reference 不得动态访问双下划线属性、使用动态执行或内省；普通类的 __init__ 定义可用；import 只能来自冻结 execution_contract.allowed_imports。
 6. trusted_execution_report.diagnostic_code 是权威修复类别：REFERENCE_SOLUTION_FAILED 时只修 reference_solution 或与失败码直接对应的 hidden_test_repairs；STARTER_ALREADY_SOLVES_LAB 时不得改 secure；RUNNER_IDENTITY_MISMATCH 时不得编造补丁。
 7. 若 trusted_execution_report 只提供 failed hidden_test ids 而没有 expected/actual 细节，仍必须修改这些失败 id 对应的 reference_solution 或 hidden_test_repairs；不得返回与上一轮完全相同的补丁。
-8. reference_failure_codes 中 runtime_TypeError、runtime_ValueError、runtime_KeyError、runtime_IndexError 等类型表示 reference_solution 与对应 hidden input 的参数形状不兼容。必须同时检查 prior_secure_payload.reference_solution 的入口签名、操作所需数据类型和失败 input；返回完整新 reference_solution，或为每个 reference_failure_ids 返回同 ID 的 hidden_test_repairs，并同步重算 expected。
+8. reference_failure_codes 中 runtime_TypeError、runtime_ValueError、runtime_KeyError、runtime_IndexError 等类型表示 reference_solution 与对应 hidden input 的参数形状不兼容。必须同时检查 prior_secure_payload.reference_solution 的入口签名、操作所需数据类型和失败 input；返回完整新 reference_solution，或为每个 reference_failure_ids 返回同 ID 的 hidden_test_repairs。可信 Docker 会重新计算 expected。
 8a. 若多个 hidden test 同时出现 runtime 错误，先把它们视为“同一公开任务的不同数据”，统一 reference_solution 的输入协议；不得按输入行数切换成多个无关任务。stdin_stdout 时所有修订测试保持同一输入形状和 stdout 形式。
 8b. staged_contract.task_contract.stdin_layout=single_line_text 时，修订后 reference_solution 必须一次读取该行的全部字段，hidden_test_repairs.input 必须为单行同序字段；不得再造一个多行输入协议。修订输入还必须复用 public_tests 的 token 类型序列（整数/小数/布尔/文字及其顺序），不得只保持“单行”却换成另一种数据类型。
 9. reference_solution=null 且 hidden_test_repairs=[] 只能用于 reference_failed=false；reference_failed=true 时 Schema 强制至少修改其中一项。hidden_test_repairs[].test_id 只能使用输出 Schema 列出的真实失败 ID，不得编造 ID。
