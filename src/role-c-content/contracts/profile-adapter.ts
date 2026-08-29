@@ -1,5 +1,6 @@
 import type { LearnerProfile } from "../../role-b-profile/types"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import { redactDirectIdentifiers, sanitizeFreeTextList } from "../../privacy/privacy-boundary"
 import type { GoalProfile } from "../planning/personalization-policy"
 import type { LearnerLevel, SchemaVersion } from "./common"
 import { C_SCHEMA_VERSION, stableId } from "./canonical"
@@ -78,12 +79,12 @@ export function adaptLearnerProfile(
     level: profile.level,
     known_concepts: [...profile.known_concepts],
     weak_concepts: [...profile.weak_concepts],
-    goal: profile.goal,
+    goal: redactDirectIdentifiers(profile.goal),
     ...(options.goal_profile ?? profile.goal_profile
       ? { goal_profile: options.goal_profile ?? profile.goal_profile }
       : {}),
-    preferred_contexts: [...(options.preferred_contexts ?? [])],
-    accommodations: [...(options.accommodations ?? [])],
+    preferred_contexts: sanitizeFreeTextList(options.preferred_contexts ?? []),
+    accommodations: sanitizeFreeTextList(options.accommodations ?? []),
     provenance_ref: options.provenance_ref,
     ...(options.pedagogy_contract
       ? { pedagogy_contract: structuredClone(options.pedagogy_contract) }

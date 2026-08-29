@@ -56,6 +56,7 @@ import {
 } from "./interactive-session"
 import { validateOrchestratorApiBody, type RunRequestBody, type SessionRequestBody } from "./orchestrator-api-schema"
 import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/model-gateway"
+import { deleteLearnerData } from "../privacy/learner-data-deletion"
 import { modelCallPolicy } from "../model-runtime"
 
 interface ErrorBody {
@@ -115,6 +116,7 @@ export function createLearningOrchestratorApiHandler(
             "POST /orchestrator/preflight",
             "GET /orchestrator/provider-config",
             "PUT /orchestrator/provider-config",
+            "DELETE /orchestrator/privacy/learner-data",
             "POST /orchestrator/runs",
             "POST /orchestrator/sessions",
             "GET /orchestrator/sessions/:id",
@@ -258,6 +260,12 @@ export function createLearningOrchestratorApiHandler(
           applyProviderConfiguration(config, providerEnvironment)
           return jsonResponse(providerPublicView(config))
         }
+      }
+
+      if (request.method === "DELETE" && url.pathname === "/orchestrator/privacy/learner-data") {
+        const principal = requirePrincipal(request)
+        requireLoopback(request)
+        return jsonResponse({ status: "deleted", ...await deleteLearnerData(dataRoot, principal) })
       }
 
       if (request.method === "POST" && url.pathname === "/orchestrator/runs") {

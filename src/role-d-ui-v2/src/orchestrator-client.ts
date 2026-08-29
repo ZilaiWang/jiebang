@@ -122,6 +122,13 @@ export async function saveProviderConfiguration(
   })
 }
 
+export async function deleteMyLearnerData(
+  learnerId: string,
+  fetcher: Fetcher = fetch,
+): Promise<{ status: "deleted"; deleted_files: number; rewritten_files: number; deleted_paths: string[] }> {
+  return requestJson("/orchestrator/privacy/learner-data", learnerId, fetcher, { method: "DELETE" })
+}
+
 export async function getOrchestratorSession(sessionId: string, learnerId: string, fetcher: Fetcher = fetch): Promise<any> {
   return requestJson(`/orchestrator/sessions/${encodeURIComponent(sessionId)}`, learnerId, fetcher)
 }

@@ -18,6 +18,7 @@ import type {
 } from "./profile-adapter"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
 import { buildPersonalizationPolicy, type PersonalizationPolicy } from "../planning/personalization-policy"
+import { redactDirectIdentifiers, sanitizeFreeTextList } from "../../privacy/privacy-boundary"
 import { assessmentBlueprintCanMeasureCoreObjectives } from "./assessment-measurement"
 import { modalityMeasuresBehavior } from "./assessment-measurement"
 
@@ -176,7 +177,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     level: input.profile_snapshot.level,
     known_concepts: [...input.profile_snapshot.known_concepts],
     weak_concepts: [...input.profile_snapshot.weak_concepts],
-    preferred_contexts: [...input.profile_snapshot.preferred_contexts],
+    preferred_contexts: sanitizeFreeTextList(input.profile_snapshot.preferred_contexts).map(redactDirectIdentifiers),
     scaffold_level: input.adaptive_shell?.scaffold_level
       ?? (input.profile_snapshot.pedagogy_contract
         ? Math.max(0, Math.min(3, input.profile_snapshot.pedagogy_contract.lesson.scaffold_strength - 1)) as 0 | 1 | 2 | 3
@@ -184,7 +185,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     reading_density: input.adaptive_shell?.reading_density
       ?? input.profile_snapshot.pedagogy_contract?.lesson.terminology_density
       ?? defaults.reading_density,
-    accommodations: [...input.profile_snapshot.accommodations],
+    accommodations: sanitizeFreeTextList(input.profile_snapshot.accommodations).map(redactDirectIdentifiers),
     ...(input.profile_snapshot.pedagogy_contract
       ? { pedagogy_contract: structuredClone(input.profile_snapshot.pedagogy_contract) }
       : {}),

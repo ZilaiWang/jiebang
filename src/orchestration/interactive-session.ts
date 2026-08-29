@@ -8,6 +8,7 @@ import {
   type DiagnosticEvidenceTarget,
 } from "../knowledge/diagnostic-selector"
 import { loadLearnerMemory, saveLearnerMemory, appendPersistenceEvents, type PersistenceEvent } from "./learner-memory"
+import { sanitizeLearnerRequestForStorage } from "../privacy/privacy-boundary"
 import { createScaffoldWorkerInvocation, runWorkerAdapter } from "./worker-adapters"
 import { ORCHESTRATION_WORKER_SEQUENCE } from "./state-machine"
 import { validateWorkerResult } from "./worker-contract"
@@ -441,7 +442,7 @@ export class InteractiveSessionStore {
       run_id: runId,
       owner_id: input.owner_id,
       mode: input.mode,
-      learner_request: structuredClone(input.learner_request),
+      learner_request: sanitizeLearnerRequestForStorage(input.learner_request),
       status: queued ? "running" : "waiting_for_user",
       current_stage: "objective_diagnosis",
       round_no: 1,
