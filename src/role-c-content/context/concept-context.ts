@@ -29,6 +29,7 @@ export interface ConceptTutorModelInput {
     }>
   }>
   upstream: {
+    personalization_policy?: ConceptTutorRequest["generation_spec"]["personalization_policy"]
     resource_blueprint?: {
       blueprint_id: string
       spec_id: string
@@ -119,6 +120,9 @@ export function buildConceptTutorModelInput(
     },
     evidence,
     upstream: {
+      ...(request.generation_spec.personalization_policy
+        ? { personalization_policy: structuredClone(request.generation_spec.personalization_policy) }
+        : {}),
       ...(request.resource_blueprint
         ? {
             resource_blueprint: {

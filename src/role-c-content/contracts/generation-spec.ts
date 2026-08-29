@@ -17,6 +17,7 @@ import type {
   LearningPathNode,
 } from "./profile-adapter"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import { buildPersonalizationPolicy, type PersonalizationPolicy } from "../planning/personalization-policy"
 import { assessmentBlueprintCanMeasureCoreObjectives } from "./assessment-measurement"
 import { modalityMeasuresBehavior } from "./assessment-measurement"
 
@@ -64,6 +65,7 @@ export interface GenerationSpec {
     accommodations: string[]
     pedagogy_contract?: RoleCPedagogyContract
   }
+  personalization_policy?: PersonalizationPolicy
   difficulty: DifficultyVector
   assessment_blueprint: AssessmentBlueprint
   policies: {
@@ -82,6 +84,7 @@ export interface BuildGenerationSpecInput {
   evidence_pack: RagEvidencePack
   versions: Omit<ArtifactVersions, "profile_version" | "kb_version" | "rag_version" | "schema_version">
   seed?: number
+  progress_state?: import("../planning/personalization-policy").ProgressState
   difficulty?: Partial<DifficultyVector>
   /** Narrow C-owned presentation override; profile facts remain read-only. */
   adaptive_shell?: {
@@ -197,6 +200,17 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     ...objective,
     required_fact_ids: [...objective.required_fact_ids],
   }))
+  const knownObjectiveCount = targets.filter((target) => profileConceptMatches(input.profile_snapshot.known_concepts, target, input.evidence_pack)).length
+  const weakObjectiveCount = targets.filter((target) => profileConceptMatches(input.profile_snapshot.weak_concepts, target, input.evidence_pack)).length
+  const inferredProgressState = weakObjectiveCount > 0 ? "building" as const : knownObjectiveCount >= targets.length && targets.length > 0 ? "mastered" as const : "starting" as const
+  const personalizationPolicy = buildPersonalizationPolicy({
+    path_id: input.path_node.node_id,
+    goal_profile: input.profile_snapshot.goal_profile ?? "general_learning",
+    learner_level: input.profile_snapshot.level,
+    progress_state: input.progress_state ?? inferredProgressState,
+    known_objective_count: knownObjectiveCount,
+    weak_objective_count: weakObjectiveCount,
+  })
   const assessmentBlueprint = {
     tier_1_count: input.path_node.assessment_blueprint.tier_1_count,
     tier_2_count: input.path_node.assessment_blueprint.tier_2_count,
@@ -223,6 +237,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     path_node: pathNode,
     targets,
     learner_adaptation: learnerAdaptation,
+    personalization_policy: personalizationPolicy,
     difficulty,
     assessment_blueprint: assessmentBlueprint,
     policies,
@@ -243,6 +258,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     path_node: pathNode,
     targets,
     learner_adaptation: learnerAdaptation,
+    personalization_policy: personalizationPolicy,
     difficulty,
     assessment_blueprint: assessmentBlueprint,
     policies,
@@ -251,6 +267,19 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     ok: true,
     spec: deepFreeze(spec),
   }
+}
+
+function profileConceptMatches(
+  concepts: string[],
+  target: GenerationSpec["targets"][number],
+  evidence: RagEvidencePack,
+): boolean {
+  const title = evidence.results.find((entry) => entry.source_id === target.source_id)?.title ?? ""
+  const identities = [target.source_id, target.objective_id, title].map((value) => value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()).filter(Boolean)
+  return concepts.some((concept) => {
+    const normalized = concept.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()
+    return identities.some((identity) => normalized === identity || normalized.includes(identity) || identity.includes(normalized))
+  })
 }
 
 function deepFreeze<T>(value: T): T {

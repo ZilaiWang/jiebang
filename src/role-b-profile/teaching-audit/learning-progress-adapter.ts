@@ -81,6 +81,7 @@ export class RoleBLearningProgressAdapter implements RoleBLearningProgressPort {
           ? buildRoleCProfileSnapshotOptions(currentProfile)
           : {
               profile_version: learner.profileVersion,
+              goal_profile: currentProfile.goal_profile,
               provenance_ref: "role-b:learning-progress:initial",
             })
       this.learnerStates.set(learner.learnerIdHash, {

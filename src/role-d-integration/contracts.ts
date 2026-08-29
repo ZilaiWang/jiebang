@@ -248,6 +248,7 @@ export interface GenerateRoleCForRoleDInput {
    * 多轮 evidence 会在 mastery 状态上跨轮累积，reprofile 才可能触发。
    */
   profile_version?: string
+  goal_profile?: "coursework" | "algorithm_competition" | "job_interview" | "general_learning"
   /** 本轮相对上一轮的决策与反馈上下文（主 Agent 传入，C 用于定向生成与 adaptation 回传）。 */
   next_round_context?: NextRoundGenerationContext
   /** Previously published answer-free questions for AI anti-repetition. */

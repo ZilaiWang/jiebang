@@ -286,6 +286,7 @@ export async function generateRoleCForRoleDWithRuntime(
           // 跨轮稳定标识：主 Agent 传入会话级 run_id 时，mastery 状态可跨轮累积
           //（reprofile 才能被多轮高分/低分触发）；缺省时每轮 runId 派生 → 每轮独立评估。
           profile_version: input.profile_version ?? `${input.runId}-profile-v1`,
+          goal_profile: input.goal_profile,
           provenance_ref: "role-d:new-learning-plan",
         })
   const pathNode = structuredClone(input.pathNode)

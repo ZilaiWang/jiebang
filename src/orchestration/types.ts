@@ -59,6 +59,7 @@ export interface LearnerRequest {
   self_rating?: string
   diagnostic_seed?: string
   learning_goal_spec?: LearningGoalSpecInput
+  goal_profile?: "coursework" | "algorithm_competition" | "job_interview" | "general_learning"
   /** Structured learner-authored context. Legacy callers may omit it. */
   profile_intake?: LearnerProfileIntakeV2
 }
