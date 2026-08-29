@@ -1706,6 +1706,8 @@ function toRoleDArtifacts(publicArtifacts: {
   const assessmentItems: RoleDAssessmentItem[] = assessment.payload.items.map((item) => ({
     id: item.item_id,
     tier: item.tier,
+    ...(item.difficulty_band ? { difficulty_band: item.difficulty_band } : {}),
+    ...(item.cognitive_level ? { cognitive_level: item.cognitive_level } : {}),
     modality: item.modality,
     prompt: item.prompt,
     options: item.options?.map((option) => `${option.label}. ${option.text}`) ?? [],
@@ -1808,6 +1810,7 @@ function toRoleDCodeLab(
       })),
     })),
     reflection_questions: [...payload.reflection_questions],
+    ...(payload.practical_guide ? { practical_guide: structuredClone(payload.practical_guide) } : {}),
   }
 }
 

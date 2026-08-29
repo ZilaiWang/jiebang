@@ -15,6 +15,8 @@ import type {
   SubmissionEnvelope,
 } from "../role-c-content"
 import type { GenerationRecoveryContext } from "../role-c-content"
+import type { PracticalGuidePublicPayload } from "../role-c-content/planning/practical-guide-plan"
+import type { AssessmentCognitiveLevel, AssessmentDifficultyBand } from "../role-c-content/planning/assessment-taxonomy"
 
 export const ROLE_C_API_PATHS = {
   generate: "/api/role-c/generate",
@@ -34,6 +36,8 @@ export interface RoleDPublicCitation {
 export interface RoleDAssessmentItem {
   id: string
   tier: 1 | 2 | 3
+  difficulty_band?: AssessmentDifficultyBand
+  cognitive_level?: AssessmentCognitiveLevel
   modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
   prompt: string
   options: string[]
@@ -94,6 +98,7 @@ export interface RoleDCodeLab {
   public_tests: RoleDCodeLabPublicTest[]
   hint_ladders: RoleDCodeLabHintLadder[]
   reflection_questions: string[]
+  practical_guide?: PracticalGuidePublicPayload
 }
 
 export interface RoleDWorkflowEvent {

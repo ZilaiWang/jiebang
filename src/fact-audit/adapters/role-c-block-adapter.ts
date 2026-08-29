@@ -102,6 +102,26 @@ function extractCodeLabPublicBlocks(payload: CodeLabPublicPayload | null): Gener
       text: hint.text,
       citations: hint.citations.map(toAuditCitation),
     }))),
+    ...(payload.practical_guide?.readiness_checks ?? []).map((entry) => ({
+      blockId: `code_lab:practical_guide_readiness:${entry.slot_id}`,
+      text: `${entry.title}\n${entry.check}\n${entry.ready_when}`,
+      citations: entry.citations.map(toAuditCitation),
+    })),
+    ...(payload.practical_guide?.steps ?? []).map((entry) => ({
+      blockId: `code_lab:practical_guide_step:${entry.slot_id}`,
+      text: `${entry.title}\n${entry.action}\n${entry.input}\n${entry.expected_result}\n${entry.verification}`,
+      citations: entry.citations.map(toAuditCitation),
+    })),
+    ...(payload.practical_guide?.troubleshooting ?? []).map((entry) => ({
+      blockId: `code_lab:practical_guide_troubleshooting:${entry.slot_id}`,
+      text: `${entry.symptom}\n${entry.likely_cause}\n${entry.recovery_steps.join("；")}\n${entry.verification}`,
+      citations: entry.citations.map(toAuditCitation),
+    })),
+    ...(payload.practical_guide ? [{
+      blockId: `code_lab:practical_guide_extension:${payload.practical_guide.extension_task.slot_id}`,
+      text: `${payload.practical_guide.extension_task.task}\n${payload.practical_guide.extension_task.changed_dimension}\n${payload.practical_guide.extension_task.verification}`,
+      citations: payload.practical_guide.extension_task.citations.map(toAuditCitation),
+    }] : []),
   ]
 }
 

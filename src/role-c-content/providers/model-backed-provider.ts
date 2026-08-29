@@ -479,6 +479,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const publicModelInput = projectCodeLabPublicModelInput(modelInput, objectivePlan)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const taskContract = request.resource_blueprint?.code_lab.task_contract
+    const practicalGuidePlan = request.resource_blueprint?.code_lab.practical_guide_plan
     // 执行接口由 planning 层的 CodeLabTaskContract 决定（先设计题，再定判题接口）。
     // 生产路径（content-pipeline / worker-adapters）必须先构建 blueprint 传入契约；
     // deriveCodeLabExecutionMode 仅作为显式标记的兼容 fallback（单测/脚本/旧数据），
@@ -506,6 +507,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           objective_plan: objectivePlan,
           execution_mode: executionMode,
           ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
+          ...(practicalGuidePlan ? { practical_guide_plan: structuredClone(practicalGuidePlan) } : {}),
         },
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
@@ -544,6 +546,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedAuthor,
           objectivePlan,
           taskContract,
+          practicalGuidePlan,
         )
         if (planIssues.length > 0) return planIssues
         const normalized = materializeCodeLabPublicAuthorPayload(
@@ -551,6 +554,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedAuthor,
           identity.lab_id,
           objectivePlan,
+          practicalGuidePlan,
         )
         return validationIssues(validateCodeLabPublicStage(request, normalized))
       },
@@ -594,6 +598,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       normalizedPublicAuthor,
       identity.lab_id,
       objectivePlan,
+      practicalGuidePlan,
     )
     const securePlan = request.resource_blueprint?.code_lab.secure_plan
       ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)

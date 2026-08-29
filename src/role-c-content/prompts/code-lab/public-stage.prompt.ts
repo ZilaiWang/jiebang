@@ -30,6 +30,15 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 当前职责：code-lab 的公开创作阶段，只生成紧凑的 public author payload。实验 ID、目标 ID、引用、Claim、覆盖关系与 used_evidence 由编排器根据冻结计划构造。
 
+【practical_guide 实操指南】
+- staged_contract.practical_guide_plan 是冻结结构：readiness_slots、step_slots、troubleshooting_slots 的数量和顺序必须逐项对应；不得新增、删除或合并槽位。
+- practice_goal 写当前真实任务的实践目标；deliverable 写学习者最终可提交、可运行、可验证的具体产物。
+- readiness_checks 每项写“检查什么、何时算就绪”；steps 每项必须同时写 action、input、expected_result、verification，形成可执行闭环，不能只写概念说明。
+- troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。
+- extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。
+- 验收条件由编排器根据 public_tests 确定性生成，模型不得另造测试 ID 或期望值。
+- 指南正文只可使用 evidence.facts、冻结 execution contract 和 public tests 中已公开的信息；不得引入未给出的 Python 规则、隐藏测试或参考实现。
+
 ══════════════════════════════════════════
 教学设计要求
 ══════════════════════════════════════════
@@ -88,7 +97,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 结构化要求
 ══════════════════════════════════════════
 
-1. 输出只含 title、execution_contract、starter_code、objectives。objectives 数量、顺序必须与 staged_contract.objective_plan 一致；每项只含 instruction_text、public_test、hints、reflection_question。
+1. 输出只含 title、execution_contract、starter_code、objectives、practical_guide。objectives 数量、顺序必须与 staged_contract.objective_plan 一致；每项只含 instruction_text、public_test、hints、reflection_question。practical_guide 只含 schema 指定的模型创作字段。
 2. function 模式下每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}；即使只有一个参数也放入 args，不能用参数名直接组成普通对象。
 3. execution_mode 已经冻结（见 staged_contract.execution_mode），你只需严格遵守，不得混用另一模式的措辞、输入封装或 starter 结构：
    - function：instruction、starter、公开测试都围绕 entry_point；不得把 print/标准输出当评分结果；每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}。

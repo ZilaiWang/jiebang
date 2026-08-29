@@ -34,6 +34,16 @@ import {
   buildAssessmentPresentationPlan,
   validateAssessmentPresentationBalance,
 } from "../planning/assessment-presentation"
+import type {
+  AssessmentCognitiveLevel,
+  AssessmentDifficultyBand,
+} from "../planning/assessment-taxonomy"
+import {
+  materializePracticalGuide,
+  validatePracticalGuideAuthorAgainstPlan,
+  type PracticalGuideAuthorPayload,
+  type PracticalGuidePlan,
+} from "../planning/practical-guide-plan"
 
 export interface ConceptSegmentRequest extends ConceptTutorRequest {
   segment_index: number
@@ -81,6 +91,7 @@ export interface CodeLabPublicAuthorPayload {
     hints: string[]
     reflection_question: string
   }>
+  practical_guide?: PracticalGuideAuthorPayload
 }
 
 export interface CodeLabSecurePlan {
@@ -136,6 +147,8 @@ export interface AssessmentItemPlan {
   objective_id: string
   observation_key: string
   tier: 1 | 2 | 3
+  difficulty_band?: AssessmentDifficultyBand
+  cognitive_level?: AssessmentCognitiveLevel
   modality: AssessmentItemPublic["modality"]
   max_score: number
   citations: CitationRef[]
@@ -791,6 +804,7 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     learner_owned_region: "fact_literal" | "program_logic" | "function_body"
     input_form: "function_arguments" | "stdin_lines" | "none"
   },
+  practicalGuidePlan?: PracticalGuidePlan,
 ): string[] {
   const issues: string[] = []
   if (payload.objectives.length !== plan.length) {
@@ -830,6 +844,11 @@ export function validateCodeLabPublicAuthorAgainstPlan(
       issues.push("starter_code recall_fact 任务必须提供事实文本赋值与 print 输出胶水，只保留字符串占位由学习者替换")
     }
   }
+  if (practicalGuidePlan && !payload.practical_guide) {
+    issues.push("缺少 practical_guide")
+  } else if (practicalGuidePlan && payload.practical_guide) {
+    issues.push(...validatePracticalGuideAuthorAgainstPlan(payload.practical_guide, practicalGuidePlan))
+  }
   issues.push(...codeLabExecutionContractIssues(
     payload.execution_contract,
     "execution_contract",
@@ -853,12 +872,21 @@ export function materializeCodeLabPublicAuthorPayload(
   payload: CodeLabPublicAuthorPayload,
   labId: string,
   plan: CodeLabObjectivePlan[],
+  practicalGuidePlan?: PracticalGuidePlan,
 ): CodeLabPublicPayload {
   const facts = new Map(request.evidence_pack.results.flatMap((entry) =>
     entry.facts.map((fact) => [
       `${fact.source_id}:${fact.fact_id}`,
       fact.content,
     ] as const)))
+  const tests = plan.map((entry, index) => ({
+    test_id: entry.public_test_id,
+    objective_id: entry.objective_id,
+    description: payload.objectives[index]!.public_test.description.trim(),
+    input: structuredClone(payload.objectives[index]!.public_test.input),
+    expected_behavior: payload.objectives[index]!.public_test.expected_behavior.trim(),
+    citations: structuredClone(entry.citations),
+  }))
   const publicPayload: CodeLabPublicPayload = {
     lab_id: labId,
     title: payload.title.trim(),
@@ -881,14 +909,7 @@ export function materializeCodeLabPublicAuthorPayload(
     })),
     execution_contract: structuredClone(payload.execution_contract),
     starter_code: payload.starter_code,
-    public_tests: plan.map((entry, index) => ({
-      test_id: entry.public_test_id,
-      objective_id: entry.objective_id,
-      description: payload.objectives[index]!.public_test.description.trim(),
-      input: structuredClone(payload.objectives[index]!.public_test.input),
-      expected_behavior: payload.objectives[index]!.public_test.expected_behavior.trim(),
-      citations: structuredClone(entry.citations),
-    })),
+    public_tests: tests,
     hint_ladders: plan.map((entry, index) => ({
       objective_id: entry.objective_id,
       hints: payload.objectives[index]!.hints.map((text, hintIndex) => ({
@@ -899,6 +920,14 @@ export function materializeCodeLabPublicAuthorPayload(
     })),
     reflection_questions: payload.objectives.map((entry) =>
       entry.reflection_question.trim()),
+    ...(practicalGuidePlan && payload.practical_guide ? {
+      practical_guide: materializePracticalGuide({
+        plan: practicalGuidePlan,
+        author: payload.practical_guide,
+        execution_contract: payload.execution_contract,
+        public_tests: tests,
+      }),
+    } : {}),
     objective_coverage: plan.map((entry) => ({
       objective_id: entry.objective_id,
       instruction_block_ids: [entry.instruction_block_id],
@@ -1676,7 +1705,7 @@ export function assessmentFactIdsForItem(
   factIds: string[],
   tier: 1 | 2 | 3,
   objectiveOccurrence: number,
-  evidenceFacts?: Array<{ fact_id: string; capabilities?: string[] }>,
+  evidenceFacts?: Array<{ fact_id: string; content?: string; capabilities?: string[] }>,
   operation?: AssessmentItemPlan["cognitive_operation"],
 ): string[] {
   if (factIds.length <= 1 || tier === 3) return [...factIds]
@@ -1700,8 +1729,65 @@ export function assessmentFactIdsForItem(
   })
   const start = objectiveOccurrence % ordered.length
   const count = tier === 1 ? 1 : Math.min(2, factIds.length)
-  return Array.from({ length: count }, (_, offset) =>
+  const selected = Array.from({ length: count }, (_, offset) =>
     ordered[(start + offset) % ordered.length]!)
+  return closeExecutableFactDependencies(selected, ordered, factById)
+}
+
+/**
+ * A procedure fact may name an API without defining how concrete arguments map
+ * to a result. Item authors naturally turn such facts into executable
+ * instances, so include the same objective's own call/rule fact in the local
+ * evidence surface. The closure never imports another objective or an
+ * unrequested fact.
+ */
+function closeExecutableFactDependencies(
+  selectedFactIds: string[],
+  orderedFactIds: string[],
+  factById: Map<string, { fact_id: string; content?: string; capabilities?: string[] }>,
+): string[] {
+  const selected = [...selectedFactIds]
+  for (const factId of selectedFactIds) {
+    const content = factById.get(factId)?.content ?? ""
+    for (const identifier of executableIdentifiers(content)) {
+      if (containsConcreteCall(content, identifier)) continue
+      const companion = orderedFactIds.find((candidateId) => {
+        if (selected.includes(candidateId)) return false
+        const candidate = factById.get(candidateId)
+        const candidateContent = candidate?.content ?? ""
+        if (!containsIdentifier(candidateContent, identifier)
+          || !containsConcreteCall(candidateContent, identifier)) return false
+        return (candidate?.capabilities ?? []).some((capability) =>
+          capability === "rule"
+          || capability === "boundary"
+          || capability === "state_transition"
+          || capability === "example")
+      })
+      if (companion) selected.push(companion)
+    }
+  }
+  return selected
+}
+
+const EXECUTABLE_IDENTIFIER = /\b[A-Za-z_][A-Za-z0-9_]*\b/gu
+const NON_EXECUTABLE_IDENTIFIERS = new Set([
+  "and", "as", "break", "class", "continue", "def", "else", "false", "for",
+  "from", "if", "import", "in", "is", "none", "not", "or", "pass", "return",
+  "true", "while", "with", "yield",
+])
+
+function executableIdentifiers(content: string): string[] {
+  return [...new Set((content.match(EXECUTABLE_IDENTIFIER) ?? [])
+    .map((identifier) => identifier.toLocaleLowerCase())
+    .filter((identifier) => !NON_EXECUTABLE_IDENTIFIERS.has(identifier)))]
+}
+
+function containsIdentifier(content: string, identifier: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(identifier)}\\b`, "iu").test(content)
+}
+
+function containsConcreteCall(content: string, identifier: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(identifier)}\\s*\\([^)]*[^\\s)]`, "iu").test(content)
 }
 
 /** 同一知识来源上的同一可观察行为在路径/轮次变化后仍保持同一测量语义。 */
@@ -2122,6 +2208,8 @@ export function materializeAssessmentPublicAuthorPayload(
       objective_id: expected.objective_id,
       observation_key: expected.observation_key,
       tier: expected.tier,
+      difficulty_band: expected.difficulty_band!,
+      cognitive_level: expected.cognitive_level!,
       modality: expected.modality,
       max_score: expected.max_score,
       citations: structuredClone(expected.citations),
@@ -2172,6 +2260,9 @@ export function validateAssessmentPublicAgainstPlan(
     }
     if (expected.modality === "code" && !item.starter_code) {
       issues.push(`items[${index}] 代码题缺少 starter_code`)
+    }
+    if (item.difficulty_band !== expected.difficulty_band || item.cognitive_level !== expected.cognitive_level) {
+      issues.push(`items[${index}] 双重分阶未按 item plan 冻结`)
     }
   })
   return issues
@@ -2226,7 +2317,7 @@ export function validateAssessmentSecureAgainstPublic(
     if (item.item_id !== publicItem.item_id) {
       issues.push(`items[${index}].item_id 未与 public_payload 对齐`)
     }
-    for (const key of ["objective_id", "tier", "modality", "max_score"] as const) {
+    for (const key of ["objective_id", "tier", "difficulty_band", "cognitive_level", "modality", "max_score"] as const) {
       if (item[key] !== publicItem[key]) {
         issues.push(`items[${index}].${key} 未与 public_payload 对齐`)
       }
@@ -2416,6 +2507,8 @@ export function materializeAssessmentSecureAuthorPayload(
       item_id: publicItem.item_id,
       objective_id: publicItem.objective_id,
       tier: publicItem.tier,
+      difficulty_band: publicItem.difficulty_band,
+      cognitive_level: publicItem.cognitive_level,
       modality: publicItem.modality,
       max_score: publicItem.max_score,
       answer_spec: answerSpec,
@@ -2473,6 +2566,8 @@ export function normalizeAssessmentPair(
       item_id: publicItem.item_id,
       objective_id: publicItem.objective_id,
       tier: publicItem.tier,
+      difficulty_band: publicItem.difficulty_band,
+      cognitive_level: publicItem.cognitive_level,
       modality: publicItem.modality,
       max_score: publicItem.max_score,
     }
@@ -2596,6 +2691,7 @@ function collectCodeLabCitations(payload: CodeLabPublicPayload): CitationRef[] {
     ...payload.instructions.flatMap(citationsFromBlock),
     ...payload.public_tests.flatMap((test) => test.citations),
     ...payload.hint_ladders.flatMap((entry) => entry.hints.flatMap((hint) => hint.citations)),
+    ...(payload.practical_guide?.used_evidence ?? []),
   ])
 }
 

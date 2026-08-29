@@ -12,6 +12,7 @@ import { analyzePythonSource } from "../security/python-static-analyzer"
 import { validateCitations, type ValidationIssue } from "./citation-validator"
 import { validateCodeLabPublicSecureSeparation, validatePublicArtifactNoSecrets } from "./public-secure-leak-validator"
 import { validateRoleCSchema, validateRoleCSchemaFragment } from "./runtime-schema-validator"
+import { validatePracticalGuideForRelease } from "./section-six-resource-validator"
 import { classifyExpectedValue, classifyOutputContract } from "../contracts/output-contract"
 
 export interface CodeLabDraftValidationReport {
@@ -34,6 +35,16 @@ export function validateCodeLabPublicStage(
   if (!schema.ok) return { ok: false, issues: schema.issues, citations: [], objective_coverage: 0 }
 
   const issues: ValidationIssue[] = [...validatePublicArtifactNoSecrets(publicPayload).issues]
+  const guidePlan = request.resource_blueprint?.code_lab.practical_guide_plan
+  const publicGuide = publicPayload.practical_guide
+  if (guidePlan && !publicGuide) {
+    issues.push(issue("missing_practical_guide", "$.practical_guide", "生产代码实验必须包含实操指南"))
+  }
+  if (guidePlan && publicGuide) {
+    for (const guideIssue of validatePracticalGuideForRelease(publicGuide)) {
+      issues.push(issue(guideIssue.code, `$.practical_guide${guideIssue.path.slice(1)}`, guideIssue.message))
+    }
+  }
   for (const message of validateExecutionContractResultSemantics(publicPayload.execution_contract)) {
     issues.push(issue("invalid_execution_result_contract", "$.execution_contract.output_contract", message))
   }
@@ -48,6 +59,7 @@ export function validateCodeLabPublicStage(
     ...claims.flatMap((claim) => claim.citations),
     ...publicPayload.public_tests.flatMap((test) => test.citations),
     ...publicPayload.hint_ladders.flatMap((ladder) => ladder.hints.flatMap((hint) => hint.citations)),
+    ...(publicGuide?.used_evidence ?? []),
   ])
   issues.push(...validateCitations(deduplicate([...contentCitations, ...publicPayload.used_evidence]), request.evidence_pack).issues)
   issues.push(...validateClaimGrounding(claims, request))
@@ -109,6 +121,27 @@ export function validateCodeLabDraftStructure(
   const publicPayload = draft.public_draft.payload
   const securePayload = draft.secure_draft.payload
   const issues: ValidationIssue[] = []
+  const guidePlan = request.resource_blueprint?.code_lab.practical_guide_plan
+  const practicalGuide = publicPayload.practical_guide
+  if (guidePlan && !practicalGuide) {
+    issues.push(issue("missing_practical_guide", "$.public_draft.payload.practical_guide", "生产代码实验必须包含实操指南"))
+  }
+  if (guidePlan && practicalGuide) {
+    for (const guideIssue of validatePracticalGuideForRelease(practicalGuide)) {
+      issues.push(issue(guideIssue.code, `$.public_draft.payload.practical_guide${guideIssue.path.slice(1)}`, guideIssue.message))
+    }
+    if (practicalGuide.plan_id !== guidePlan.plan_id) issues.push(issue("practical_guide_plan_mismatch", "$.public_draft.payload.practical_guide.plan_id", "实操指南未绑定当前冻结计划"))
+    if (practicalGuide.lab_id !== publicPayload.lab_id) issues.push(issue("practical_guide_lab_mismatch", "$.public_draft.payload.practical_guide.lab_id", "实操指南与代码实验 lab_id 不一致"))
+    if (practicalGuide.environment.execution_mode !== publicPayload.execution_contract.execution_mode
+      || practicalGuide.environment.entry_point !== (publicPayload.execution_contract.entry_point ?? null)
+      || practicalGuide.environment.input_type !== publicPayload.execution_contract.input_contract.type
+      || practicalGuide.environment.output_type !== publicPayload.execution_contract.output_contract.type) {
+      issues.push(issue("practical_guide_execution_mismatch", "$.public_draft.payload.practical_guide.environment", "实操指南执行环境与代码实验执行合同不一致"))
+    }
+    const publicTestIds = new Set(publicPayload.public_tests.map((test) => test.test_id))
+    const guideTestIds = new Set(practicalGuide.acceptance_criteria.map((entry) => entry.public_test_id))
+    if (publicTestIds.size !== guideTestIds.size || [...publicTestIds].some((id) => !guideTestIds.has(id))) issues.push(issue("practical_guide_acceptance_mismatch", "$.public_draft.payload.practical_guide.acceptance_criteria", "实操指南验收标准必须完整对应公开测试"))
+  }
   if (request.concept_artifact.status !== "ready" || !request.concept_artifact.payload) {
     issues.push(issue("concept_not_ready", "$.concept_artifact", "code-lab 只能消费 ready 的 concept artifact"))
   }

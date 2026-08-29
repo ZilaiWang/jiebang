@@ -1,4 +1,9 @@
 import type { ArtifactEnvelope, CitationRef } from "./common"
+import type { PracticalGuidePublicPayload } from "../planning/practical-guide-plan"
+import type {
+  AssessmentCognitiveLevel,
+  AssessmentDifficultyBand,
+} from "../planning/assessment-taxonomy"
 
 /**
  * 题目结构元数据（GPT 评审建议的 6 元组中的任务侧 5 维；objective_id 在
@@ -177,6 +182,8 @@ export interface CodeLabPublicPayload {
   public_tests: PublicTest[]
   hint_ladders: HintLadder[]
   reflection_questions: string[]
+  /** Competition-facing, task-specific hands-on guide authored against a frozen plan. */
+  practical_guide?: PracticalGuidePublicPayload
   objective_coverage: CodeLabPublicObjectiveCoverage[]
   used_evidence: CitationRef[]
 }
@@ -243,6 +250,8 @@ export interface AssessmentItemPublic {
   /** 跨路径重规划保持稳定的测量语义键；用于按能力而不是临时 objective_id 管理结构复测。 */
   observation_key?: string
   tier: 1 | 2 | 3
+  difficulty_band?: AssessmentDifficultyBand
+  cognitive_level?: AssessmentCognitiveLevel
   modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
   prompt: string
   options?: PublicOption[]
@@ -318,6 +327,8 @@ export interface AssessmentItemSecure {
   item_id: string
   objective_id: string
   tier: 1 | 2 | 3
+  difficulty_band?: AssessmentDifficultyBand
+  cognitive_level?: AssessmentCognitiveLevel
   modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
   max_score: number
   answer_spec: AnswerSpec
