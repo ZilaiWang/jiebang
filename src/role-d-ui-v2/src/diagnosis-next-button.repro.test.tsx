@@ -33,6 +33,7 @@ function makeContext(overrides: Partial<LiveContextValue> = {}): LiveContextValu
     submitAssessment: async () => {},
     runPublishedCodeLab: async () => {},
     runAssessmentItemCode: async () => {},
+    runExampleCode: async () => null,
     retry: async () => {},
     refreshEvents: async () => {},
     reset: () => {},

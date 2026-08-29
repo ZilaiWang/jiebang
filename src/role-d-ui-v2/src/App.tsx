@@ -55,12 +55,13 @@ import {
   retryOrchestratorSession,
   runAssessmentCode as requestAssessmentCode,
   runCodeLab as requestCodeLab,
+  runExampleCode as requestExampleCode,
   saveProviderConfiguration,
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
   submitProfileAnswers,
 } from "./orchestrator-client"
-import { semanticLessonLines, indentParagraphText, normalizePythonDisplayIndentation } from "./lesson-format"
+import { indentParagraphText, lessonPointParagraphs, normalizePythonDisplayIndentation, semanticLessonLines } from "./lesson-format"
 import {
   buildFactIndex,
   lookupFact,
@@ -155,6 +156,7 @@ export type LiveContextValue = {
   submitAssessment: () => Promise<void>
   runAssessmentItemCode: (itemId: string, code: string) => Promise<void>
   runPublishedCodeLab: (labId: string, code: string) => Promise<void>
+  runExampleCode: (code: string) => Promise<any>
   retry: () => Promise<void>
   refreshEvents: () => Promise<void>
   reset: () => void
@@ -486,6 +488,19 @@ export function App() {
         setError(reason instanceof Error ? reason.message : "代码实验运行失败")
       } finally { setBusy("") }
     },
+    runExampleCode: async (code) => {
+      if (!liveSession || !code.trim()) return null
+      setBusy("正在通过 Docker 运行示例代码…")
+      setError("")
+      try {
+        const updated = await requestExampleCode(liveSession.session_id, learnerId, code)
+        await applySession(updated, { keepPage: true })
+        return updated?.code_execution ?? null
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "示例代码运行失败")
+        return null
+      } finally { setBusy("") }
+    },
     retry: async () => {
       if (!liveSession) return
       setBusy("主 Agent正在从持久化检查点重试…")
@@ -563,7 +578,6 @@ export function App() {
         </header>
         {busy && <div className="live-operation" role="status"><span className="operation-spinner" />{busy}</div>}
         {error && <div className="live-error" role="alert"><b>主 Agent请求未完成</b><span>{error}</span><button type="button" onClick={() => setError("")}>知道了</button></div>}
-        {liveSession && page !== "home" ? <MainFlowStatusBar session={liveSession} /> : null}
         {collaborationOpen ? <CollaborationDrawer session={liveSession} onClose={() => setCollaborationOpen(false)} /> : null}
         <main>
           {page === "home" && <HomeDashboard user={currentUser} mastered={currentUser ? masteredConceptsForUser(workspace, currentUser.id) : []} providerConfigured={provider.configured} onNewPlan={requestNewPlan} onEnterPlan={enterPlan} onDeletePlan={(planId) => currentUser && setWorkspace((value) => deletePlan(value, currentUser.id, planId))} />}
@@ -1032,13 +1046,19 @@ function ResourceMatchCard({ session, resource, assessment, compact = false }: {
 }
 
 function LessonPage({ onAssessment }: { onAssessment: () => void }) {
-  const { retry, reset, runPublishedCodeLab, busy } = useLive()
+  const { retry, reset, runPublishedCodeLab, runExampleCode, busy } = useLive()
   const activeSession = useRequiredSession()
   const lesson = activeSession.learning_resources.concept_lesson?.payload
   const lab = activeSession.learning_resources.code_lab?.payload
   const adaptation = activeAdaptationView(activeSession)
   const [tab, setTab] = useState<LessonTab>("lesson")
-  const [sideTab, setSideTab] = useState<SideTab>("hint")
+  const [sideTab, setSideTab] = useState<SideTab>("evidence")
+  const switchTab = (next: LessonTab) => {
+    setTab(next)
+    // 理解检查只有学习提示；讲义/实验默认知识来源
+    if (next === "checks") setSideTab("hint")
+    else setSideTab("evidence")
+  }
   const [activeSection, setActiveSection] = useState("prerequisite")
   const [visitedSections, setVisitedSections] = useState<Set<string>>(new Set())
   const [matchOpen, setMatchOpen] = useState(false)
@@ -1069,24 +1089,27 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
     setActiveSection(id)
   }
   return <div className="lesson-page"><LearningLoopStepper session={activeSession} /><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮结构适配指数"><Sparkles size={14} />结构适配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
-    <div className="lesson-layout">
-      <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { handleSectionClick(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>阅读进度</span><div><i style={{ width: `${readingProgress}%` }} /></div><small>已读 {visitedSections.size} / {visibleSectionCount} 节</small></div></aside>
-      <section className="lesson-main"><div className="lesson-tabs" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => setTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => setTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => setTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
-        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
+    <div className="lesson-tabs lesson-tabs-standalone" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => switchTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => switchTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => switchTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
+    <div className={`lesson-layout${tab === "lesson" ? "" : " lesson-layout-no-outline"}`}>
+      {tab === "lesson" ? <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { handleSectionClick(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>阅读进度</span><div><i style={{ width: `${readingProgress}%` }} /></div><small>已读 {visitedSections.size} / {visibleSectionCount} 节</small></div></aside> : null}
+      <section className="lesson-main">
+        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} onRunExample={runExampleCode} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
       </section>
-      <aside className="lesson-side"><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</aside>
+      <aside className="lesson-side">{tab === "checks" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : null}</> : <><div className="side-tabs"><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</>}</aside>
           </div>
           {matchOpen ? <Modal title="本轮结构适配指数" subtitle="规则估计 · 尚未校准" onClose={() => setMatchOpen(false)}><ResourceMatchCard session={activeSession} resource={lesson} assessment={activeSession.assessment?.payload} /></Modal> : null}
   </div>
 }
 
-function LessonContent({ lesson, onActive }: { lesson: LessonPayload; onActive: (id: string) => void }) {
+function LessonContent({ lesson, onActive, onRunExample }: { lesson: LessonPayload; onActive: (id: string) => void; onRunExample: (code: string) => Promise<any> }) {
   return <div className="lesson-document">
-    <LessonSection id="prerequisite" title="连接已有知识" tone="warm" icon={<Layers3 />} onActive={onActive}>{lesson.prerequisite_bridge.length ? lesson.prerequisite_bridge.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) : <MissingContent text="C 未公开 prerequisite_bridge" />}</LessonSection>
-    <LessonSection id="concept" title="核心概念" tone="plain" icon={<Lightbulb />} onActive={onActive}>{lesson.explanation_blocks.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}</LessonSection>
-    <LessonSection id="examples" title="分步示例" tone="blue" icon={<Braces />} onActive={onActive}>{lesson.worked_examples.length ? lesson.worked_examples.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) : <MissingContent text="C 未公开 worked_examples" />}</LessonSection>
-    <LessonSection id="misconceptions" title="常见误区" tone="amber" icon={<MessageCircleQuestion />} onActive={onActive}>{lesson.misconceptions.length ? <div className="misconception-grid">{lesson.misconceptions.map((item) => <article key={item.misconception_tag}><b>{item.objective_id}</b><p>{item.explanation}</p><small>{formatCitations(item.citations)}</small></article>)}</div> : <MissingContent text="C 未公开 misconceptions" />}</LessonSection>
-    <LessonSection id="summary" title="本节小结" tone="mint" icon={<CheckCircle2 />} onActive={onActive}>{lesson.summary.length ? <ol className="summary-list">{lesson.summary.flatMap((block) => { const raw = "text" in block ? (block as any).text ?? "" : ""; const cleaned = stripClaimTextFromBody(raw, (block as any).claims ?? []); return cleaned.split(/\n+/).filter(Boolean).map((line, j, arr) => { const globalIndex = arr.length > 1 ? j : 0; return <li key={`${block.block_id}-${j}`}><span className="summary-num">{globalIndex + 1}.</span><p className="summary-line">{line.trim()}</p></li>; }) })}</ol> : <MissingContent text="C 未公开 summary" />}</LessonSection>
+    <LessonSection id="prerequisite" title="连接已有知识" tone="warm" icon={<Layers3 />} onActive={onActive}>{lesson.prerequisite_bridge.length ? lesson.prerequisite_bridge.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) : <p className="no-prerequisite-note">当前结点无前置知识结点</p>}</LessonSection>
+    <LessonSection id="concept" title="核心概念" tone="plain" icon={<Lightbulb />} onActive={onActive}>{lesson.explanation_blocks.map((block) => block.block_type === "paragraph"
+      ? <SemanticLessonPoints key={block.block_id} text={(block as any).text ?? ""} />
+      : <RenderLessonBlock block={block} key={block.block_id} onRunExample={onRunExample} />)}</LessonSection>
+    <LessonSection id="examples" title="分步示例" tone="blue" icon={<Braces />} onActive={onActive}>{lesson.worked_examples.length ? lesson.worked_examples.map((block) => <RenderLessonBlock block={block} key={block.block_id} onRunExample={onRunExample} />) : <MissingContent text="C 未公开 worked_examples" />}</LessonSection>
+    <LessonSection id="misconceptions" title="常见误区" tone="amber" icon={<MessageCircleQuestion />} onActive={onActive}>{lesson.misconceptions.length ? <ul className="lesson-point-list misconception-point-list">{lesson.misconceptions.map((item) => <li key={item.misconception_tag}><b>{item.objective_id}</b>{lessonPointParagraphs(item.explanation).map((para, pIndex) => <span className="misconception-text" key={`${item.misconception_tag}-${pIndex}`}>{para}</span>)}<small>{formatCitations(item.citations)}</small></li>)}</ul> : <MissingContent text="C 未公开 misconceptions" />}</LessonSection>
+    <LessonSection id="summary" title="本节小结" tone="mint" icon={<CheckCircle2 />} onActive={onActive}>{lesson.summary.length ? <ol className="summary-list">{lesson.summary.flatMap((block) => { const raw = "text" in block ? (block as any).text ?? "" : ""; const cleaned = stripClaimTextFromBody(raw, (block as any).claims ?? []); return cleaned.split(/\n+/).filter(Boolean).map((line, j, arr) => { return <li key={`${block.block_id}-${j}`}><p className="summary-line">{line.trim()}</p></li>; }) })}</ol> : <MissingContent text="C 未公开 summary" />}</LessonSection>
   </div>
 }
 
@@ -1099,6 +1122,16 @@ function SemanticLessonText({ text }: { text: string }) {
   return <>{semanticLessonLines(indented).map((line, index) => <span className="semantic-lesson-line" key={`${index}-${line}`}>{line}</span>)}</>
 }
 
+/**
+ * 圆点分段的讲义正文：每个段落（空行或换行分隔）前带小圆点，
+ * 圆点与段落首行对齐；段落之间留空行，段落内部换行紧凑不空行。
+ */
+function SemanticLessonPoints({ text }: { text: string }) {
+  const paragraphs = lessonPointParagraphs(text)
+  if (paragraphs.length === 0) return null
+  return <ul className="lesson-point-list">{paragraphs.map((paragraph, index) => <li key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/\r?\n/u).map((line, lineIndex) => <span className="point-line" key={lineIndex}>{line}</span>)}</li>)}</ul>
+}
+
 /** 事实证据：C 公开的 claim 文本 + 引用来源，离上文空一行，紫色小字。 */
 function ClaimEvidence(_props: { claims: Array<{ claim_id: string; text: string }>; citations: Citation[] }) {
   return null
@@ -1109,13 +1142,13 @@ function stripClaimTextFromBody(bodyText: string, _claims: Array<{ text: string 
   return bodyText
 }
 
-function RenderLessonBlock({ block }: { block: LessonPayload["explanation_blocks"][number] }) {
+function RenderLessonBlock({ block, onRunExample }: { block: LessonPayload["explanation_blocks"][number]; onRunExample?: (code: string) => Promise<any> }) {
   const claims = ("claims" in block && Array.isArray((block as any).claims) ? (block as any).claims as Array<{ claim_id: string; text: string }> : [])
   const citations = claims.flatMap((claim) => (claim as any).citations ?? [])
   const bodyText = "text" in block ? stripClaimTextFromBody((block as any).text ?? "", claims) : ""
   if (block.block_type === "heading") return <h3 className="block-heading">{block.text}</h3>
   if (block.block_type === "paragraph") return <article className="prose-block"><p><SemanticLessonText text={bodyText} /></p><ClaimEvidence claims={claims} citations={citations} /></article>
-  if (block.block_type === "code") return <article className="code-example"><div className="code-head"><span>{block.caption ?? "Python 示例"}</span><small>{block.language}</small></div><CodeViewer code={block.code} /><CitationChips citations={citations} /></article>
+  if (block.block_type === "code") return <article className="code-example"><div className="code-head"><span>{block.caption ?? "Python 示例"}</span><small>{block.language}</small></div><CodeViewer code={block.code} onRun={onRunExample} /><CitationChips citations={citations} /></article>
   if (block.block_type === "callout") return <article className={`callout callout-${block.tone}`}><b>{block.title}</b><p><SemanticLessonText text={bodyText} /></p><ClaimEvidence claims={claims} citations={citations} /></article>
   if (block.block_type === "comparison") return <article className="comparison-block"><h3>{block.title}</h3><div>{block.columns.map((column) => <section key={column.heading}><b>{column.heading}</b><p><SemanticLessonText text={stripClaimTextFromBody(column.content, claims)} /></p></section>)}</div><ClaimEvidence claims={claims} citations={citations} /></article>
   return null
@@ -1140,23 +1173,33 @@ function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Pytho
   return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">{codeSubmissionHint(executionMode)}</p></div>
 }
 
-function CodeViewer({ code }: { code: string }) {
-  const [step, setStep] = useState(0)
-  const [playing, setPlaying] = useState(false)
+function CodeViewer({ code, onRun }: { code: string; onRun?: (code: string) => Promise<any> }) {
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<{ status: string; stdout: string; error?: string } | null>(null)
   const lines = normalizePythonDisplayIndentation(code).split("\n")
-  useEffect(() => {
-    if (!playing || lines.length < 2) return
-    const timer = window.setInterval(() => setStep((value) => {
-      if (value >= lines.length - 1) {
-        setPlaying(false)
-        return value
+  const run = async () => {
+    if (!onRun || running) return
+    setRunning(true)
+    setResult(null)
+    try {
+      const execution = await onRun(code)
+      const stdout = typeof execution?.stdout === "string" ? execution.stdout : ""
+      const error = typeof execution?.error === "string" ? execution.error : ""
+      if (execution?.status === "blocked" || error) {
+        setResult({ status: "failed", stdout, error: error || "运行失败" })
+      } else {
+        setResult({ status: "ok", stdout })
       }
-      return value + 1
-    }), 720)
-    return () => window.clearInterval(timer)
-  }, [playing, lines.length])
-  const effectiveStep = Math.min(step, Math.max(0, lines.length - 1))
-  return <div className="code-viewer"><div className="code-lines">{lines.map((line, index) => <div className={index === effectiveStep ? "is-current" : index < effectiveStep ? "is-past" : ""} key={`${index}-${line}`}><span>{index + 1}</span><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(line || " ") }} /></div>)}</div><div className="code-step-status" aria-live="polite"><span>步骤 {effectiveStep + 1} / {lines.length}</span><code>{lines[effectiveStep]?.trim() || "空行，用于分隔代码片段"}</code></div><div className="code-controls"><button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))}><ChevronLeft size={15} /> 上一步</button><button type="button" onClick={() => { setPlaying((value) => !value); if (!playing && effectiveStep >= lines.length - 1) setStep(0) }}>{playing ? <Pause size={15} /> : <Play size={15} />} {playing ? "暂停播放" : "自动演示"}</button><button type="button" onClick={() => setStep((value) => Math.min(lines.length - 1, value + 1))}>下一步 <ChevronRight size={15} /></button></div></div>
+    } catch (reason) {
+      setResult({ status: "failed", stdout: "", error: reason instanceof Error ? reason.message : "运行失败" })
+    } finally {
+      setRunning(false)
+    }
+  }
+  return <div className="code-viewer"><div className="code-lines">{lines.map((line, index) => <div key={`${index}-${line}`}><span>{index + 1}</span><code className="language-python" dangerouslySetInnerHTML={{ __html: highlightPython(line || " ") }} /></div>)}</div>
+    <div className="example-run-bar">{onRun ? <button className="example-run-button" type="button" onClick={() => void run()} disabled={running}>{running ? <span className="spinner" /> : <Play size={14} />}{running ? "运行中…" : "运行代码"}</button> : null}{result ? <span className={`example-run-status is-${result.status}`}>{result.status === "ok" ? "运行完成" : "运行失败"}</span> : null}</div>
+    {result ? <pre className={`example-run-output${result.status === "ok" ? "" : " is-error"}`}>{result.stdout || result.error || "（无输出）"}</pre> : null}
+  </div>
 }
 
 function LabContent({ lab, code, setCode, busy, execution, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onRun: () => Promise<void> }) {
@@ -1296,14 +1339,6 @@ function NoSessionState({ onStart }: { onStart: () => void }) {
 export function CollaborationDrawer({ session, onClose }: { session: PublicSessionFixture | null; onClose: () => void }) {
   const view = collaborationDrawerView(session ?? { status: "idle", round_no: 1, worker_ledger_history: [] })
   return createPortal(<div className="collaboration-drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="collaboration-drawer" role="dialog" aria-modal="true" aria-label="多 Agent 协同流程"><header><div><small>主 Agent · 实时编排</small><h2>协同流程</h2><p>{session ? `第 ${session.round_no} 轮 · ${view?.live ? "正在运行" : "当前状态已保存"}` : "尚未创建真实主 Agent会话"}</p></div><button type="button" aria-label="关闭协同流程" onClick={onClose}><X size={20} /></button></header>{view ? <div className="vertical-metro">{view.stations.map((station, index) => <article className={`vertical-station is-${station.state}`} key={station.unit}><div className="vertical-station-mark"><span>{station.state === "completed" ? <Check size={14} /> : station.state === "current" ? <Bot size={14} /> : station.state === "failed" ? "!" : index + 1}</span>{index < view.stations.length - 1 ? <i /> : null}</div><div className="vertical-station-body"><header><b className="agent-art-title">{workerLabel(station.unit)}｜Agent {station.unit}</b><em>{drawerStateLabel(station.state)}</em></header><small className="agent-task-description">● {workerTaskDescription(station.unit)}</small>{station.executionType && station.executionType !== "unknown" ? <small className="agent-execution-type">{drawerExecutionTypeLabel(station.executionType)}</small> : null}<p>{station.summary}</p><footer><span>第 {station.attempt} 次尝试</span><span>公开产物 {station.publicOutputCount}</span>{station.hadFailure ? <span className="drawer-retry">保留失败/重试记录</span> : null}</footer></div></article>)}</div> : <section className="collaboration-empty"><Bot size={32} /><h3>暂无真实协同记录</h3><p>创建学习计划并启动主 Agent后，这里会按真实 worker_ledger_history 显示执行顺序。</p></section>}<footer className="collaboration-legend"><span><i className="legend-current" /> 正在做</span><span><i className="legend-pending" /> 未工作</span><span><i className="legend-completed" /> 已完成</span><span><i className="legend-waiting" /> 等待用户输入</span><small>紫色动态图标仅在真实会话运行时出现</small></footer></aside></div>, document.body)
-}
-
-function MainFlowStatusBar({ session }: { session: PublicSessionFixture }) {
-  const status = mainFlowStatusView(session)
-  return <aside className="main-flow-status" aria-label="主流程状态">
-    <div><span>{status.badge}</span><b>{status.headline}</b><p>{status.detail}</p></div>
-    <small>最近事件：{status.latestEvent}</small>
-  </aside>
 }
 
 function PageHeading({ kicker, title, description }: { kicker: string; title: string; description: string }) {
