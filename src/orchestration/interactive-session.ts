@@ -194,6 +194,8 @@ export interface InteractiveSessionRecord {
   /** Public Role C review lifecycle; artifacts are only published after review passes. */
   content_review: ContentReviewState | null
   profile: unknown | null
+  /** 完整 LearnerProfileV2（背景/目标用途/偏好/约束/进度/溯源），publicSessionView 附加，供前端画像详情展示。 */
+  profile_v2?: Record<string, unknown>
   formal_path: unknown | null
   current_path_node: unknown | null
   rag_result: unknown | null
@@ -1264,6 +1266,14 @@ export function publicSessionView(record: InteractiveSessionRecord): Interactive
   if (view.rag_result && view.formal_path) {
     view.formal_path = canonicalizeFormalPathNodeTopics(view.formal_path as FormalLearningPath, view.rag_result as RagResult)
     view.current_path_node = canonicalizePathNodeTopic(view.current_path_node as LearningPathNode | null, view.rag_result as RagResult)
+  }
+  // 附加完整 LearnerProfileV2（背景/目标用途/偏好/约束/进度/溯源），供前端画像详情展示。
+  // 只读字段：background_context / goal_context / self_assessment / learning_preferences /
+  // learning_constraints / progress / provenance / profile_version / schema_version。
+  const pbArtifact = (_private?.upstream_artifacts as Record<string, unknown> | undefined)?.["profile-builder"]
+  const fullProfile = (pbArtifact as { profile?: unknown } | undefined)?.profile
+  if (fullProfile && typeof fullProfile === "object") {
+    view.profile_v2 = fullProfile as Record<string, unknown>
   }
   return view
 }
