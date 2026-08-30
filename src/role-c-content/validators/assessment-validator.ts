@@ -88,6 +88,13 @@ export function validateAssessmentPublicStage(
     familyVariants.add(familyVariant)
     if (item.display_no !== index + 1) issues.push(issue("invalid_display_no", `$.items[${index}].display_no`, "display_no 必须连续编号"))
     const target = targets.get(item.objective_id)
+    const expectedItem = request.resource_blueprint?.assessment.item_plan[index]
+    if (request.resource_blueprint && (!expectedItem
+      || item.item_id !== expectedItem.item_id
+      || item.difficulty_band !== expectedItem.difficulty_band
+      || item.cognitive_level !== expectedItem.cognitive_level)) {
+      issues.push(issue("assessment_taxonomy_mismatch", `$.items[${index}]`, "题目双重分阶未按冻结测评计划发布"))
+    }
     if (!target) issues.push(issue("unknown_objective", `$.items[${index}].objective_id`, `未知目标 ${item.objective_id}`))
     else if (!item.citations.some((citation) =>
       citation.source_id === target.source_id && target.required_fact_ids.includes(citation.fact_id),
@@ -373,7 +380,7 @@ function compareItemContract(
   index: number,
   issues: ValidationIssue[],
 ): void {
-  for (const key of ["objective_id", "tier", "modality", "max_score"] as const) {
+  for (const key of ["objective_id", "tier", "difficulty_band", "cognitive_level", "modality", "max_score"] as const) {
     if (publicItem[key] !== secureItem[key]) {
       issues.push(issue("item_contract_mismatch", `$.secure_draft.payload.items[${index}].${key}`, `public/secure ${key} 不一致`))
     }

@@ -58,7 +58,41 @@ export interface CodeLabPayload {
   }>
   hint_ladders: LessonPayload["hint_ladders"]
   reflection_questions: string[]
-  used_evidence: Citation[]
+  programming_task?: {
+    schema_version: "programming-task.v1"
+    task_id: string
+    blueprint_id: string
+    task_kind: "code_completion" | "function_implementation" | "stdin_stdout_program" | "debugging_repair"
+    submission_mode: "full_code" | "gap_answers"
+    statement: string
+    input_description: string
+    output_description: string
+    constraints: string[]
+    starter_code?: string
+    gap_template?: {
+      schema_version: "code-gap-template.v1"
+      template_code: string
+      gaps: Array<{ gap_id: string; label: string; kind: string; answer_format?: "python_string_literal" | "python_expression" | "python_statement" | "python_identifier"; max_chars: number; max_lines: number; placeholder?: string }>
+    }
+    public_examples: Array<{ case_id: string; description: string; input: unknown; expected_behavior: string }>
+      hint_ladders: Array<{ level: 1 | 2 | 3; text: string }>
+    }
+    practical_guide?: {
+      schema_version: "practical-guide.v1"
+      guide_id: string
+      plan_id: string
+      lab_id: string
+      practice_goal: string
+      deliverable: string
+      estimated_minutes: number
+      environment: { language: string; execution_mode: string; entry_point: string | null; input_type: string; output_type: string; allowed_imports: string[]; tool_constraints: string[] }
+      readiness_checks: Array<{ title: string; check: string; ready_when: string }>
+      steps: Array<{ sequence: number; title: string; action: string; input: string; expected_result: string; verification: string }>
+      acceptance_criteria: Array<{ criterion_id: string; public_test_id: string; objective_id: string; description: string; expected_behavior: string }>
+      troubleshooting: Array<{ symptom: string; likely_cause: string; recovery_steps: string[]; verification: string }>
+      extension_task: { task: string; changed_dimension: string; verification: string }
+    }
+    used_evidence: Citation[]
 }
 
 export interface AssessmentPayload {
@@ -68,6 +102,8 @@ export interface AssessmentPayload {
     display_no: number
     objective_id: string
     tier: 1 | 2 | 3
+    difficulty_band?: "foundation" | "improvement" | "integration" | "extension"
+    cognitive_level?: "remember" | "understand" | "apply" | "analyze" | "create"
     modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
     prompt: string
     options?: Array<{ option_id: string; label: string; text: string }>
@@ -168,14 +204,19 @@ export interface PublicSessionFixture {
   }
   assessment?: { artifact_id?: string; payload: AssessmentPayload; citations: Citation[]; status: string }
   code_execution?: {
-    status: "passed" | "failed" | "timeout" | "blocked"
+    status: "completed" | "passed" | "failed" | "timeout" | "blocked"
     itemId?: string
     labId?: string
     passedChecks?: number
     totalChecks?: number
     scoreRatio?: number
+    verdict?: "accepted" | "compile_error" | "wrong_answer" | "presentation_error" | "runtime_error" | "time_limit_exceeded" | "memory_limit_exceeded" | "output_limit_exceeded" | "security_violation" | "internal_error"
     message?: string
     feedback?: Array<{ code: string; message: string }>
+    mode?: "sample" | "custom"
+    input?: unknown
+    expectedBehavior?: string
+    actual?: unknown
   } | null
   feedback?: unknown
   blocked_reason?: string | null

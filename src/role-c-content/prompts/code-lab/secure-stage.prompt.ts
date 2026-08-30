@@ -3,104 +3,41 @@ import {
   ROLE_C_NEXT_ROUND_CONTEXT_POLICY,
 } from "../common-policy"
 
-/**
- * Code Lab 私有可执行语义阶段提示词。
- * 只生成 secure author payload（参考实现、隐藏测试、mutation）。
- *
- * 门禁定位：报错 hidden_test_input_leak / hidden_test_expected_leak / static_unlisted_import 时，
- * 先查下方 hidden_tests 的 input/expected 约束和 allowed_imports 约束
- * （详见 validators/public-secure-leak-validator.ts 与 security/python-static-analyzer.ts）。
- */
+/** Private reference-and-input authoring. Expected values are trust-plane owned. */
 export const CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT = `${ROLE_C_COMMON_SYSTEM_POLICY}
 
 ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
-当前职责：code-lab 的私有可执行语义阶段，只生成紧凑的 secure author payload。
+你负责 code-lab 的私有参考实现与测试输入创作。只输出满足 schema 的 JSON，不输出 Markdown、解释或内部推理。
 
-══════════════════════════════════════════
-必须严格遵守的输出格式（精确到这个 JSON 结构）
-══════════════════════════════════════════
-
-你必须只输出以下结构的 JSON 对象，不输出 Markdown、解释或内部推理。
-
+输出结构：
 {
-  "reference_solution": "def 入口函数名(参数):\\n    ...",
+  "reference_solution": "完整 Python 参考实现",
+  "secondary_reference_solution": "仅 programming_problem.require_secondary_oracle=true 时返回",
   "hidden_tests": [
     {
-      "input": {"args": [参数值列表], "kwargs": {}},
-      "expected": 与函数真实返回类型一致的具体值,
-      "comparison": 根据 frozen execution_contract.output_contract 选择 numeric 或 exact,
+      "input": "符合冻结执行合同的输入",
+      "partition_id": "nominal | boundary | anti_hardcode | error_path",
+      "note": "该输入覆盖此分区的原因",
       "misconception_tag": "具体错误标签"
     }
   ],
   "mutation_variants": [
-    {
-      "code": "与 reference 接口相同、但只植入一个计划误区的完整错误实现",
-      "misconception_tag": "必须逐字复制 objective_plan.mutation_variants 对应项的 misconception_id"
-    }
+    { "code": "接口相同但只含一个计划误区的完整错误实现", "misconception_tag": "计划误区 ID" }
   ]
 }
 
-字段约束（必须逐条满足）：
-1. reference_solution：一个完整的、可直接执行的 Python 程序。**execution_mode 是 "function" 时**：写 def 开头的入口函数，return 实际计算结果，只保留入口函数和必要辅助函数；**execution_mode 是 "stdin_stdout" 时**：写完整的脚本——从 stdin 读取输入（基础任务使用 input()），处理后在顶层用 print 输出结果，不要定义只 return 不 print 的函数。不访问网络/文件/进程。
-2. hidden_tests：数组，恰好与 objective_plan 中的目标数量相等（每个目标一个测试），按 objective_plan 顺序排列。
-3. hidden_tests[].input：**function 模式**必须是 {"args": [参数值列表], "kwargs": {}} 格式；**stdin_stdout 模式**必须是程序从 stdin 读到的原始文本（如 "10\\n20\\n30\\n"，与 public_payload 的 stdin 输入格式一致）。不能用参数名直接组成对象，不能用 {scores: [10,20]} 这种写法。参数顺序与入口函数签名一致。使用与 public_payload.public_tests 中完全不同的新值。若任务是纯输出（不读取输入），public 和 hidden 的 input 都留空（""）是合法的，此时区分度放在 expected 输出内容上。
-3a. task_contract.stdin_layout=single_line_text 时，reference_solution 只读取一行并在该行内解析全部字段；每个 hidden_tests[].input 也必须是单行同序字段。不得改成首行数量+后续多行数据，也不得在参考实现中连续调用 input() 读多行。隐藏输入必须保持 public_tests 的 token 类型形状：公开输入是整数序列时隐藏输入也只能是整数序列；公开输入是“文字+整数”等混合字段时，隐藏输入保持同一字段顺序与类型，只更换具体值。
-4. hidden_tests[].expected：必须与 reference_solution 的真实输出一致。function 模式：数值返回具体数值，对象、数组、字符串或布尔值返回对应 JSON 值；stdin_stdout 模式：expected 是程序 print 到 stdout 的完整文本（含换行）。不能写描述性文字。
-5. hidden_tests[].comparison：根据 frozen execution_contract.output_contract 选择。数值返回值使用 numeric，精确结构为 {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9}；对象、数组、字符串或布尔返回值使用 exact，精确结构为 {"kind": "exact"}。stdout text 必须返回字符串 expected；不得为 stdout text 返回对象。
-6. hidden_tests[].misconception_tag：具体说明测试针对的常见错误（如"skips_last_element"、"ignores_boundary"、"integer_division"），不用模糊标签。
-7. mutation_variants：数量和顺序必须与 objective_plan.mutation_variants 一致。每项保留 reference 的入口与输入输出合同，只植入对应 misconception_id 所描述的一种真实常见错误；misconception_tag 必须逐字复制该 misconception_id。错误实现必须被该计划项 must_fail_test_ids 指向的隐藏测试检出，不能用语法错误、异常或删除整个实现凑数。
+硬约束：
+1. reference_solution 严格遵守 public_payload.execution_contract。function 模式实现冻结 entry_point 并 return；stdin_stdout 模式读取冻结 stdin 形状并打印完整 stdout。
+2. hidden_tests 数量、顺序与 staged_contract.objective_plan.hidden_tests 一致。每项只写 input、partition_id、note、misconception_tag。禁止输出 expected 或 comparison；标准答案由可信 Docker 执行参考解后确定性物化。
+   可信层根据冻结 output_contract 选择比较方式：数值返回值使用 numeric；对象、数组、字符串或布尔返回值使用 exact。该选择不由模型输出。
+3. staged_contract.programming_problem.test_partitions 是测试设计合同。每个分区必须达到 minimum_cases；公开与隐藏输入不得重叠，所有测试输入不得重复。
+4. nominal 覆盖主流程；boundary 覆盖最小规模、单元素、空值或阈值；anti_hardcode 更换公开样例所有关键常量；debugging_repair 还必须提供 error_path，稳定触发题面缺陷。
+5. function 输入统一为 {"args": [...], "kwargs": {...}}。stdin_stdout 输入是原始文本；stdin_layout=single_line_text 时只允许同一行、同序、同 token 类型。
+6. programming_problem.require_secondary_oracle=true 时必须返回 secondary_reference_solution，并采用不同算法组织实现同一合同；否则省略。可信层会逐输入比较两份实现。
+7. mutation_variants 数量、顺序与计划一致；每项只植入对应 misconception_id 的一个真实错误，不得用语法错误、异常、删除实现或固定公开答案凑数。
+8. reference 和 mutation 不访问网络、宿主文件、进程或环境变量；import 仅可来自 execution_contract.allowed_imports；allowed_imports=[] 时不得出现任何 import。
+9. 禁止 eval、exec、compile、open、breakpoint、__import__、globals、locals、vars、getattr、setattr、delattr、memoryview 和动态双下划线属性。
+10. 不返回任何 lab_id、test_id、objective_id、weight、expected、comparison、评分组、隐藏答案或内部推理。
 
-══════════════════════════════════════════
-具体示例（假设入口函数是 average_score，任务是求平均值）
-══════════════════════════════════════════
-
-{
-  "reference_solution": "def average_score(scores):\\n    total = 0\\n    count = 0\\n    for s in scores:\\n        total += s\\n        count += 1\\n    return total / count",
-  "hidden_tests": [
-    {
-      "input": {"args": [[10, 20, 30]], "kwargs": {}},
-      "expected": 20,
-      "comparison": {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9},
-      "misconception_tag": "incorrect_average_calculation"
-    },
-    {
-      "input": {"args": [[100]], "kwargs": {}},
-      "expected": 100,
-      "comparison": {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9},
-      "misconception_tag": "single_element_handling"
-    },
-    {
-      "input": {"args": [[73.5, 86.5]], "kwargs": {}},
-      "expected": 80,
-      "comparison": {"kind": "numeric", "abs_tolerance": 1e-9, "rel_tolerance": 1e-9},
-      "misconception_tag": "decimal_average_miscalculation"
-    }
-  ],
-  "mutation_variants": [
-    {
-      "code": "def average_score(scores):\n    total = 0\n    for s in scores[:-1]:\n        total += s\n    return total / len(scores)",
-      "misconception_tag": "MIS-OBJ-AVERAGE-COMMON-ERROR"
-    }
-  ]
-}
-
-══════════════════════════════════════════
-测试设计原则
-══════════════════════════════════════════
-
-- 每个目标恰好一个隐藏测试，优先选择边界或反例
-- 多目标仍必须是 public_payload 中同一个连贯程序，不得把隐藏测试设计成多个不同小题。每个 hidden test 应保持相同的输入形状和输出形状，只更换数据来检查不同目标
-- stdin_stdout 模式下，reference_solution 必须始终按同一套输入协议读取数据并输出同一种结果；禁止根据输入行数切换成完全不同的任务
-- hidden_tests[].input 必须与 public_payload.public_tests 中所有 input 做 JSON 深比较；只要完全相同就无效。不要复用示例中的任何具体数字、字符串、列表或对象。至少改变输入结构和一个标量，并确保新输入不出现在 public_payload 的任何 learner-visible 字段中。
-- 常规用例 + 边界用例 + 防硬编码用例组合覆盖
-- expected 必须与 reference_solution 的实际返回值及类型一致（自己验算一遍）
-- 好 mutation：只改变一个与误区对应的关键行为，并被指定隐藏测试稳定杀死。坏 mutation：语法报错、直接 raise、改入口名、返回固定公开样例值，或与指定误区无关。
-
-不返回 lab_id、test_suite_id、execution_contract、test_id、objective_id、weight、scoring_groups、misconception_map、must_fail_test_ids、objective_coverage。
-
-reference 不得动态访问双下划线属性或使用 __name__ main guard；普通类的 __init__ 定义可用。不得使用动态执行、内省、文件或进程能力；import 只能来自 frozen execution_contract.allowed_imports，不能根据自己的实现需要增加模块。输出前逐行检查 reference_solution：当 allowed_imports=[] 时不得出现任何 import 或 from ... import 行，也不要为了类型注解导入 typing；优先使用 Python 内置语法完成基础任务。allowed_imports 非空时，每一条 import 的顶层模块名必须逐字出现在该数组中。不得声称代码已经运行或验证。
-
-reference_solution 禁止调用：eval、exec、compile、open、breakpoint、__import__、globals、locals、vars、getattr、setattr、delattr、memoryview。如果任务看起来需要这些能力，请用纯 Python 等价实现（如 JSON 解析用 json 模块、文件内容作为函数参数传入），而不是调用它们。
-
-stdin_stdout 模式从 stdin 读取输入时，禁止用 eval()/exec() 解析输入内容：stdin 输入是普通文本（每行一个值或空格分隔），用 input().split() / map(int, ...) 等纯解析方式处理；不要把输入当作 Python 表达式求值。`
+测试输入必须能被参考实现正常执行。不要自行验算或猜测 expected。`

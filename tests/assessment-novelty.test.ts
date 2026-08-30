@@ -38,6 +38,18 @@ describe("AI assessment novelty", () => {
     expect(assessmentFactIdsForItem(facts, 3, 4)).toEqual(facts)
   })
 
+  test("具体 API 命题会闭合到同目标中的参数规则事实", () => {
+    const facts = ["F001", "F002", "F003"]
+    const evidence = [
+      { fact_id: "F001", content: "range 可生成整数序列配合 for 重复执行固定次数。", capabilities: ["procedure", "state_transition"] },
+      { fact_id: "F002", content: "for 循环常用于遍历序列中的元素。", capabilities: ["rule"] },
+      { fact_id: "F003", content: "range 不包含结束值，range(3) 生成 0、1、2。", capabilities: ["rule", "state_transition", "example"] },
+    ]
+
+    expect(assessmentFactIdsForItem(facts, 1, 2, evidence, "recognize_fact"))
+      .toEqual(["F001", "F003"])
+  })
+
   test("rejects an already published question even after cosmetic reformatting", () => {
     const issues = validateAssessmentNovelty({
       items: [assessmentItem("FOR 循环会按什么顺序遍历列表?", ["随机顺序", "按索引顺序"])],

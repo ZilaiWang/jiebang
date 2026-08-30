@@ -30,6 +30,27 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 当前职责：code-lab 的公开创作阶段，只生成紧凑的 public author payload。实验 ID、目标 ID、引用、Claim、覆盖关系与 used_evidence 由编排器根据冻结计划构造。
 
+【programming_problem 编程题蓝图】
+- staged_contract.programming_problem 冻结题型、提交方式、难度、测试分区和学习者承担的行为。你只负责创作题面，不得更换 task_kind 或 submission_mode。
+- 题目必须是本轮根据学习目标、学习者水平和当前进度新生成的任务；不得套用固定题干、固定数据或知识点专用硬编码模板。
+- statement 要包含任务背景、明确目标与验收边界；input_description、output_description 必须逐字遵守冻结 execution_contract；constraints 至少给出两条可核验约束。若 objectives 提供的公开测试少于 programming_problem.public_case_count，additional_public_examples 必须补足数量，并使用相同输入形状但不同数据。
+- code_completion：programming_task 必须提供 gap_template；模板只允许 {{gap:gap_id}} 标记，每个 gap 恰好出现一次。浏览器只提交 gap_answers，外围代码不可编辑。marker 是服务端内部结构，不得在 statement、instruction、hint 或 reflection 中对学习者展示或要求其理解。每个 gap 必须用 label 和 answer_format 明确说明填写的是字符串、表达式、语句还是变量名。
+- function_implementation：学习者实现冻结 entry_point 的函数体；starter_code 保留签名并留出核心逻辑。
+- stdin_stdout_program：学习者提交完整程序，题面按标准输入/输出描述，样例与所有目标共用同一输入形状。
+- debugging_repair：starter_code 必须包含一个与当前误区相符、可由公开样例复现的缺陷；题面要求定位并修复，而不是重写成另一任务。
+- 题面可以采用在线评测题的清晰结构，但不得复刻或声称来自洛谷、蓝桥杯等第三方题目。
+
+【practical_guide 实操指南】
+- staged_contract.practical_guide_plan 是冻结结构：readiness_slots、step_slots、troubleshooting_slots 的数量和顺序必须逐项对应；不得新增、删除或合并槽位。
+- 输出前分别核对数组长度：readiness_checks 必须等于 readiness_slots，steps 必须等于 step_slots，troubleshooting 必须等于 troubleshooting_slots；一个 slot 只对应一个条目。
+- practice_goal 写当前真实任务的实践目标；deliverable 写学习者最终可提交、可运行、可验证的具体产物。
+- readiness_checks 每项写“检查什么、何时算就绪”；steps 每项必须同时写 action、input、expected_result、verification，形成可执行闭环，不能只写概念说明。
+- 程序填空题可以在指南中明确提到题面可见的 TODO 或待填写区域；这类文字是在说明学习者操作，不是未完成的占位正文。
+- troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。
+- extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。
+- 验收条件由编排器根据 public_tests 确定性生成，模型不得另造测试 ID 或期望值。
+- 指南正文只可使用 evidence.facts、冻结 execution contract 和 public tests 中已公开的信息；不得引入未给出的 Python 规则、隐藏测试或参考实现。
+
 ══════════════════════════════════════════
 教学设计要求
 ══════════════════════════════════════════
@@ -49,7 +70,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 【task_contract 完整任务契约（存在时强制遵循）】
 - staged_contract.task_contract 给出本实验的完整判题契约：program_entry（程序入口）、input_form（输入形式）、stdin_layout（stdin 确切布局）、output_form（输出形式）、grading_invocation（判题调用方式）、output_constraint（输出约束）。
 - 你创作的 instruction、starter_code、public_test、execution_contract 必须与这些字段一致：
-  - learner_action=recall_fact / learner_owned_region=fact_literal 时，学习者只替换由当前 cited fact 直接给出的一个短词或短句占位；input_form=none，public_test.input 为空字符串。starter_code 必须已给出赋值和 print 胶水，用 TODO 标出唯一事实文本待填区；不得读取 input，不得要求学习者编写 if/elif、循环、函数或其他旁支逻辑。instruction、hints 和反思题不得要求学习者推断证据没有说明的参数、冒号、缩进、API、错误结果或运行机制。
+  - learner_action=recall_fact / learner_owned_region=fact_literal 时，这是“第一次填写并运行”的引导式练习，不是猜答案。statement 必须直接写明目标输出句子、只填写等号右边且需要带英文引号；唯一 gap 使用 answer_format=python_string_literal。学习者只替换由当前 cited fact 直接给出的短句；input_form=none，public_test.input 为空字符串。starter_code 必须已给出赋值和 print 胶水，用 TODO 标出唯一事实文本待填区；不得读取 input，不得要求学习者编写 if/elif、循环、函数或其他旁支逻辑。instruction、hints 和反思题不得要求学习者推断证据没有说明的参数、冒号、缩进、API、错误结果或运行机制。
   - learner_action=implement_program 时，学习者补完整程序的核心处理逻辑；learner_action=implement_function 时，学习者补入口函数体并返回结果。
   - input_form=stdin_lines 时，题目的外部输入是标准输入文本，不得把函数参数当作判题入口；output_form=stdout_lines 时，评分产物是标准输出文本，不得把函数返回值当作判题结果。完整程序内可以定义辅助函数来组织逻辑。
   - stdin_layout=single_line_text 时，每个测试的全部输入都在一行，字段用空格分隔；starter、public_test.input、execution_contract.input_contract 必须使用这一布局，不得改成“首行 n，后续 n 行”。一次 input().strip().split() 应能读取全部 token。
@@ -78,6 +99,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - Level 1（方向）：指出思考方向，不涉及具体做法
 - Level 2（结构）：只依据当前 facts 指出要选择或填写的目标语义
 - Level 3（细节）：说明如何在 starter 已给骨架内应用当前事实；不得教授 evidence 未包含的函数、运算符、语法或运行机制
+- 三级提示必须逐条结合当前 objective 的事实内容、概念名、变量变化或输入输出关系即时创作；至少两级要明确点出本实验特有的概念或操作。不得复用“定位核心事实 / 保留主语对象关系 / 只替换 TODO”之类可套在任何实验上的固定模板，也不得让不同 objective 使用相同提示。
+- Level 1、2、3 不能只是同一句话换标点或近义改写；信息应逐级增加。Level 3 可以给出针对本题的伪代码、状态变化或定位位置，但除题面已经公开目标文本的 recall_fact 外，不得直接给出可提交的完整答案。
 - learner_adaptation.level=basic 时，三级提示可以指出已引用的事实或操作顺序，但不得给出可以逐字复制成完整答案的连续代码语句；学习者仍需自己把两到三个步骤连接起来。
 
 【reflection_question 反思题】
@@ -88,7 +111,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 结构化要求
 ══════════════════════════════════════════
 
-1. 输出只含 title、execution_contract、starter_code、objectives。objectives 数量、顺序必须与 staged_contract.objective_plan 一致；每项只含 instruction_text、public_test、hints、reflection_question。
+1. 输出只含 title、execution_contract、starter_code、objectives、practical_guide、programming_task。objectives 数量、顺序必须与 staged_contract.objective_plan 一致；每项只含 instruction_text、public_test、hints、reflection_question。programming_task 只含 statement、input_description、output_description、constraints、必要时的 additional_public_examples，以及 code_completion 必需的 gap_template；其他题型不得返回 gap_template。
 2. function 模式下每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}；即使只有一个参数也放入 args，不能用参数名直接组成普通对象。
 3. execution_mode 已经冻结（见 staged_contract.execution_mode），你只需严格遵守，不得混用另一模式的措辞、输入封装或 starter 结构：
    - function：instruction、starter、公开测试都围绕 entry_point；不得把 print/标准输出当评分结果；每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}。

@@ -25,6 +25,19 @@ import {
   buildLearningDesignSpecV2,
   type LearningDesignSpecV2,
 } from "./learning-design-spec-v2"
+import {
+  buildAssessmentTaxonomyPlan,
+  type AssessmentTaxonomyPlan,
+} from "./assessment-taxonomy"
+import {
+  buildPracticalGuidePlan,
+  type PracticalGuidePlan,
+} from "./practical-guide-plan"
+import {
+  buildProgrammingProblemBlueprint,
+  selectProgrammingTaskKind,
+} from "../programming/problem-blueprint"
+import type { ProgrammingProblemBlueprint } from "../programming/contracts"
 
 export interface ResourceBlueprintObjective {
   objective_id: string
@@ -87,6 +100,8 @@ export interface CodeLabTaskContract {
   grading_invocation: "call_entry_function" | "feed_stdin_compare_stdout"
   /** 返回值或标准输出约束（模型命制题面/评测时遵循，不得混用）。 */
   output_constraint: string
+  /** Function tasks use one planning-owned entry point across authoring and judging. */
+  entry_point?: string
 }
 
 /**
@@ -115,9 +130,12 @@ export interface ResourceBlueprint {
     objective_plan: CodeLabObjectivePlan[]
     secure_plan: CodeLabSecurePlan
     task_contract: CodeLabTaskContract
+    practical_guide_plan: PracticalGuidePlan
+    programming_problem: ProgrammingProblemBlueprint
   }
   assessment: {
     item_plan: AssessmentItemPlan[]
+    taxonomy: AssessmentTaxonomyPlan
     total_items: number
     total_score: number
     /** 生成前容量规划的显式结果；REDUCE 时说明为何实际题量少于上游请求。 */
@@ -191,15 +209,10 @@ export function buildResourceBlueprint(
     return [target.objective_id, misconception?.misconceptionId
       ?? `MIS-${target.objective_id}-COMMON-ERROR`]
   }))
-  const codeSecurePlan = buildCodeLabSecurePlan(
-    spec,
-    identity.test_suite_id,
-    misconceptionIdsByObjective,
-  )
   const assessmentSpec = options.assessment_blueprint
     ? { ...spec, assessment_blueprint: options.assessment_blueprint }
     : spec
-  const assessmentPlan = buildAssessmentItemPlan(assessmentSpec, evidence)
+  const baseAssessmentPlan = buildAssessmentItemPlan(assessmentSpec, evidence)
   const assessmentCapacity = options.assessment_capacity
     ? {
         decision: options.assessment_capacity.decision,
@@ -209,8 +222,8 @@ export function buildResourceBlueprint(
       }
     : {
         decision: "FULL" as const,
-        requested_items: assessmentPlan.length,
-        feasible_items: assessmentPlan.length,
+        requested_items: baseAssessmentPlan.length,
+        feasible_items: baseAssessmentPlan.length,
         limiting_factors: [],
       }
   const taskContract = decideCodeLabTaskContract(spec, evidence)
@@ -218,7 +231,87 @@ export function buildResourceBlueprint(
   const qualityRequirement = decideQualityRequirement(assessmentSpec, codeObjectivePlan.length)
   // 容量缩减后，目标难度必须来自实际执行的 assessment blueprint。
   const difficultyPlan = buildDifficultyPlan(assessmentSpec, {
-    assessment_plan: assessmentPlan,
+    assessment_plan: baseAssessmentPlan,
+  })
+  const initialLearningDesign = buildLearningDesignSpecV2({
+    spec: assessmentSpec,
+    evidence,
+    assessment_plan: baseAssessmentPlan,
+  })
+  const primarySkill = initialLearningDesign.learner.skills.find((skill) =>
+    skill.objective_id === taskContract.primary_objective_id)!
+  const primaryTarget = spec.targets.find((target) =>
+    target.objective_id === taskContract.primary_objective_id)!
+  const primaryEvidence = evidence.results.find((entry) =>
+    entry.source_id === primaryTarget.source_id)
+  const goalProfile = spec.personalization_policy?.goal_profile ?? "general_learning"
+  const learnerLevel = spec.learner_adaptation.level ?? evidence.learner_level ?? "basic"
+  const preferredProgrammingKind = taskContract.learner_action === "recall_fact"
+    ? "code_completion" as const
+    : selectProgrammingTaskKind(goalProfile, learnerLevel, primarySkill.progress_band)
+  const programmingProblem = buildProgrammingProblemBlueprint({
+    objective_ids: codeObjectivePlan.map((entry) => entry.objective_id),
+    source_ids: [...new Set(spec.targets.map((target) => target.source_id))],
+    fact_refs: codeObjectivePlan.flatMap((entry) => entry.citations.map((citation) => ({
+      source_id: citation.source_id,
+      fact_id: citation.fact_id,
+    }))),
+    goal_profile: goalProfile,
+    learner_level: learnerLevel,
+    progress_band: primarySkill.progress_band,
+    preferred_task_kind: preferredProgrammingKind,
+    title_brief: primaryEvidence?.title ?? spec.path_node.goal ?? primaryTarget.source_id,
+    scenario_brief: spec.learner_adaptation.preferred_contexts?.[0]
+      ?? spec.path_node.goal
+      ?? "通用学习任务",
+    learner_owned_behavior: primaryTarget.observable_behavior,
+    execution_contract: plannedProgrammingExecutionContract(taskContract),
+  })
+  const codeSecurePlan = buildCodeLabSecurePlan(
+    spec,
+    identity.test_suite_id,
+    misconceptionIdsByObjective,
+    programmingProblem,
+  )
+  const taxonomy = buildAssessmentTaxonomyPlan({
+    items: baseAssessmentPlan,
+    emphasis: assessmentSpec.learner_adaptation.pedagogy_contract?.assessment.emphasis
+      ?? { recall: 0.2, understanding: 0.25, application: 0.3, analysis: 0.2, creation: 0.05 },
+    progress_by_objective: Object.fromEntries(initialLearningDesign.learner.skills.map((skill) => [
+      skill.objective_id,
+      skill.progress_band,
+    ])),
+  })
+  const taxonomyByItem = new Map(taxonomy.entries.map((entry) => [entry.item_id, entry]))
+  const assessmentPlan = baseAssessmentPlan.map((item) => ({
+    ...item,
+    difficulty_band: taxonomyByItem.get(item.item_id)!.difficulty_band,
+    cognitive_level: taxonomyByItem.get(item.item_id)!.cognitive_level,
+  }))
+  const practicalGuidePlan = buildPracticalGuidePlan({
+    lab_id: identity.lab_id,
+    objective_ids: spec.targets.map((target) => target.objective_id),
+    primary_objective_id: taskContract.primary_objective_id,
+    goal_context: spec.path_node.goal?.trim()
+      || evidence.results.find((entry) => entry.source_id === spec.targets.find((target) => target.objective_id === taskContract.primary_objective_id)?.source_id)?.title
+      || taskContract.primary_objective_id,
+    scaffold_strength: practicalGuideScaffoldStrength(
+      initialLearningDesign.learner.skills.find((skill) => skill.objective_id === taskContract.primary_objective_id)!.progress_band,
+      spec.learner_adaptation.pedagogy_contract?.lesson.scaffold_strength
+        ?? Math.max(1, Math.min(4, Math.round(spec.difficulty?.scaffold_strength ?? 2))),
+    ),
+    session_minutes: spec.learner_adaptation.pedagogy_contract?.pacing.session_minutes ?? 30,
+    require_troubleshooting: spec.learner_adaptation.pedagogy_contract?.practice.require_troubleshooting ?? true,
+    tool_constraints: spec.learner_adaptation.pedagogy_contract?.constraints.tool_constraints ?? [],
+    objective_fact_refs: Object.fromEntries(codeObjectivePlan.map((entry) => [entry.objective_id, entry.citations])),
+    prerequisite_fact_refs: evidence.results
+      .filter((entry) => spec.path_node.prerequisite_source_ids.includes(entry.source_id))
+      .flatMap((entry) => entry.facts.slice(0, 1).map((fact) => ({
+        source_id: entry.source_id,
+        fact_id: fact.fact_id,
+        relation: "prerequisite" as const,
+      }))),
+    public_tests: codeObjectivePlan.map((entry) => ({ test_id: entry.public_test_id, objective_id: entry.objective_id })),
   })
   const objectives = spec.targets.map((target, index) => {
     const code = codeObjectivePlan.find((entry) =>
@@ -280,11 +373,10 @@ export function buildResourceBlueprint(
         })),
     }
   })
-  const learningDesign = buildLearningDesignSpecV2({
-    spec: assessmentSpec,
-    evidence,
+  const learningDesign: LearningDesignSpecV2 = {
+    ...initialLearningDesign,
     assessment_plan: assessmentPlan,
-  })
+  }
   const blueprintIdentity = {
     spec_id: spec.spec_id,
     evidence_ref: evidence.retrieval_id,
@@ -298,8 +390,10 @@ export function buildResourceBlueprint(
       objective_plan: codeObjectivePlan,
       secure_plan: codeSecurePlan,
       task_contract: taskContract,
+      practical_guide_plan: practicalGuidePlan,
+      programming_problem: programmingProblem,
     },
-    assessment: { item_plan: assessmentPlan, capacity: assessmentCapacity },
+    assessment: { item_plan: assessmentPlan, taxonomy, capacity: assessmentCapacity },
     cross_artifact_contract: crossArtifactContract,
     quality_requirement: qualityRequirement,
   }
@@ -318,9 +412,12 @@ export function buildResourceBlueprint(
       objective_plan: codeObjectivePlan,
       secure_plan: codeSecurePlan,
       task_contract: taskContract,
+      practical_guide_plan: practicalGuidePlan,
+      programming_problem: programmingProblem,
     },
     assessment: {
       item_plan: assessmentPlan,
+      taxonomy,
       total_items: assessmentPlan.length,
       total_score: assessmentPlan.reduce((sum, item) => sum + item.max_score, 0),
       capacity: assessmentCapacity,
@@ -328,6 +425,17 @@ export function buildResourceBlueprint(
     cross_artifact_contract: crossArtifactContract,
     quality_requirement: qualityRequirement,
   })
+}
+
+function practicalGuideScaffoldStrength(
+  band: LearningDesignSpecV2["learner"]["skills"][number]["progress_band"],
+  profileStrength: number,
+): number {
+  const base = Math.max(1, Math.min(4, Math.round(profileStrength)))
+  if (band === "needs_reteach") return 4
+  if (band === "developing") return Math.max(3, base)
+  if (band === "ready_for_transfer") return Math.min(3, base)
+  return Math.min(2, base)
 }
 
 /**
@@ -717,5 +825,29 @@ function decideCodeLabTaskContract(
         : inputForm === "none"
           ? "判题器使用空 stdin 并比较 stdout；任务数据由程序骨架给出，学习者完成目标逻辑，不得改造为另一套输入协议"
           : "判题器喂 stdin、比较 stdout；不得以函数 return 值作为判题产物。完整程序内可以定义和调用辅助函数，starter_code 与 hidden_test 均围绕标准输入输出",
+    ...(callable ? { entry_point: "solve" } : {}),
+  }
+}
+
+function plannedProgrammingExecutionContract(task: CodeLabTaskContract) {
+  return {
+    language: "python" as const,
+    execution_mode: task.execution_mode,
+    ...(task.entry_point ? { entry_point: task.entry_point } : {}),
+    allowed_imports: [],
+    input_contract: {
+      type: task.input_form,
+      constraints: [task.program_entry],
+    },
+    output_contract: {
+      kind: task.execution_mode === "stdin_stdout" ? "string" as const : "object" as const,
+      type: task.output_form,
+      constraints: [task.output_constraint],
+    },
+    resource_limits: {
+      timeout_ms: 2_000,
+      memory_mb: 128,
+      max_output_bytes: 32_768,
+    },
   }
 }

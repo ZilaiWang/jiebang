@@ -4,13 +4,19 @@ import { ModelExecutionBudgetExceededError } from "../../model-runtime/execution
 
 export class PublicQualityGateError extends Error {
   readonly code = "PUBLIC_QUALITY_GATE_FAILED"
-  constructor(readonly evaluations: PublicCandidateEvaluation[], readonly generation_failures: number) {
+  constructor(
+    readonly evaluations: PublicCandidateEvaluation[],
+    readonly generation_failures: number,
+    readonly generation_errors: unknown[] = [],
+  ) {
     const findings = [...new Set(evaluations.flatMap((evaluation) =>
       evaluation.critical_findings))].slice(0, 3)
     const detail = findings.length > 0
       ? findings.join("；")
-      : generation_failures > 0
-        ? `${generation_failures} 个候选生成失败`
+      : generation_errors.length > 0
+        ? generationErrorSummaries(generation_errors).slice(0, 3).join("；")
+        : generation_failures > 0
+          ? `${generation_failures} 个候选生成失败`
         : "核心质量维度未达到发布最低值"
     super(`公开候选均未达到最低教学质量要求：${detail}`)
   }
@@ -19,6 +25,8 @@ export class PublicQualityGateError extends Error {
 /** Generates independent candidates, filters hard failures and deterministically selects the best. */
 export async function runPublicCandidateTournament<T>(input: {
   candidate_count: number
+  /** Validates shared frozen input before any parallel model call is started. */
+  preflight?: () => void | Promise<void>
   generate: (variantIndex: number) => Promise<T>
   evaluate: (candidate: T, variantIndex: number) => PublicCandidateEvaluation
   review?: (entries: Array<{
@@ -28,6 +36,7 @@ export async function runPublicCandidateTournament<T>(input: {
   }>) => Promise<PublicCandidateEvaluation[]>
   on_rejected?: (evaluations: PublicCandidateEvaluation[], generationFailures: number) => void | Promise<void>
 }): Promise<CandidateSelectionResult<T>> {
+  await input.preflight?.()
   const count = Math.max(1, Math.min(3, Math.floor(input.candidate_count)))
   const settled = await Promise.allSettled(
     Array.from({ length: count }, (_, variantIndex) => input.generate(variantIndex)),
@@ -38,6 +47,8 @@ export async function runPublicCandidateTournament<T>(input: {
       : [])
   const generationErrors = settled.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : [])
+  const sharedFailure = commonDeterministicFailure(generationErrors)
+  if (successful.length === 0 && sharedFailure !== undefined) throw sharedFailure
   // “候选质量不合格”和“模型服务根本没有返回候选”是两个不同终局。
   // 余额、认证、网络、超时或工作流预算导致全部候选调用失败时，保留原始
   // provider/runtime 错误，让上层进入 failed/retry；不能伪装成 C 内容门禁。
@@ -79,6 +90,7 @@ export async function runPublicCandidateTournament<T>(input: {
     throw new PublicQualityGateError(
       evaluations.map((entry) => entry.evaluation),
       settled.length - successful.length,
+      generationErrors,
     )
   }
   return {
@@ -87,6 +99,25 @@ export async function runPublicCandidateTournament<T>(input: {
     evaluations: evaluations.map((entry) => entry.evaluation),
     rejected_generation_count: settled.length - successful.length,
   }
+}
+
+function commonDeterministicFailure(errors: unknown[]): unknown | undefined {
+  if (errors.length === 0) return undefined
+  const fingerprints = errors.map(errorFingerprint)
+  return fingerprints.every((value) => value === fingerprints[0]) ? errors[0] : undefined
+}
+
+function generationErrorSummaries(errors: unknown[]): string[] {
+  return [...new Set(errors.map((error) =>
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error)))]
+}
+
+function errorFingerprint(error: unknown): string {
+  if (!(error instanceof Error)) return JSON.stringify(error)
+  const details = "issues" in error
+    ? (error as Error & { issues?: unknown }).issues
+    : undefined
+  return JSON.stringify({ name: error.name, message: error.message, details })
 }
 
 function isOperationalGenerationFailure(error: unknown): boolean {

@@ -8,6 +8,7 @@ import type { RagEvidencePack } from "../contracts/evidence-pack"
 import type { CPipelineInput } from "../orchestrator/content-pipeline"
 import { validatePublicArtifactNoSecrets } from "../validators/public-secure-leak-validator"
 import { validateRoleCSchema } from "../validators/runtime-schema-validator"
+import { validatePracticalGuideForRelease } from "../validators/section-six-resource-validator"
 import type {
   ContentReviewResult,
   ReviewedCPipelineResult,
@@ -118,6 +119,14 @@ export function assertReviewedReadyPipeline(
     if (codeLab.quality.execution_verified !== true
       || assessment.quality.answer_key_verified !== true) {
       throw failure("TRUSTED_VERIFICATION_MISSING")
+    }
+    if (!codeLab.payload.practical_guide
+      || validatePracticalGuideForRelease(codeLab.payload.practical_guide).length > 0) {
+      throw failure("PRACTICAL_GUIDE_INVALID")
+    }
+    if (assessment.payload.items.some((item) =>
+      !item.difficulty_band || !item.cognitive_level)) {
+      throw failure("ASSESSMENT_TAXONOMY_MISSING")
     }
   }
 

@@ -39,18 +39,29 @@ export type ContentRecoveryAction =
   | "replan_path"
   | "reprofile_learner"
 
+export const REVIEW_BLOCK_LOCATOR_FIELDS = [
+  "claim",
+  "misconception",
+  "quiz",
+  "hint",
+  "public_test",
+  "starter_code",
+  "render_content",
+  "reflection",
+  "option",
+  "assessment_item",
+  "practical_guide_goal",
+  "practical_guide_readiness",
+  "practical_guide_step",
+  "practical_guide_acceptance",
+  "practical_guide_troubleshooting",
+  "practical_guide_extension",
+] as const
+
+export type ReviewBlockLocatorField = typeof REVIEW_BLOCK_LOCATOR_FIELDS[number]
+
 export interface ReviewBlockLocator {
-  field:
-    | "claim"
-    | "misconception"
-    | "quiz"
-    | "hint"
-    | "public_test"
-    | "starter_code"
-    | "render_content"
-    | "reflection"
-    | "option"
-    | "assessment_item"
+  field: ReviewBlockLocatorField
   ref_id: string
   parent_block_id?: string
   objective_id?: string
@@ -110,6 +121,13 @@ export interface ContentSemanticAuditPort {
         source_id: string
         fact_id: string
         content: string
+      }>
+      /** Reviewed KB examples whose complete fact_refs are inside this block's citation closure. */
+      cited_examples?: Array<{
+        title: string
+        code: string
+        explanation: string
+        fact_refs: Array<{ source_id: string; fact_id: string }>
       }>
     }>
   }): Promise<SemanticReviewBlockResult[]>

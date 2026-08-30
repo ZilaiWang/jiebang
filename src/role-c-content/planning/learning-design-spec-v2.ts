@@ -3,6 +3,12 @@ import type { RagEvidencePack } from "../contracts/evidence-pack"
 import type { GenerationSpec } from "../contracts/generation-spec"
 import type { AssessmentItemPlan } from "../providers/staged-generation"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import {
+  progressAdaptationActions,
+  resolveObjectiveSkillEstimate,
+  type ObjectiveProgressBand,
+  type SkillEvidenceBasis,
+} from "./objective-skill-estimate"
 
 export interface LearningDesignSpecV2 {
   schema_version: "learning-design.v2"
@@ -13,10 +19,12 @@ export interface LearningDesignSpecV2 {
     level: GenerationSpec["learner_adaptation"]["level"]
     skills: Array<{
       objective_id: string
+      source_id: string
       mean: number
       lower: number
       upper: number
-      evidence_basis: "known" | "weak" | "unobserved"
+      evidence_basis: SkillEvidenceBasis
+      progress_band: ObjectiveProgressBand
     }>
     misconceptions: Array<{
       misconception_id: string
@@ -63,20 +71,23 @@ export function buildLearningDesignSpecV2(input: {
   evidence: RagEvidencePack
   assessment_plan: AssessmentItemPlan[]
 }): LearningDesignSpecV2 {
+  const pedagogy = input.spec.learner_adaptation.pedagogy_contract
+  const mastery = pedagogy?.learner_state.mastery_by_source_id ?? {}
+  const known = pedagogy?.learner_state.known_concepts ?? input.spec.learner_adaptation.known_concepts ?? []
+  const weak = pedagogy?.learner_state.weak_concepts ?? input.spec.learner_adaptation.weak_concepts ?? []
   const skills = input.spec.targets.map((target) => {
-    const basis = targetMatches(input.spec.learner_adaptation?.known_concepts ?? [], target, input.evidence)
-      ? "known" as const
-      : targetMatches(input.spec.learner_adaptation?.weak_concepts ?? [], target, input.evidence)
-        ? "weak" as const
-        : "unobserved" as const
+    const source = input.evidence.results.find((entry) => entry.source_id === target.source_id)
+    const estimate = resolveObjectiveSkillEstimate({
+      source_id: target.source_id,
+      objective_id: target.objective_id,
+      title: source?.title,
+      mastery_by_source_id: mastery,
+      known_concepts: known,
+      weak_concepts: weak,
+    })
     return {
       objective_id: target.objective_id,
-      ...(basis === "known"
-        ? { mean: 0.82, lower: 0.64, upper: 0.94 }
-        : basis === "weak"
-          ? { mean: 0.34, lower: 0.16, upper: 0.56 }
-          : { mean: 0.5, lower: 0.22, upper: 0.78 }),
-      evidence_basis: basis,
+      ...estimate,
     }
   })
   const misconceptions = input.spec.targets.flatMap((target) => {
@@ -89,9 +100,7 @@ export function buildLearningDesignSpecV2(input: {
       .map((entry) => ({
         misconception_id: entry.misconceptionId,
         objective_id: target.objective_id,
-        probability: skills.find((skill) => skill.objective_id === target.objective_id)?.evidence_basis === "weak"
-          ? 0.65
-          : 0.35,
+        probability: misconceptionProbability(skills.find((skill) => skill.objective_id === target.objective_id)!),
         diagnostic_signals: [...entry.diagnosticSignals],
       }))
   })
@@ -107,22 +116,31 @@ export function buildLearningDesignSpecV2(input: {
     }
   })
   const lessonSequence = objectives.flatMap((objective) => {
+    const skill = skills.find((entry) => entry.objective_id === objective.objective_id)!
     const targetMisconceptionIds = misconceptions
       .filter((entry) => entry.objective_id === objective.objective_id)
       .map((entry) => entry.misconception_id)
     const sequence: LearningDesignSpecV2["lesson_sequence"] = [
-      sequenceBlock(objective, "activation", "激活与当前目标直接相关的已有认知", targetMisconceptionIds),
-      sequenceBlock(objective, "explanation", "用证据支持的原子主张建立概念模型", targetMisconceptionIds),
-      sequenceBlock(objective, "worked_example", "展示动作、理由与证据之间的对应关系", targetMisconceptionIds),
-      ...(targetMisconceptionIds.length > 0
+      sequenceBlock(objective, "activation", skill.progress_band === "mastered" ? "用短检查激活已掌握能力" : "激活与当前目标直接相关的已有认知", targetMisconceptionIds),
+      ...(["needs_reteach", "developing"].includes(skill.progress_band)
+        ? [sequenceBlock(objective, "explanation", "用证据支持的原子主张建立概念模型", targetMisconceptionIds)]
+        : []),
+      ...(skill.progress_band !== "mastered"
+        ? [sequenceBlock(objective, "worked_example", "展示动作、理由与证据之间的对应关系", targetMisconceptionIds)]
+        : []),
+      ...(targetMisconceptionIds.length > 0 && skill.progress_band === "needs_reteach"
         ? [sequenceBlock(objective, "contrast", "用正误对比显式处理高概率误区", targetMisconceptionIds)]
         : []),
       sequenceBlock(objective, "micro_check", "立即检查学习者是否形成目标判断", targetMisconceptionIds),
-      sequenceBlock(objective, "guided_practice", "在保留脚手架的任务中应用目标行为", targetMisconceptionIds),
+      ...(skill.progress_band !== "mastered"
+        ? [sequenceBlock(objective, "guided_practice", "在与当前进度匹配的脚手架中应用目标行为", targetMisconceptionIds)]
+        : []),
       ...(input.spec.learner_adaptation.pedagogy_contract?.lesson.require_debugging_clinic
         ? [sequenceBlock(objective, "debugging_clinic", "识别错误信号、定位原因并说明修复步骤", targetMisconceptionIds)]
         : []),
-      ...(input.spec.learner_adaptation.pedagogy_contract?.practice.transfer_distance !== "near"
+      ...(skill.progress_band === "mastered"
+        || skill.progress_band === "ready_for_transfer"
+        || input.spec.learner_adaptation.pedagogy_contract?.practice.transfer_distance !== "near"
         || objective.cognitive_target === "transfer"
         ? [sequenceBlock(objective, "transfer", "在改变任务结构后迁移目标行为", targetMisconceptionIds)]
         : []),
@@ -152,19 +170,6 @@ export function buildLearningDesignSpecV2(input: {
   }
 }
 
-function targetMatches(
-  concepts: string[],
-  target: GenerationSpec["targets"][number],
-  evidence: RagEvidencePack,
-): boolean {
-  const title = evidence.results.find((entry) => entry.source_id === target.source_id)?.title ?? ""
-  const identities = new Set([target.source_id, target.objective_id, title].map(normalize).filter(Boolean))
-  return concepts.some((concept) => {
-    const normalized = normalize(concept)
-    return [...identities].some((identity) => normalized === identity || normalized.includes(identity) || identity.includes(normalized))
-  })
-}
-
 function cognitiveTarget(
   behavior: GenerationSpec["targets"][number]["observable_behavior"],
 ): LearningDesignSpecV2["objectives"][number]["cognitive_target"] {
@@ -183,19 +188,26 @@ function adaptationDecisions(
     `profile:${spec.profile_ref?.profile_id ?? "legacy"}:${spec.profile_ref?.profile_version ?? "legacy"}`,
     `skill-basis:${skill.evidence_basis}`,
   ]
-  if (skill.evidence_basis === "known") {
-    return [
-      { action: "brief_activate", reason: "画像显示已有基础，仅用短检查激活，不重复大段讲解", learner_evidence_refs: refs },
-      { action: "transfer_challenge", reason: "已有基础后改变任务结构检验迁移", learner_evidence_refs: refs },
-    ]
-  }
-  return [
-    { action: "reteach", reason: skill.evidence_basis === "weak" ? "画像标记为薄弱，需要重新建立概念链" : "缺少稳定学习证据，需要从可观察基础开始", learner_evidence_refs: refs },
-    ...(hasMisconception
-      ? [{ action: "contrast" as const, reason: "证据包包含可诊断误区，使用正误对比处理", learner_evidence_refs: refs }]
-      : []),
-    { action: "guided_practice", reason: `按 scaffold_level=${spec.learner_adaptation?.scaffold_level ?? 1} 提供渐退式练习`, learner_evidence_refs: refs },
-  ]
+  return progressAdaptationActions(skill.progress_band, hasMisconception).map((action) => ({
+    action,
+    reason: action === "brief_activate"
+      ? `目标熟练度 ${skill.mean.toFixed(2)}，用短检查激活已有能力`
+      : action === "transfer_challenge"
+        ? `目标熟练度 ${skill.mean.toFixed(2)}，可改变任务结构检验迁移`
+        : action === "contrast"
+          ? "当前证据包含可诊断误区，使用正误对比处理"
+          : action === "guided_practice"
+            ? `目标熟练度 ${skill.mean.toFixed(2)}，按 scaffold_level=${spec.learner_adaptation?.scaffold_level ?? 1} 进行渐退练习`
+            : `目标熟练度 ${skill.mean.toFixed(2)}，需要重新建立概念与操作链`,
+    learner_evidence_refs: refs,
+  }))
+}
+
+function misconceptionProbability(skill: LearningDesignSpecV2["learner"]["skills"][number]): number {
+  if (skill.progress_band === "needs_reteach") return 0.72
+  if (skill.progress_band === "developing") return 0.55
+  if (skill.progress_band === "ready_for_transfer") return 0.3
+  return 0.18
 }
 
 function sequenceBlock(
@@ -212,8 +224,4 @@ function sequenceBlock(
     required_fact_ids: [...objective.required_fact_ids],
     target_misconception_ids: [...targetMisconceptionIds],
   }
-}
-
-function normalize(value: string): string {
-  return value.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()
 }

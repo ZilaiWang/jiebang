@@ -34,6 +34,18 @@ import {
   buildAssessmentPresentationPlan,
   validateAssessmentPresentationBalance,
 } from "../planning/assessment-presentation"
+import type {
+  AssessmentCognitiveLevel,
+  AssessmentDifficultyBand,
+} from "../planning/assessment-taxonomy"
+import {
+  materializePracticalGuide,
+  validatePracticalGuideAuthorAgainstPlan,
+  type PracticalGuideAuthorPayload,
+  type PracticalGuidePlan,
+} from "../planning/practical-guide-plan"
+import { failClosedStarterCode, validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
+import type { ProgrammingProblemBlueprint } from "../programming/contracts"
 
 export interface ConceptSegmentRequest extends ConceptTutorRequest {
   segment_index: number
@@ -81,13 +93,26 @@ export interface CodeLabPublicAuthorPayload {
     hints: string[]
     reflection_question: string
   }>
+  practical_guide?: PracticalGuideAuthorPayload
+  programming_task?: {
+    statement: string
+    input_description: string
+    output_description: string
+    constraints: string[]
+    gap_template?: import("../contracts/artifacts").CodeGapTemplate
+    additional_public_examples?: Array<{
+      description: string
+      input: unknown
+      expected_behavior: string
+    }>
+  }
 }
 
 export interface CodeLabSecurePlan {
   hidden_tests: Array<{
     test_id: string
     objective_id: string
-    case_kind: "normal" | "boundary"
+    case_kind: "normal" | "nominal" | "boundary" | "anti_hardcode" | "error_path"
     weight: number
   }>
   mutation_variants: Array<{
@@ -104,8 +129,9 @@ export interface CodeLabExecutionRepairPatch {
   hidden_test_repairs: Array<{
     test_id: string
     input: unknown
-    expected: unknown
-    comparison: TestComparison
+    /** Legacy callers may still send these; production schemas omit them. */
+    expected?: unknown
+    comparison?: TestComparison
   }>
   mutation_repairs: Array<{
     mutation_id: string
@@ -116,14 +142,38 @@ export interface CodeLabExecutionRepairPatch {
 /** Model-authored executable semantics before deterministic IDs and scoring are attached. */
 export interface CodeLabSecureAuthorPayload {
   reference_solution: string
+  secondary_reference_solution?: string
   hidden_tests: Array<{
     input: unknown
-    expected: unknown
+    /** Legacy fixtures may still carry expected; production schema omits it. */
+    expected?: unknown
     comparison: TestComparison
+    partition_id?: "nominal" | "boundary" | "anti_hardcode" | "error_path"
+    note?: string
     misconception_tag: string
   }>
   mutation_variants: Array<{
     code: string
+    misconception_tag: string
+  }>
+}
+
+/** Model stage that owns executable solutions and mutation semantics only. */
+export interface CodeLabReferenceAuthorPayload {
+  reference_solution: string
+  secondary_reference_solution?: string
+  mutation_variants: Array<{
+    code: string
+    misconception_tag: string
+  }>
+}
+
+/** Model stage that owns test inputs only. Expected values stay trust-plane owned. */
+export interface CodeLabTestInputsAuthorPayload {
+  hidden_tests: Array<{
+    input: unknown
+    partition_id: "nominal" | "boundary" | "anti_hardcode" | "error_path"
+    note: string
     misconception_tag: string
   }>
 }
@@ -136,6 +186,8 @@ export interface AssessmentItemPlan {
   objective_id: string
   observation_key: string
   tier: 1 | 2 | 3
+  difficulty_band?: AssessmentDifficultyBand
+  cognitive_level?: AssessmentCognitiveLevel
   modality: AssessmentItemPublic["modality"]
   max_score: number
   citations: CitationRef[]
@@ -636,6 +688,7 @@ export function freezeCodeLabExecutionContract(
   taskContract?: {
     learner_action: "recall_fact" | "implement_program" | "implement_function"
     input_form: "function_arguments" | "stdin_lines" | "none"
+    entry_point?: string
   },
 ): ExecutionContract {
   const frozen: ExecutionContract = structuredClone(contract)
@@ -661,6 +714,9 @@ export function freezeCodeLabExecutionContract(
         constraints: ["不读取标准输入；学习者只填写当前证据支持的事实文本"],
       }
     }
+  }
+  if (mode === "function" && taskContract?.entry_point) {
+    frozen.entry_point = taskContract.entry_point
   }
   frozen.resource_limits = {
     timeout_ms: clampInt(frozen.resource_limits.timeout_ms, 100, 5000, 1000),
@@ -791,6 +847,9 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     learner_owned_region: "fact_literal" | "program_logic" | "function_body"
     input_form: "function_arguments" | "stdin_lines" | "none"
   },
+  practicalGuidePlan?: PracticalGuidePlan,
+  programmingProblem?: ProgrammingProblemBlueprint,
+  evidence?: RagEvidencePack,
 ): string[] {
   const issues: string[] = []
   if (payload.objectives.length !== plan.length) {
@@ -810,7 +869,26 @@ export function validateCodeLabPublicAuthorAgainstPlan(
       && !isEmptyProgramInput(entry.public_test.input)) {
       issues.push(`objectives[${index}].public_test.input recall_fact 任务必须为空输入`)
     }
+    const normalizedHints = entry.hints.map(normalizeHintText)
+    if (new Set(normalizedHints).size !== normalizedHints.length) {
+      issues.push(`objectives[${index}].hints 三级提示不得重复或只改标点`)
+    }
+    if (entry.hints.some((hint) => GENERIC_CODE_LAB_HINT.test(hint))) {
+      issues.push(`objectives[${index}].hints 必须针对当前实验内容生成，不得使用通用占位提示`)
+    }
+    const hintAnchors = hintAnchorsForPlan(plan[index], evidence)
+    if (hintAnchors.length > 0) {
+      const anchoredCount = entry.hints.filter((hint) =>
+        hintAnchors.some((anchor) => normalizeHintText(hint).includes(anchor))).length
+      if (anchoredCount < 2) {
+        issues.push(`objectives[${index}].hints 至少两级必须点明当前事实、概念或操作`)
+      }
+    }
   })
+  const allHints = payload.objectives.flatMap((entry) => entry.hints.map(normalizeHintText))
+  if (payload.objectives.length > 1 && new Set(allHints).size !== allHints.length) {
+    issues.push("不同 objective 的提示不得复用同一套文案")
+  }
   if (taskContract?.learner_action === "recall_fact") {
     const executable = payload.starter_code
       .split(/\r?\n/u)
@@ -830,6 +908,40 @@ export function validateCodeLabPublicAuthorAgainstPlan(
       issues.push("starter_code recall_fact 任务必须提供事实文本赋值与 print 输出胶水，只保留字符串占位由学习者替换")
     }
   }
+  if (practicalGuidePlan && !payload.practical_guide) {
+    issues.push("缺少 practical_guide")
+  } else if (practicalGuidePlan && payload.practical_guide) {
+    issues.push(...validatePracticalGuideAuthorAgainstPlan(payload.practical_guide, practicalGuidePlan))
+  }
+  if (programmingProblem && !payload.programming_task) {
+    issues.push("缺少 programming_task")
+  } else if (programmingProblem && payload.programming_task) {
+    const task = payload.programming_task
+    if (!task.statement.trim()) issues.push("programming_task.statement 不能为空")
+    if (!task.input_description.trim()) issues.push("programming_task.input_description 不能为空")
+    if (!task.output_description.trim()) issues.push("programming_task.output_description 不能为空")
+    if (task.constraints.length < 2) issues.push("programming_task.constraints 至少包含 2 条可核验约束")
+    const publicInputs = [
+      ...payload.objectives.map((objective) => objective.public_test.input),
+      ...(task.additional_public_examples ?? []).map((example) => example.input),
+    ]
+    if (publicInputs.length < programmingProblem.public_case_count) {
+      issues.push(`programming_task 公开样例至少需要 ${programmingProblem.public_case_count} 个`)
+    }
+    if (new Set(publicInputs.map((input) => JSON.stringify(input))).size !== publicInputs.length) {
+      issues.push("programming_task 公开样例输入不得重复")
+    }
+    if (programmingProblem.submission_mode === "gap_answers") {
+      if (!task.gap_template) issues.push("code_completion 缺少 gap_template")
+      else {
+        issues.push(...validateGapTemplate(task.gap_template).map((entry) => `gap_template: ${entry}`))
+        issues.push(...validateGapLearnerContract({ ...task, gap_template: task.gap_template })
+          .map((entry) => `learner_contract: ${entry}`))
+      }
+    } else if (task.gap_template) {
+      issues.push(`${programmingProblem.task_kind} 不得返回 gap_template`)
+    }
+  }
   issues.push(...codeLabExecutionContractIssues(
     payload.execution_contract,
     "execution_contract",
@@ -844,6 +956,26 @@ export function validateCodeLabPublicAuthorAgainstPlan(
   return issues
 }
 
+const GENERIC_CODE_LAB_HINT = /^(?:先定位本目标要求表达的核心事实|确认填写内容保留了事实中的主语、对象和关系|只替换\s*TODO\s*字符串|先找到题面中.*目标句子|输入框只填写等号右边的内容)/u
+
+function normalizeHintText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[\s，。！？；：、,.!?;:'"“”‘’`()（）\[\]【】_-]+/gu, "")
+}
+
+function hintAnchorsForPlan(
+  plan: CodeLabObjectivePlan | undefined,
+  evidence: RagEvidencePack | undefined,
+): string[] {
+  if (!plan || !evidence) return []
+  const cited = new Set(plan.citations.map((citation) => `${citation.source_id}:${citation.fact_id}`))
+  const text = evidence.results.flatMap((source) => [
+    ...(source.source_id === plan.source_id ? [source.title] : []),
+    ...source.facts.flatMap((fact) => cited.has(`${fact.source_id}:${fact.fact_id}`) ? [fact.content] : []),
+  ]).join(" ")
+  const tokens = text.match(/[A-Za-z_][A-Za-z0-9_]{2,}|[\p{Script=Han}]{2,8}/gu) ?? []
+  return [...new Set(tokens.map(normalizeHintText).filter((token) => token.length >= 2))].slice(0, 24)
+}
+
 function isEmptyProgramInput(value: unknown): boolean {
   return value === "" || value == null
 }
@@ -853,12 +985,22 @@ export function materializeCodeLabPublicAuthorPayload(
   payload: CodeLabPublicAuthorPayload,
   labId: string,
   plan: CodeLabObjectivePlan[],
+  practicalGuidePlan?: PracticalGuidePlan,
+  programmingProblem?: import("../programming/contracts").ProgrammingProblemBlueprint,
 ): CodeLabPublicPayload {
   const facts = new Map(request.evidence_pack.results.flatMap((entry) =>
     entry.facts.map((fact) => [
       `${fact.source_id}:${fact.fact_id}`,
       fact.content,
     ] as const)))
+  const tests = plan.map((entry, index) => ({
+    test_id: entry.public_test_id,
+    objective_id: entry.objective_id,
+    description: payload.objectives[index]!.public_test.description.trim(),
+    input: structuredClone(payload.objectives[index]!.public_test.input),
+    expected_behavior: payload.objectives[index]!.public_test.expected_behavior.trim(),
+    citations: structuredClone(entry.citations),
+  }))
   const publicPayload: CodeLabPublicPayload = {
     lab_id: labId,
     title: payload.title.trim(),
@@ -880,15 +1022,11 @@ export function materializeCodeLabPublicAuthorPayload(
       })),
     })),
     execution_contract: structuredClone(payload.execution_contract),
-    starter_code: payload.starter_code,
-    public_tests: plan.map((entry, index) => ({
-      test_id: entry.public_test_id,
-      objective_id: entry.objective_id,
-      description: payload.objectives[index]!.public_test.description.trim(),
-      input: structuredClone(payload.objectives[index]!.public_test.input),
-      expected_behavior: payload.objectives[index]!.public_test.expected_behavior.trim(),
-      citations: structuredClone(entry.citations),
-    })),
+    starter_code: programmingProblem?.submission_mode === "gap_answers"
+      && payload.programming_task?.gap_template
+      ? failClosedStarterCode(payload.programming_task.gap_template)
+      : payload.starter_code,
+    public_tests: tests,
     hint_ladders: plan.map((entry, index) => ({
       objective_id: entry.objective_id,
       hints: payload.objectives[index]!.hints.map((text, hintIndex) => ({
@@ -899,6 +1037,49 @@ export function materializeCodeLabPublicAuthorPayload(
     })),
     reflection_questions: payload.objectives.map((entry) =>
       entry.reflection_question.trim()),
+    ...(programmingProblem && payload.programming_task ? {
+      programming_task: {
+        schema_version: "programming-task.v1" as const,
+        task_id: stableId("PROGRAMMING-TASK", {
+          lab_id: labId,
+          blueprint_id: programmingProblem.blueprint_id,
+        }),
+        blueprint_id: programmingProblem.blueprint_id,
+        task_kind: programmingProblem.task_kind,
+        submission_mode: programmingProblem.submission_mode,
+        statement: payload.programming_task.statement.trim(),
+        input_description: payload.programming_task.input_description.trim(),
+        output_description: payload.programming_task.output_description.trim(),
+        constraints: payload.programming_task.constraints.map((entry) => entry.trim()).filter(Boolean),
+        ...(programmingProblem.submission_mode === "gap_answers" && payload.programming_task.gap_template
+          ? { gap_template: structuredClone(payload.programming_task.gap_template) }
+          : { starter_code: payload.starter_code }),
+        public_examples: [
+          ...tests.map((test) => ({
+          case_id: test.test_id,
+          description: test.description,
+          input: structuredClone(test.input),
+          expected_behavior: test.expected_behavior,
+          })),
+          ...(payload.programming_task.additional_public_examples ?? []).map((example, index) => ({
+            case_id: stableId("PROGRAMMING-PUBLIC-EXAMPLE", { lab_id: labId, index }),
+            description: example.description.trim(),
+            input: structuredClone(example.input),
+            expected_behavior: example.expected_behavior.trim(),
+          })),
+        ],
+        hint_ladders: payload.objectives.flatMap((objective) =>
+          objective.hints.map((text, index) => ({ level: (index + 1) as 1 | 2 | 3, text: text.trim() }))),
+      },
+    } : {}),
+    ...(practicalGuidePlan && payload.practical_guide ? {
+      practical_guide: materializePracticalGuide({
+        plan: practicalGuidePlan,
+        author: payload.practical_guide,
+        execution_contract: payload.execution_contract,
+        public_tests: tests,
+      }),
+    } : {}),
     objective_coverage: plan.map((entry) => ({
       objective_id: entry.objective_id,
       instruction_block_ids: [entry.instruction_block_id],
@@ -1009,7 +1190,77 @@ export function normalizeCodeLabPublic(
     public_test_ids: [entry.public_test_id],
   }))
   normalized.used_evidence = collectCodeLabCitations(normalized)
+  normalizeGuidedFactOutputTask(request, normalized, plan, facts)
   return normalized
+}
+
+/**
+ * A recognize/explain objective without executable evidence becomes a guided
+ * first-run exercise.  Freeze its learner wording here so the page always says
+ * exactly what to enter and why, instead of exposing model jargon or asking the
+ * learner to guess a hidden sentence.
+ */
+function normalizeGuidedFactOutputTask(
+  request: CodeLabRequest,
+  payload: CodeLabPublicPayload,
+  plan: CodeLabObjectivePlan[],
+  facts: Map<string, string>,
+): void {
+  const contract = request.resource_blueprint?.code_lab.task_contract
+  const task = payload.programming_task
+  if (contract?.learner_action !== "recall_fact"
+    || !task?.gap_template
+    || task.gap_template.gaps.length !== 1) return
+  const primaryPlan = plan.find((entry) => entry.objective_id === contract.primary_objective_id)
+    ?? plan[0]
+  const citation = primaryPlan?.citations[0]
+  const fact = citation ? facts.get(`${citation.source_id}:${citation.fact_id}`)?.trim() : undefined
+  if (!fact) return
+  const sourceTitle = request.evidence_pack.results.find((entry) =>
+    entry.source_id === citation!.source_id)?.title?.trim()
+    ?? request.generation_spec.path_node.goal?.trim()
+    ?? "本节知识"
+  const gap = task.gap_template.gaps[0]!
+  payload.title = `${sourceTitle}：完成第一次输出`
+  task.statement = [
+    "这是一道引导式运行练习，不需要你猜答案，也不需要编写整段程序。",
+    `请在右侧唯一的输入框中填写一个带引号的 Python 字符串，让程序输出：${fact}`,
+    "系统会把你填写的内容放到等号右边，然后运行完整程序。",
+  ].join("\n")
+  task.input_description = "本题没有外部输入；你只填写右侧的一个空格。"
+  task.output_description = `程序应完整输出：${fact}`
+  task.constraints = [
+    "只填写等号右边的内容，不要输入 fact_text =，也不要复制 print 语句",
+    "填写内容必须带英文单引号或双引号，例如：\"一行文字\"",
+  ]
+  gap.label = "要输出的文字（需要包含引号）"
+  gap.kind = "expression"
+  gap.answer_format = "python_string_literal"
+  gap.max_lines = 1
+  gap.placeholder = "例如：\"一行文字\""
+  const authoredLadder = payload.hint_ladders.find((ladder) =>
+    ladder.objective_id === primaryPlan?.objective_id) ?? payload.hint_ladders[0]
+  task.hint_ladders = authoredLadder?.hints.map((hint, index) => ({
+    level: (index + 1) as 1 | 2 | 3,
+    text: hint.text,
+  })) ?? []
+  payload.instructions = payload.instructions.map((block) => {
+    if (block.block_type !== "paragraph") return block
+    block.text = "本题的目标是完成一次清晰的“填写—运行—核对输出”操作。你只需填写一个带引号的字符串，程序的赋值和输出结构已经提供。"
+    anchorRenderedClaim(block)
+    return block
+  })
+  payload.public_tests = payload.public_tests.map((test) => ({
+    ...test,
+    description: "运行填写后的完整程序",
+    expected_behavior: `标准输出应为：${fact}`,
+  }))
+  task.public_examples = task.public_examples.map((example) => ({
+    ...example,
+    description: "运行填写后的完整程序",
+    expected_behavior: `标准输出应为：${fact}`,
+  }))
+  payload.reflection_questions = ["运行前，你填写的是完整代码，还是只填写等号右边的字符串？"]
 }
 
 /**
@@ -1021,36 +1272,51 @@ export function buildCodeLabSecurePlan(
   spec: GenerationSpec,
   suiteId: string,
   misconceptionIdsByObjective: Record<string, string> = {},
+  programmingProblem?: ProgrammingProblemBlueprint,
 ): CodeLabSecurePlan {
   if (spec.targets.length === 0) {
     throw new ModelOutputValidationError("code-lab.secure.plan", ["GenerationSpec 没有可规划的目标"])
   }
-  const objectiveWeight = 1 / spec.targets.length
-  const hiddenTests = spec.targets.map((target) => {
-    const caseKind = "normal" as const
+  const caseKinds: CodeLabSecurePlan["hidden_tests"][number]["case_kind"][] = programmingProblem
+    ? programmingProblem.test_partitions.flatMap((partition) =>
+        Array.from({ length: partition.minimum_cases }, () => partition.kind)).slice(0, programmingProblem.hidden_case_count)
+    : spec.targets.map(() => "normal" as const)
+  while (programmingProblem && caseKinds.length < programmingProblem.hidden_case_count) {
+    caseKinds.push("anti_hardcode")
+  }
+  const objectiveWeight = 1 / caseKinds.length
+  const hiddenTests = caseKinds.map((caseKind, index) => {
+    const target = spec.targets[index % spec.targets.length]!
     return {
       test_id: stableId("LAB-HIDDEN-TEST", {
         test_suite_id: suiteId,
         objective_id: target.objective_id,
         case_kind: caseKind,
+        case_index: index,
       }),
       objective_id: target.objective_id,
       case_kind: caseKind,
       weight: objectiveWeight,
     }
   })
+  const mutationCount = programmingProblem?.required_mutation_count ?? spec.targets.length
   return {
     hidden_tests: hiddenTests,
-    mutation_variants: spec.targets.map((target, index) => ({
+    mutation_variants: Array.from({ length: mutationCount }, (_, index) => {
+      const target = spec.targets[index % spec.targets.length]!
+      const targetTests = hiddenTests.filter((test) => test.objective_id === target.objective_id)
+      return {
       mutation_id: stableId("LAB-MUTATION", {
         test_suite_id: suiteId,
         objective_id: target.objective_id,
+        mutation_index: index,
       }),
       objective_ids: [target.objective_id],
-      must_fail_test_ids: [hiddenTests[index]!.test_id],
+      must_fail_test_ids: [targetTests[index % targetTests.length]!.test_id],
       misconception_id: misconceptionIdsByObjective[target.objective_id]
         ?? `MIS-${target.objective_id}-COMMON-ERROR`,
-    })),
+      }
+    }),
   }
 }
 
@@ -1114,22 +1380,23 @@ export function normalizeCodeLabSecureAuthorPayloadLenient(
     normalized.hidden_tests = normalized.hidden_tests.slice(0, plan.hidden_tests.length)
   }
   for (const test of normalized.hidden_tests) {
-    const outputKind = outputContract ? classifyOutputContract(outputContract) : undefined
-    test.comparison = outputKind === "number"
-      ? { kind: "numeric", abs_tolerance: 1e-9, rel_tolerance: 1e-9 }
-      : outputKind && outputKind !== "unknown"
-        ? { kind: "exact" }
-        : canonicalizeTestComparison(test.comparison as unknown, test.expected)
-    if (test.comparison.kind === "numeric" && typeof test.expected === "string") {
-      const coerced = Number(test.expected.trim())
-      if (Number.isFinite(coerced)) test.expected = coerced
-    }
-    // stdin_stdout 模式：标准输出必是文本，expected 统一字符串化，
-    // 避免"输出平均分"这类任务里模型把 expected 写成数字导致类型错配。
-    if (executionMode === "stdin_stdout" && typeof test.expected !== "string") {
-      test.expected = Array.isArray(test.expected) || (test.expected && typeof test.expected === "object")
-        ? JSON.stringify(test.expected)
-        : String(test.expected)
+    test.comparison ??= { kind: "exact" }
+    if (test.expected !== undefined) {
+      const outputKind = outputContract ? classifyOutputContract(outputContract) : undefined
+      test.comparison = outputKind === "number"
+        ? { kind: "numeric", abs_tolerance: 1e-9, rel_tolerance: 1e-9 }
+        : outputKind && outputKind !== "unknown"
+          ? { kind: "exact" }
+          : canonicalizeTestComparison(test.comparison as unknown, test.expected)
+      if (test.comparison.kind === "numeric" && typeof test.expected === "string") {
+        const coerced = Number(test.expected.trim())
+        if (Number.isFinite(coerced)) test.expected = coerced
+      }
+      if (executionMode === "stdin_stdout" && typeof test.expected !== "string") {
+        test.expected = Array.isArray(test.expected) || (test.expected && typeof test.expected === "object")
+          ? JSON.stringify(test.expected)
+          : String(test.expected)
+      }
     }
     if (executionMode === "function") {
       // Shape normalization must not rewrite executable semantics: changing a
@@ -1231,6 +1498,7 @@ export function validateCodeLabSecureAuthorAgainstPlan(
   payload: CodeLabSecureAuthorPayload,
   plan: CodeLabSecurePlan,
   executionMode: CodeLabPublicPayload["execution_contract"]["execution_mode"],
+  programmingProblem?: ProgrammingProblemBlueprint,
 ): string[] {
   const issues: string[] = []
   if (payload.hidden_tests.length !== plan.hidden_tests.length) {
@@ -1246,6 +1514,21 @@ export function validateCodeLabSecureAuthorAgainstPlan(
   if (payload.mutation_variants.length !== plan.mutation_variants.length) {
     issues.push(`mutation_variants 数量应为 ${plan.mutation_variants.length}，实际 ${payload.mutation_variants.length}`)
   }
+  if (programmingProblem?.require_secondary_oracle && !payload.secondary_reference_solution?.trim()) {
+    issues.push("当前 programming_problem 要求 secondary_reference_solution")
+  }
+  if (!programmingProblem?.require_secondary_oracle && payload.secondary_reference_solution) {
+    issues.push("当前 programming_problem 不需要 secondary_reference_solution")
+  }
+  if (programmingProblem) {
+    payload.hidden_tests.forEach((test, index) => {
+      const expectedKind = plan.hidden_tests[index]?.case_kind
+      if (test.partition_id !== expectedKind) {
+        issues.push(`hidden_tests[${index}].partition_id 应为 ${expectedKind}，实际 ${test.partition_id ?? "missing"}`)
+      }
+      if (!test.note?.trim()) issues.push(`hidden_tests[${index}].note 不能为空`)
+    })
+  }
   return issues
 }
 
@@ -1255,19 +1538,35 @@ export function materializeCodeLabSecureAuthorPayload(
   publicPayload: CodeLabPublicPayload,
   suiteId: string,
   plan: CodeLabSecurePlan = buildCodeLabSecurePlan(spec, suiteId),
+  trustedExpectedMaterialization = false,
 ): CodeLabSecurePayload {
   const draft: CodeLabSecurePayload = {
     lab_id: publicPayload.lab_id,
     test_suite_id: suiteId,
     execution_contract: structuredClone(publicPayload.execution_contract),
     reference_solution: payload.reference_solution,
+    ...(payload.secondary_reference_solution
+      ? { secondary_reference_solution: payload.secondary_reference_solution }
+      : {}),
     hidden_tests: plan.hidden_tests.map((entry, index) => ({
       test_id: entry.test_id,
       objective_id: entry.objective_id,
       weight: entry.weight,
       input: structuredClone(payload.hidden_tests[index]!.input),
-      expected: structuredClone(payload.hidden_tests[index]!.expected),
-      comparison: structuredClone(payload.hidden_tests[index]!.comparison),
+      expected: trustedExpectedMaterialization
+        ? { __trusted_expected_pending__: true }
+        : structuredClone(payload.hidden_tests[index]!.expected),
+      comparison: trustedExpectedMaterialization
+        ? classifyOutputContract(publicPayload.execution_contract.output_contract) === "number"
+          ? { kind: "numeric" as const, abs_tolerance: 1e-9, rel_tolerance: 1e-9 }
+          : { kind: "exact" as const }
+        : structuredClone(payload.hidden_tests[index]!.comparison ?? { kind: "exact" as const }),
+      ...(payload.hidden_tests[index]!.partition_id
+        ? { partition_id: payload.hidden_tests[index]!.partition_id }
+        : {}),
+      ...(payload.hidden_tests[index]!.note
+        ? { note: payload.hidden_tests[index]!.note!.trim() }
+        : {}),
     })),
     scoring_groups: [],
     misconception_map: plan.hidden_tests.map((entry, index) => ({
@@ -1491,8 +1790,10 @@ export function applyCodeLabExecutionRepairPatch(
     const target = hiddenById.get(entry.test_id)
     if (!target) continue
     target.input = structuredClone(entry.input)
-    target.expected = structuredClone(entry.expected)
-    target.comparison = structuredClone(entry.comparison)
+    // Changing an input always invalidates its old expected. The model never
+    // owns the replacement; TrustedCodeLabVerifier re-derives it in Docker.
+    target.expected = { __trusted_expected_pending__: true }
+    target.comparison = { kind: "exact" }
   }
   return repaired
 }
@@ -1676,7 +1977,7 @@ export function assessmentFactIdsForItem(
   factIds: string[],
   tier: 1 | 2 | 3,
   objectiveOccurrence: number,
-  evidenceFacts?: Array<{ fact_id: string; capabilities?: string[] }>,
+  evidenceFacts?: Array<{ fact_id: string; content?: string; capabilities?: string[] }>,
   operation?: AssessmentItemPlan["cognitive_operation"],
 ): string[] {
   if (factIds.length <= 1 || tier === 3) return [...factIds]
@@ -1700,8 +2001,65 @@ export function assessmentFactIdsForItem(
   })
   const start = objectiveOccurrence % ordered.length
   const count = tier === 1 ? 1 : Math.min(2, factIds.length)
-  return Array.from({ length: count }, (_, offset) =>
+  const selected = Array.from({ length: count }, (_, offset) =>
     ordered[(start + offset) % ordered.length]!)
+  return closeExecutableFactDependencies(selected, ordered, factById)
+}
+
+/**
+ * A procedure fact may name an API without defining how concrete arguments map
+ * to a result. Item authors naturally turn such facts into executable
+ * instances, so include the same objective's own call/rule fact in the local
+ * evidence surface. The closure never imports another objective or an
+ * unrequested fact.
+ */
+function closeExecutableFactDependencies(
+  selectedFactIds: string[],
+  orderedFactIds: string[],
+  factById: Map<string, { fact_id: string; content?: string; capabilities?: string[] }>,
+): string[] {
+  const selected = [...selectedFactIds]
+  for (const factId of selectedFactIds) {
+    const content = factById.get(factId)?.content ?? ""
+    for (const identifier of executableIdentifiers(content)) {
+      if (containsConcreteCall(content, identifier)) continue
+      const companion = orderedFactIds.find((candidateId) => {
+        if (selected.includes(candidateId)) return false
+        const candidate = factById.get(candidateId)
+        const candidateContent = candidate?.content ?? ""
+        if (!containsIdentifier(candidateContent, identifier)
+          || !containsConcreteCall(candidateContent, identifier)) return false
+        return (candidate?.capabilities ?? []).some((capability) =>
+          capability === "rule"
+          || capability === "boundary"
+          || capability === "state_transition"
+          || capability === "example")
+      })
+      if (companion) selected.push(companion)
+    }
+  }
+  return selected
+}
+
+const EXECUTABLE_IDENTIFIER = /\b[A-Za-z_][A-Za-z0-9_]*\b/gu
+const NON_EXECUTABLE_IDENTIFIERS = new Set([
+  "and", "as", "break", "class", "continue", "def", "else", "false", "for",
+  "from", "if", "import", "in", "is", "none", "not", "or", "pass", "return",
+  "true", "while", "with", "yield",
+])
+
+function executableIdentifiers(content: string): string[] {
+  return [...new Set((content.match(EXECUTABLE_IDENTIFIER) ?? [])
+    .map((identifier) => identifier.toLocaleLowerCase())
+    .filter((identifier) => !NON_EXECUTABLE_IDENTIFIERS.has(identifier)))]
+}
+
+function containsIdentifier(content: string, identifier: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(identifier)}\\b`, "iu").test(content)
+}
+
+function containsConcreteCall(content: string, identifier: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(identifier)}\\s*\\([^)]*[^\\s)]`, "iu").test(content)
 }
 
 /** 同一知识来源上的同一可观察行为在路径/轮次变化后仍保持同一测量语义。 */
@@ -2122,6 +2480,8 @@ export function materializeAssessmentPublicAuthorPayload(
       objective_id: expected.objective_id,
       observation_key: expected.observation_key,
       tier: expected.tier,
+      difficulty_band: expected.difficulty_band!,
+      cognitive_level: expected.cognitive_level!,
       modality: expected.modality,
       max_score: expected.max_score,
       citations: structuredClone(expected.citations),
@@ -2172,6 +2532,9 @@ export function validateAssessmentPublicAgainstPlan(
     }
     if (expected.modality === "code" && !item.starter_code) {
       issues.push(`items[${index}] 代码题缺少 starter_code`)
+    }
+    if (item.difficulty_band !== expected.difficulty_band || item.cognitive_level !== expected.cognitive_level) {
+      issues.push(`items[${index}] 双重分阶未按 item plan 冻结`)
     }
   })
   return issues
@@ -2226,7 +2589,7 @@ export function validateAssessmentSecureAgainstPublic(
     if (item.item_id !== publicItem.item_id) {
       issues.push(`items[${index}].item_id 未与 public_payload 对齐`)
     }
-    for (const key of ["objective_id", "tier", "modality", "max_score"] as const) {
+    for (const key of ["objective_id", "tier", "difficulty_band", "cognitive_level", "modality", "max_score"] as const) {
       if (item[key] !== publicItem[key]) {
         issues.push(`items[${index}].${key} 未与 public_payload 对齐`)
       }
@@ -2416,6 +2779,8 @@ export function materializeAssessmentSecureAuthorPayload(
       item_id: publicItem.item_id,
       objective_id: publicItem.objective_id,
       tier: publicItem.tier,
+      difficulty_band: publicItem.difficulty_band,
+      cognitive_level: publicItem.cognitive_level,
       modality: publicItem.modality,
       max_score: publicItem.max_score,
       answer_spec: answerSpec,
@@ -2473,6 +2838,8 @@ export function normalizeAssessmentPair(
       item_id: publicItem.item_id,
       objective_id: publicItem.objective_id,
       tier: publicItem.tier,
+      difficulty_band: publicItem.difficulty_band,
+      cognitive_level: publicItem.cognitive_level,
       modality: publicItem.modality,
       max_score: publicItem.max_score,
     }
@@ -2596,6 +2963,7 @@ function collectCodeLabCitations(payload: CodeLabPublicPayload): CitationRef[] {
     ...payload.instructions.flatMap(citationsFromBlock),
     ...payload.public_tests.flatMap((test) => test.citations),
     ...payload.hint_ladders.flatMap((entry) => entry.hints.flatMap((hint) => hint.citations)),
+    ...(payload.practical_guide?.used_evidence ?? []),
   ])
 }
 

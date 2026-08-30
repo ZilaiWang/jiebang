@@ -78,6 +78,22 @@ test("heartbeats a live lock so another process cannot steal it as stale", async
   expect(stolen).toBe(true)
 })
 
+test("does not leave a ghost lock when an in-flight heartbeat overlaps command completion", async () => {
+  const { dataRoot, store } = await fixture()
+  const other = interactiveStore(dataRoot)
+  let secondEntered = false
+  await (store as any).withSessionLock("SESSION-LOCK-RELEASE", async () => {
+    // Cross at least one heartbeat boundary before returning.
+    await Bun.sleep(650)
+  })
+  await (other as any).withSessionLock("SESSION-LOCK-RELEASE", async () => {
+    secondEntered = true
+  })
+  expect(secondEntered).toBe(true)
+  await expect(readFile(join(dataRoot, "locks", "SESSION-LOCK-RELEASE.lock"), "utf8"))
+    .rejects.toMatchObject({ code: "ENOENT" })
+})
+
 test("only the current owner token may release a session lock", async () => {
   const { dataRoot, store } = await fixture()
   const lockPath = join(dataRoot, "locks", "SESSION-LOCK-OWNER.lock")

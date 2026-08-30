@@ -1,4 +1,7 @@
-import type { InteractiveSessionCommand } from "./interactive-session"
+import {
+  INTERACTIVE_SESSION_COMMAND_TYPES,
+  type InteractiveSessionCommand,
+} from "./interactive-session"
 import type { LearnerRequest, OrchestrationMode } from "./types"
 
 export interface RunRequestBody {
@@ -44,7 +47,8 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
   if (typeof value.command_id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(value.command_id)) {
     errors.push("command_id is required and must be safe")
   }
-  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "submit_profile_gap_answer", "run_code_lab", "run_assessment_code", "run_example_code", "retry"].includes(String(value.type))) {
+  if (!INTERACTIVE_SESSION_COMMAND_TYPES.some((type) => type === value.type)
+    && value.type !== "submit_profile_gap_answer") {
     errors.push("Unsupported command type")
   }
   if (value.type === "submit_profile_answers") {
@@ -63,14 +67,24 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
     if (!payload || typeof payload.source_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.source_id)) errors.push("profile gap source_id is required and must be safe")
     if (!payload || typeof payload.answer !== "string" || payload.answer.trim().length === 0 || payload.answer.length > 500) errors.push("profile gap answer is required and bounded")
   }
-
-  if (value.type === "run_code_lab") {
+  if (value.type === "run_code_lab" || value.type === "submit_code_lab" || value.type === "debug_code_lab") {
     const payload = isRecord(value.payload) ? value.payload : null
     if (!payload || typeof payload.lab_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.lab_id)) {
-      errors.push("run_code_lab.payload.lab_id is required and must be safe")
+      errors.push(`${String(value.type)}.payload.lab_id is required and must be safe`)
     }
-    if (!payload || typeof payload.code !== "string" || payload.code.trim().length === 0 || Buffer.byteLength(payload.code, "utf8") > 100_000) {
-      errors.push("run_code_lab.payload.code is required and must be at most 100 KB")
+    const validCode = typeof payload?.code === "string" && payload.code.trim().length > 0 && Buffer.byteLength(payload.code, "utf8") <= 100_000
+    const validGaps = isRecord(payload?.gap_answers)
+      && Object.keys(payload.gap_answers).length > 0
+      && Object.values(payload.gap_answers).every((entry) => typeof entry === "string")
+    if (!validCode && !validGaps) {
+      errors.push(`${String(value.type)}.payload requires code or non-empty gap_answers`)
+    }
+    if (value.type === "debug_code_lab") {
+      const publicCase = typeof payload?.public_case_id === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(payload.public_case_id)
+      const customInput = payload && Object.prototype.hasOwnProperty.call(payload, "custom_input")
+      if ((publicCase ? 1 : 0) + (customInput ? 1 : 0) !== 1) {
+        errors.push("debug_code_lab.payload requires exactly one of public_case_id or custom_input")
+      }
     }
   }
   if (value.type === "run_assessment_code") {

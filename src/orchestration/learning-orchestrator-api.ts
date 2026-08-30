@@ -58,6 +58,7 @@ import { validateOrchestratorApiBody, type RunRequestBody, type SessionRequestBo
 import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/model-gateway"
 import { deleteLearnerData } from "../privacy/learner-data-deletion"
 import { modelCallPolicy } from "../model-runtime"
+import { roleCSchemaRegistryMetadata } from "../role-c-content/validators/runtime-schema-validator"
 
 interface ErrorBody {
   error: {
@@ -108,6 +109,7 @@ export function createLearningOrchestratorApiHandler(
         return jsonResponse({
           status: "ok",
           service: "learning-orchestrator",
+          contract_registry: roleCSchemaRegistryMetadata(),
           job_worker: sessions.jobWorkerStatus(),
           endpoints: [
             "GET /health",
@@ -143,6 +145,7 @@ export function createLearningOrchestratorApiHandler(
         return jsonResponse({
           ready: docker.ready && worker.running && storage.ready && model.ready,
           checks: {
+            contract_registry: roleCSchemaRegistryMetadata(),
             docker,
             storage,
             model,

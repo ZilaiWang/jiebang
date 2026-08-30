@@ -28,6 +28,7 @@ import {
   generateRoleCForRoleDWithRuntime,
   runRoleCAssessmentCode,
   runRoleCCodeLab,
+  debugRoleCCodeLab,
   runRoleCExampleCode,
   submitRoleCAssessment,
   createRoleCRecoveryEvidenceRefreshPort,
@@ -57,6 +58,7 @@ import {
   AtomicFileDurableJobStore,
   DurableJobRunner,
   ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+  ROLE_C_DURABLE_JOB_DEADLINE_MS,
   createModelWorkflowJob,
   type ModelWorkflowJobKind,
 } from "../model-runtime"
@@ -194,6 +196,8 @@ export interface InteractiveSessionRecord {
   /** Public Role C review lifecycle; artifacts are only published after review passes. */
   content_review: ContentReviewState | null
   profile: unknown | null
+  /** 完整 LearnerProfileV2（背景/目标用途/偏好/约束/进度/溯源），publicSessionView 附加，供前端画像详情展示。 */
+  profile_v2?: Record<string, unknown>
   formal_path: unknown | null
   current_path_node: unknown | null
   rag_result: unknown | null
@@ -266,14 +270,31 @@ export interface InteractiveSessionStoreOptions {
   model_environment?: Record<string, string | undefined>
 }
 
+export const INTERACTIVE_SESSION_COMMAND_TYPES = [
+  "submit_profile_answers",
+  "submit_diagnosis_answers",
+  "submit_assessment_answers",
+  "debug_code_lab",
+  "submit_code_lab",
+  "run_code_lab",
+  "run_assessment_code",
+  "run_example_code",
+  "retry",
+] as const
+
+export type InteractiveSessionCommandType = (typeof INTERACTIVE_SESSION_COMMAND_TYPES)[number]
+
 export interface InteractiveSessionCommand {
   command_id: string
-  type: "submit_profile_answers" | "submit_diagnosis_answers" | "submit_assessment_answers" | "run_code_lab" | "run_assessment_code" | "run_example_code" | "retry"
+  type: InteractiveSessionCommandType
   payload?: {
     answers?: Record<string, string> | SubmissionAnswer[] | ProfileClarificationAnswer[]
     item_id?: string
     lab_id?: string
     code?: string
+    gap_answers?: Record<string, string>
+    public_case_id?: string
+    custom_input?: unknown
   }
 }
 
@@ -347,7 +368,7 @@ export class InteractiveSessionStore {
       run_id: record.run_id,
       kind,
       current_stage: kind === "initial_content_round" ? "initial_content" : "next_content",
-      deadline_ms: 8 * 60_000,
+      deadline_ms: ROLE_C_DURABLE_JOB_DEADLINE_MS,
       // Model/runtime retries and explicit user recovery own retry policy. The
       // durable job itself is replayed only after a crashed/expired lease.
       max_attempts: 1,
@@ -733,15 +754,34 @@ export class InteractiveSessionStore {
         await this.enqueueContentJob("initial_content_round", updated)
         return response
       }
-    } else if (command.type === "run_code_lab") {
+    } else if (command.type === "debug_code_lab") {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session does not have a published code lab", 409)
       }
       const labId = command.payload?.lab_id
       const code = command.payload?.code
+      const gapAnswers = command.payload?.gap_answers
       const roleC = record.private.role_c
-      if (!roleC || !labId || !code) throw new InteractiveSessionError("INVALID_COMMAND", "run_code_lab requires lab_id and code", 400)
-      const result = await runRoleCCodeLab({ executionId: `EXEC-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id, runId: roleC.run_id, learnerId: roleC.learner_id, labId, code }, roleCRuntime(this.data_root))
+      if (!roleC || !labId || (!code && !gapAnswers)) throw new InteractiveSessionError("INVALID_COMMAND", "debug_code_lab requires lab_id and a matching submission", 400)
+      record.code_execution = await debugRoleCCodeLab({
+        executionId: `DEBUG-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id,
+        runId: roleC.run_id, learnerId: roleC.learner_id, labId,
+        ...(code ? { code } : {}), ...(gapAnswers ? { gapAnswers } : {}),
+        ...(command.payload?.public_case_id ? { publicCaseId: command.payload.public_case_id } : {}),
+        ...(command.payload?.custom_input !== undefined ? { customInput: command.payload.custom_input } : {}),
+      }, roleCRuntime(this.data_root))
+      record.updated_at = new Date().toISOString()
+      updated = record
+    } else if (command.type === "run_code_lab" || command.type === "submit_code_lab") {
+      if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
+        throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session does not have a published code lab", 409)
+      }
+      const labId = command.payload?.lab_id
+      const code = command.payload?.code
+      const gapAnswers = command.payload?.gap_answers
+      const roleC = record.private.role_c
+      if (!roleC || !labId || (!code && !gapAnswers)) throw new InteractiveSessionError("INVALID_COMMAND", "run_code_lab requires lab_id and a matching submission", 400)
+      const result = await runRoleCCodeLab({ executionId: `EXEC-${record.session_id}-${command.command_id}`, sessionId: roleC.session_id, runId: roleC.run_id, learnerId: roleC.learner_id, labId, ...(code ? { code } : {}), ...(gapAnswers ? { gapAnswers } : {}) }, roleCRuntime(this.data_root))
       record.code_execution = result
       record.updated_at = new Date().toISOString()
       updated = record
@@ -1070,18 +1110,21 @@ export class InteractiveSessionStore {
     // atomic rename of the refreshed lock file.
     await handle.close()
     handle = undefined
-    let heartbeatRunning = false
+    let heartbeatPromise: Promise<void> | null = null
     const heartbeat = setInterval(() => {
-      if (heartbeatRunning) return
-      heartbeatRunning = true
-      void refreshOwnedLock(lockPath, ownerToken)
+      if (heartbeatPromise) return
+      heartbeatPromise = refreshOwnedLock(lockPath, ownerToken)
         .catch(() => undefined)
-        .finally(() => { heartbeatRunning = false })
+        .finally(() => { heartbeatPromise = null })
     }, Math.min(500, Math.max(100, Math.floor(STALE_LOCK_MS / 3))))
     try {
       return await action()
     } finally {
       clearInterval(heartbeat)
+      // A heartbeat may already have passed its final ownership check and be
+      // about to rename its temporary file. Releasing first would allow that
+      // rename to recreate a ghost lock after the command completed.
+      await heartbeatPromise
       await releaseOwnedLock(lockPath, ownerToken)
     }
   }
@@ -1228,6 +1271,14 @@ export function publicSessionView(record: InteractiveSessionRecord): Interactive
   if (view.rag_result && view.formal_path) {
     view.formal_path = canonicalizeFormalPathNodeTopics(view.formal_path as FormalLearningPath, view.rag_result as RagResult)
     view.current_path_node = canonicalizePathNodeTopic(view.current_path_node as LearningPathNode | null, view.rag_result as RagResult)
+  }
+  // 附加完整 LearnerProfileV2（背景/目标用途/偏好/约束/进度/溯源），供前端画像详情展示。
+  // 只读字段：background_context / goal_context / self_assessment / learning_preferences /
+  // learning_constraints / progress / provenance / profile_version / schema_version。
+  const pbArtifact = (_private?.upstream_artifacts as Record<string, unknown> | undefined)?.["profile-builder"]
+  const fullProfile = (pbArtifact as { profile?: unknown } | undefined)?.profile
+  if (fullProfile && typeof fullProfile === "object") {
+    view.profile_v2 = fullProfile as Record<string, unknown>
   }
   return view
 }
@@ -2867,7 +2918,7 @@ function validateCommand(command: InteractiveSessionCommand): void {
   if (!command || typeof command !== "object" || !/^[A-Za-z0-9_-]{1,120}$/.test(command.command_id ?? "")) {
     throw new InteractiveSessionError("INVALID_COMMAND", "command_id is required and must be safe", 400)
   }
-  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "run_example_code", "retry"].includes(command.type)) {
+  if (!INTERACTIVE_SESSION_COMMAND_TYPES.some((type) => type === command.type)) {
     throw new InteractiveSessionError("INVALID_COMMAND", "Unsupported command type", 400)
   }
 }

@@ -24,6 +24,56 @@ import { modalityMeasuresBehavior } from "./assessment-measurement"
 
 export type { AssessmentBlueprint } from "./profile-adapter"
 
+/**
+ * GenerationSpec is a closed trust-boundary contract. These lists define the
+ * runtime projection emitted by the builder and are checked against JSON
+ * Schema when the process starts, so code and Schema cannot drift silently.
+ */
+export const GENERATION_SPEC_CONTRACT_VERSION = "generation-spec.v1.1" as const
+export const GENERATION_SPEC_CONTRACT_KEYS = {
+  root: [
+    "schema_version", "spec_id", "run_id", "evidence_ref",
+    "evidence_content_hash", "versions", "profile_ref", "path_node",
+    "targets", "learner_adaptation", "personalization_policy",
+    "difficulty", "assessment_blueprint", "policies",
+  ],
+  versions: [
+    "profile_version", "kb_version", "rag_version", "prompt_version",
+    "model_config_hash", "schema_version", "runner_image_digest",
+  ],
+  profile_ref: ["profile_id", "profile_version", "profile_content_hash"],
+  path_node: ["node_id", "target_source_ids", "prerequisite_source_ids", "goal"],
+  target: [
+    "objective_id", "source_id", "required_fact_ids",
+    "observable_behavior", "importance", "is_primary",
+  ],
+  learner_adaptation: [
+    "level", "known_concepts", "weak_concepts", "preferred_contexts",
+    "scaffold_level", "reading_density", "accommodations", "pedagogy_contract",
+  ],
+  personalization_policy: [
+    "policy_version", "path_id", "goal_profile", "learner_level",
+    "progress_state", "teaching_strategy", "reasons",
+  ],
+  personalization_strategy: [
+    "explanation_depth", "abstraction_order", "example_style", "practice_mode",
+    "scaffold_level", "reading_density", "review_ratio", "challenge_ratio",
+    "project_ratio", "extension_ratio",
+  ],
+  difficulty: [
+    "domain_complexity", "cognitive_demand", "reasoning_steps",
+    "code_complexity", "prerequisite_load", "scaffold_strength",
+    "transfer_distance", "boundary_condition_density", "task_composition",
+  ],
+  assessment_blueprint: [
+    "tier_1_count", "tier_2_count", "tier_3_count", "required_modalities",
+  ],
+  policies: [
+    "external_knowledge_allowed", "citation_required",
+    "max_semantic_revision", "max_tool_retry", "seed",
+  ],
+} as const
+
 export interface DifficultyVector {
   domain_complexity: number
   cognitive_demand: number
@@ -167,7 +217,11 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
   const defaults = adaptationDefaults(input.profile_snapshot.level)
   const seed = input.seed ?? 0
   const versions: ArtifactVersions = {
-    ...input.versions,
+    prompt_version: input.versions.prompt_version,
+    model_config_hash: input.versions.model_config_hash,
+    ...(input.versions.runner_image_digest
+      ? { runner_image_digest: input.versions.runner_image_digest }
+      : {}),
     profile_version: input.profile_snapshot.profile_version,
     kb_version: input.evidence_pack.kb_version,
     rag_version: input.evidence_pack.rag_version,
@@ -190,17 +244,14 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
       ? { pedagogy_contract: structuredClone(input.profile_snapshot.pedagogy_contract) }
       : {}),
   }
-  const difficulty: DifficultyVector = { ...defaults.difficulty, ...input.difficulty }
+  const difficulty = canonicalDifficulty(defaults.difficulty, input.difficulty)
   const pathNode = {
     node_id: input.path_node.node_id,
     target_source_ids: [...input.path_node.target_source_ids],
     prerequisite_source_ids: [...input.path_node.prerequisite_source_ids],
     goal: input.path_node.goal,
   }
-  const targets = input.path_node.objectives.map((objective) => ({
-    ...objective,
-    required_fact_ids: [...objective.required_fact_ids],
-  }))
+  const targets = input.path_node.objectives.map(canonicalLearningObjective)
   const knownObjectiveCount = targets.filter((target) => profileConceptMatches(input.profile_snapshot.known_concepts, target, input.evidence_pack)).length
   const weakObjectiveCount = targets.filter((target) => profileConceptMatches(input.profile_snapshot.weak_concepts, target, input.evidence_pack)).length
   const inferredProgressState = weakObjectiveCount > 0 ? "building" as const : knownObjectiveCount >= targets.length && targets.length > 0 ? "mastered" as const : "starting" as const
@@ -281,6 +332,36 @@ function profileConceptMatches(
     const normalized = concept.normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase()
     return identities.some((identity) => normalized === identity || normalized.includes(identity) || identity.includes(normalized))
   })
+}
+
+function canonicalLearningObjective(objective: LearningObjective): LearningObjective {
+  return {
+    objective_id: objective.objective_id,
+    source_id: objective.source_id,
+    required_fact_ids: [...objective.required_fact_ids],
+    observable_behavior: objective.observable_behavior,
+    importance: objective.importance,
+    ...(objective.is_primary === undefined ? {} : { is_primary: objective.is_primary }),
+  }
+}
+
+function canonicalDifficulty(
+  defaults: DifficultyVector,
+  override: Partial<DifficultyVector> | undefined,
+): DifficultyVector {
+  const value = (key: keyof DifficultyVector): number | undefined =>
+    override?.[key] ?? defaults[key]
+  return {
+    domain_complexity: value("domain_complexity")!,
+    cognitive_demand: value("cognitive_demand")!,
+    reasoning_steps: value("reasoning_steps")!,
+    code_complexity: value("code_complexity")!,
+    prerequisite_load: value("prerequisite_load")!,
+    scaffold_strength: value("scaffold_strength")!,
+    ...(value("transfer_distance") === undefined ? {} : { transfer_distance: value("transfer_distance")! }),
+    ...(value("boundary_condition_density") === undefined ? {} : { boundary_condition_density: value("boundary_condition_density")! }),
+    ...(value("task_composition") === undefined ? {} : { task_composition: value("task_composition")! }),
+  }
 }
 
 function deepFreeze<T>(value: T): T {
@@ -422,7 +503,9 @@ function sameStringSet(left: string[], right: string[]): boolean {
 
 function validateDifficulty(difficulty: Partial<DifficultyVector> | undefined, errors: string[]): void {
   if (!difficulty) return
-  for (const [key, value] of Object.entries(difficulty)) {
+  for (const key of GENERATION_SPEC_CONTRACT_KEYS.difficulty) {
+    const value = difficulty[key]
+    if (value === undefined) continue
     if (!Number.isFinite(value) || value < 0 || value > 5) errors.push(`difficulty.${key} 必须是 0..5 的有限数值`)
   }
 }

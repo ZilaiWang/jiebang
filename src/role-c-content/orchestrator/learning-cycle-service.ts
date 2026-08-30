@@ -58,7 +58,14 @@ import {
 import {
   executeWithRunnerRetry,
   type CodeRunner,
+  type RunnerTestSuite,
 } from "../security/code-runner"
+import {
+  normalizeCustomDebugInput,
+  resolveProgrammingSubmission,
+  type ProgrammingTaskSubmissionContract,
+} from "../programming/submission-contract"
+import { judgeVerdictFromExecution } from "../programming/judge-protocol"
 import {
   SecureArtifactStoreError,
   type SecureArtifactStore,
@@ -174,8 +181,34 @@ export interface ExecutePublishedCodeLabInput {
   run_id: string
   authenticated_learner_id_hash: string
   lab_id: string
-  code: string
+  code?: string
+  gap_answers?: Record<string, string>
 }
+
+export interface DebugPublishedCodeLabInput extends ExecutePublishedCodeLabInput {
+  /** One public example or learner-provided input; never a hidden case id. */
+  public_case_id?: string
+  custom_input?: unknown
+}
+
+export type DebugPublishedCodeLabOutcome =
+  | {
+      status: "completed"
+      execution_id: string
+      run_id: string
+      lab_id: string
+      mode: "sample" | "custom"
+      input: unknown
+      expected_behavior?: string
+      actual: unknown
+    }
+  | {
+      status: "failed" | "timeout" | "blocked"
+      execution_id: string
+      lab_id: string
+      code: string
+      message: string
+    }
 
 export interface ExecuteAssessmentCodeInput {
   execution_id: string
@@ -228,6 +261,7 @@ export type ExecutePublishedCodeLabOutcome =
       passed_checks: number
       total_checks: number
       score_ratio: number
+      verdict: import("../programming/contracts").JudgeVerdict
       feedback_codes: PublishedCodeLabFeedbackCode[]
     }
   | {
@@ -971,8 +1005,7 @@ export class LearningCycleService {
   ): Promise<ExecutePublishedCodeLabOutcome> {
     if (!input.execution_id.trim() || !input.session_id.trim()
       || !input.run_id.trim() || !input.authenticated_learner_id_hash.trim()
-      || !input.lab_id.trim() || !input.code.trim()
-      || Buffer.byteLength(input.code, "utf8") > 100_000) {
+      || !input.lab_id.trim()) {
       return blockedCodeLabExecution(
         input.execution_id,
         "INVALID_REQUEST",
@@ -1069,11 +1102,33 @@ export class LearningCycleService {
     }
 
     const contract = publicLab.payload.execution_contract
+    let learnerCode: string
+    try {
+      const task = publicLab.payload.programming_task
+      if (task) {
+        learnerCode = resolveProgrammingSubmission({
+          task_id: task.task_id,
+          submission_mode: task.submission_mode,
+          execution_contract: contract,
+          ...(task.starter_code ? { starter_code: task.starter_code } : {}),
+          ...(task.gap_template ? { gap_template: task.gap_template } : {}),
+        }, task.submission_mode === "gap_answers"
+          ? { mode: "gap_answers", gap_answers: input.gap_answers ?? {} }
+          : { mode: "full_code", code: input.code ?? "" }).code
+      } else {
+        if (!input.code?.trim() || Buffer.byteLength(input.code, "utf8") > 100_000) {
+          throw new Error("legacy code missing")
+        }
+        learnerCode = input.code
+      }
+    } catch {
+      return blockedCodeLabExecution(input.execution_id, "INVALID_REQUEST", "代码提交与当前编程题合同不一致")
+    }
     const result = await executeWithRunnerRetry(
       this.dependencies.code_runner,
       {
         language: "python",
-        code: input.code,
+        code: learnerCode,
         test_suite_id: secureLab.payload.test_suite_id,
         test_suite: {
           test_suite_id: secureLab.payload.test_suite_id,
@@ -1104,7 +1159,112 @@ export class LearningCycleService {
       passed_checks: result.passed_tests,
       total_checks: result.total_tests,
       score_ratio: result.score_ratio,
+      verdict: judgeVerdictFromExecution(result.status, result.failure_codes),
       feedback_codes: publicCodeLabFeedbackCodes(result.failure_codes),
+    }
+  }
+
+  /**
+   * Runs learner code against one public/custom input only. This path never
+   * opens the secure artifact, never reads hidden tests, and never updates
+   * mastery or formal submission evidence.
+   */
+  async debugPublishedCodeLab(
+    input: DebugPublishedCodeLabInput,
+  ): Promise<DebugPublishedCodeLabOutcome> {
+    const blocked = (code: string, message: string): DebugPublishedCodeLabOutcome => ({
+      status: "blocked", execution_id: input.execution_id, lab_id: input.lab_id, code, message,
+    })
+    if (!input.execution_id.trim() || !input.session_id.trim() || !input.run_id.trim()
+      || !input.authenticated_learner_id_hash.trim() || !input.lab_id.trim()) {
+      return blocked("INVALID_REQUEST", "调试请求缺少必要字段")
+    }
+    if ((input.public_case_id ? 1 : 0) + (input.custom_input !== undefined ? 1 : 0) !== 1) {
+      return blocked("INVALID_REQUEST", "调试必须且只能选择一个公开样例或自定义输入")
+    }
+    if (!this.dependencies.code_runner) return blocked("RUNNER_UNAVAILABLE", "代码执行服务暂不可用")
+    const session = await this.dependencies.cycle_store.loadSession(input.session_id)
+    if (!session || session.run_id !== input.run_id) return blocked("SESSION_NOT_FOUND", "代码实验会话不存在")
+    if (session.session_state.learner_id_hash !== input.authenticated_learner_id_hash) return blocked("LEARNER_IDENTITY_MISMATCH", "学习者身份不一致")
+    const run = await this.dependencies.cycle_store.loadRun(input.run_id)
+    if (!run || run.learner_id_hash !== input.authenticated_learner_id_hash) return blocked("RUN_NOT_FOUND", "代码实验轮次不存在")
+    const publicLab = run.pipeline_result.public_artifacts.code_lab
+    if (!publicLab?.payload || publicLab.status !== "ready" || publicLab.payload.lab_id !== input.lab_id
+      || !session.session_state.public_artifact_refs.includes(publicLab.artifact_id)) {
+      return blocked("LAB_NOT_FOUND", "当前会话没有这项公开代码实验")
+    }
+    const task = publicLab.payload.programming_task
+    const publicCases = task?.public_examples ?? publicLab.payload.public_tests.map((entry) => ({
+      case_id: entry.test_id, input: entry.input, expected_behavior: entry.expected_behavior,
+    }))
+    const selected = input.public_case_id
+      ? publicCases.find((entry) => entry.case_id === input.public_case_id)
+      : undefined
+    if (input.public_case_id && !selected) return blocked("PUBLIC_CASE_NOT_FOUND", "公开样例不存在")
+    const submissionContract: ProgrammingTaskSubmissionContract = task
+      ? {
+          task_id: task.task_id,
+          submission_mode: task.submission_mode,
+          execution_contract: publicLab.payload.execution_contract,
+          ...(task.starter_code ? { starter_code: task.starter_code } : {}),
+          ...(task.gap_template ? { gap_template: task.gap_template } : {}),
+        }
+      : {
+          task_id: publicLab.payload.lab_id,
+          submission_mode: "full_code",
+          execution_contract: publicLab.payload.execution_contract,
+          starter_code: publicLab.payload.starter_code,
+        }
+    let learnerCode: string
+    try {
+      learnerCode = task
+        ? resolveProgrammingSubmission(submissionContract, task.submission_mode === "gap_answers"
+            ? { mode: "gap_answers", gap_answers: input.gap_answers ?? {} }
+            : { mode: "full_code", code: input.code ?? "" }).code
+        : resolveProgrammingSubmission(submissionContract, { mode: "full_code", code: input.code ?? "" }).code
+    } catch {
+      return blocked("INVALID_REQUEST", "代码提交与当前编程题合同不一致")
+    }
+    let debugInput = selected?.input
+    if (!selected) {
+      try {
+        debugInput = normalizeCustomDebugInput(submissionContract, input.custom_input)
+      } catch (error) {
+        return blocked("INVALID_REQUEST", error instanceof Error ? error.message : "自定义调试输入不符合执行合同")
+      }
+    }
+    const suite: RunnerTestSuite = {
+      test_suite_id: `debug-${publicLab.payload.lab_id}`,
+      execution_contract: structuredClone(publicLab.payload.execution_contract),
+      tests: [{
+        test_id: "public-debug",
+        input: structuredClone(debugInput),
+        expected: { __trusted_expected_pending__: true },
+        objective_id: publicLab.payload.objective_ids[0] ?? "debug",
+        weight: 1,
+        comparison: { kind: "exact" },
+      }],
+    }
+    const result = await executeWithRunnerRetry(this.dependencies.code_runner, {
+      language: "python", code: learnerCode, test_suite_id: suite.test_suite_id, test_suite: suite,
+      timeout_ms: publicLab.payload.execution_contract.resource_limits.timeout_ms,
+      memory_mb: publicLab.payload.execution_contract.resource_limits.memory_mb,
+      max_output_bytes: publicLab.payload.execution_contract.resource_limits.max_output_bytes,
+      network_allowed: false, derive_expected: true,
+    }, run.pipeline_input.generation_spec.policies.max_tool_retry)
+    if (result.status === "passed" && result.derived_outputs?.length === 1) {
+      return {
+        status: "completed", execution_id: input.execution_id, run_id: input.run_id, lab_id: input.lab_id,
+        mode: selected ? "sample" : "custom", input: structuredClone(debugInput),
+        ...(selected?.expected_behavior ? { expected_behavior: selected.expected_behavior } : {}),
+        actual: structuredClone(result.derived_outputs[0]),
+      }
+    }
+    const code = publicCodeLabFeedbackCodes(result.failure_codes)[0] ?? "execution_failed"
+    return {
+      status: result.status === "timeout" ? "timeout" : "failed",
+      execution_id: input.execution_id, lab_id: input.lab_id, code,
+      message: code === "syntax_error" ? "代码存在语法错误" : code === "runtime_error" ? "代码运行时发生异常" : "调试运行未完成",
     }
   }
 
