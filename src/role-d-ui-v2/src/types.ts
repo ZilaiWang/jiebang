@@ -75,9 +75,24 @@ export interface CodeLabPayload {
       gaps: Array<{ gap_id: string; label: string; kind: string; answer_format?: "python_string_literal" | "python_expression" | "python_statement" | "python_identifier"; max_chars: number; max_lines: number; placeholder?: string }>
     }
     public_examples: Array<{ case_id: string; description: string; input: unknown; expected_behavior: string }>
-    hint_ladders: Array<{ level: 1 | 2 | 3; text: string }>
-  }
-  used_evidence: Citation[]
+      hint_ladders: Array<{ level: 1 | 2 | 3; text: string }>
+    }
+    practical_guide?: {
+      schema_version: "practical-guide.v1"
+      guide_id: string
+      plan_id: string
+      lab_id: string
+      practice_goal: string
+      deliverable: string
+      estimated_minutes: number
+      environment: { language: string; execution_mode: string; entry_point: string | null; input_type: string; output_type: string; allowed_imports: string[]; tool_constraints: string[] }
+      readiness_checks: Array<{ title: string; check: string; ready_when: string }>
+      steps: Array<{ sequence: number; title: string; action: string; input: string; expected_result: string; verification: string }>
+      acceptance_criteria: Array<{ criterion_id: string; public_test_id: string; objective_id: string; description: string; expected_behavior: string }>
+      troubleshooting: Array<{ symptom: string; likely_cause: string; recovery_steps: string[]; verification: string }>
+      extension_task: { task: string; changed_dimension: string; verification: string }
+    }
+    used_evidence: Citation[]
 }
 
 export interface AssessmentPayload {
@@ -87,6 +102,8 @@ export interface AssessmentPayload {
     display_no: number
     objective_id: string
     tier: 1 | 2 | 3
+    difficulty_band?: "foundation" | "improvement" | "integration" | "extension"
+    cognitive_level?: "remember" | "understand" | "apply" | "analyze" | "create"
     modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
     prompt: string
     options?: Array<{ option_id: string; label: string; text: string }>

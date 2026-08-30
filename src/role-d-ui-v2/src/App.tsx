@@ -29,6 +29,12 @@ import {
   RotateCcw,
   ShieldCheck,
   Settings2,
+  SlidersHorizontal,
+  Clock,
+  TrendingUp,
+  BadgeCheck,
+  Eye,
+  MapPin,
   Sparkles,
   Target,
   Trash2,
@@ -93,6 +99,12 @@ import {
   selectUser,
   type LearnerProfileDraft,
   type WorkspaceState,
+  type WorkspaceUser,
+  type GoalUseCase,
+  type LearningStyle,
+  type ExplanationPreference,
+  type PracticePreference,
+  type PacePreference,
 } from "./workspace"
 
 const WORKSPACE_STORAGE_KEY = "knowbalance-v4-workspace"
@@ -104,6 +116,7 @@ function workspaceFromUrl(): WorkspaceState | null {
   const learner = params.get("learner")
   if (!session || !learner) return null
   const name = params.get("name") ?? "体验学习者"
+  const goalUseCase = (params.get("goal") ?? "coursework") as GoalUseCase
   return {
     version: 1,
     activeUserId: learner,
@@ -115,6 +128,8 @@ function workspaceFromUrl(): WorkspaceState | null {
       learningStyle: "balanced",
       background: "零基础入门",
       priorLanguages: [],
+      intakeVersion: 2,
+      goalUseCase,
       plans: [{
         id: "plan-demo-1",
         name: "学习 Python for 循环",
@@ -216,6 +231,7 @@ export function App() {
   const [userOpen, setUserOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [confirmSwitchUserId, setConfirmSwitchUserId] = useState<string | null>(null)
+  const [userDetailUserId, setUserDetailUserId] = useState<string | null>(null)
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     try {
       const saved = localStorage.getItem("knowbalance:theme")
@@ -597,7 +613,7 @@ export function App() {
           {page === "goal" && currentPlan ? <GoalPage onContinue={() => setPage("diagnosis")} /> : null}
           {page === "diagnosis" && (liveSession ? <DiagnosisPage onContinue={() => setPage("path")} /> : <NoSessionState onStart={() => setPage("goal")} />)}
           {page === "path" && (liveSession ? <PathPage planName={currentPlan?.name} onContinue={() => setPage("lesson")} /> : <NoSessionState onStart={() => setPage("goal")} />)}
-          {page === "lesson" && (liveSession ? <LessonPage onAssessment={() => setPage("assessment")} /> : <NoSessionState onStart={() => setPage("goal")} />)}
+          {page === "lesson" && (liveSession ? <LessonPage user={currentUser} onAssessment={() => setPage("assessment")} /> : <NoSessionState onStart={() => setPage("goal")} />)}
           {page === "assessment" && (liveSession ? (
             assessmentEntryBlockedByPriorFeedback(liveSession, feedbackDismissed)
               ? <RedirectPage title="本轮测评已结束" message="你已经完成本轮测评，无法返回答题界面。" action="查看评分反馈" onAction={() => setPage("feedback")} />
@@ -622,7 +638,8 @@ export function App() {
           {page === "history" && (liveSession ? <HistoryPage /> : <NoSessionState onStart={() => setPage("goal")} />)}
         </main>
         {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} onCreate={(profile) => { setWorkspace((value) => addUser(value, profile)); setProfileOpen(false); setPage("home") }} />}
-        {userOpen && createPortal(<UserSwitcher workspace={workspace} onClose={() => setUserOpen(false)} onAdd={() => { setUserOpen(false); setProfileOpen(true) }} onSelect={(id) => { setConfirmSwitchUserId(id); setUserOpen(false) }} />, document.body)}
+        {userOpen && createPortal(<UserSwitcher workspace={workspace} onClose={() => setUserOpen(false)} onAdd={() => { setUserOpen(false); setProfileOpen(true) }} onSelect={(id) => { setConfirmSwitchUserId(id); setUserOpen(false) }} onViewDetail={(id) => { setUserDetailUserId(id) }} />, document.body)}
+        {userDetailUserId && createPortal(<UserDetailModal user={workspace.users.find(u => u.id === userDetailUserId)!} onClose={() => setUserDetailUserId(null)} />, document.body)}
         {confirmSwitchUserId && createPortal(<ConfirmSwitchUserModal targetUser={workspace.users.find(u => u.id === confirmSwitchUserId)} currentUser={currentUser} onCancel={() => setConfirmSwitchUserId(null)} onConfirm={() => { setWorkspace((value) => selectUser(value, confirmSwitchUserId)); setPage("home"); setConfirmSwitchUserId(null) }} />, document.body)}
         {providerOpen && <ApiConfigModal current={provider} dockerStatus={dockerStatus} onDockerSetup={() => { fetch("/orchestrator/docker-setup").then(r => r.json()).then(d => { if (d.ready) setDockerStatus({ ready: true }) }) }} onDockerReady={() => setDockerStatus({ ready: true })} onClose={() => { setProviderOpen(false); setOpenPlanAfterProvider(false) }} onSave={async (input) => { const saved = await saveProviderConfiguration(input); setProvider(saved); setProviderOpen(false); if (openPlanAfterProvider && currentUser) { const id = newClientId("plan"); setWorkspace((value) => addPlan(value, currentUser.id, { id, name: "待选择学习目标" })); setOpenPlanAfterProvider(false); setPage("goal") } }} />}
       </div>
@@ -738,8 +755,20 @@ function MetricDetailModal({ metric, onClose }: { metric: "hallucination" | "ada
   </Modal>
 }
 
-function UserSwitcher({ workspace, onClose, onAdd, onSelect }: { workspace: WorkspaceState; onClose: () => void; onAdd: () => void; onSelect: (id: string) => void }) {
-  return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onClose}><section className="user-popover" role="dialog" aria-modal="true" aria-label="切换学习者" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>学习者空间</span><b>切换学习者</b></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><div className="user-options">{workspace.users.map((user) => <button className={workspace.activeUserId === user.id ? "is-active" : ""} type="button" key={user.id} onClick={() => onSelect(user.id)}><span>{user.name.slice(0,1)}</span><div><b>{user.name}</b><small>{user.plans.length} 个计划 · 每周 {user.weeklyHours} 小时</small></div>{workspace.activeUserId === user.id && <Check size={16} />}</button>)}</div><button className="add-user-button" type="button" onClick={onAdd}><UserPlus size={16} /> 新建学习者</button></section></div>
+function UserSwitcher({ workspace, onClose, onAdd, onSelect, onViewDetail }: { workspace: WorkspaceState; onClose: () => void; onAdd: () => void; onSelect: (id: string) => void; onViewDetail: (id: string) => void }) {
+  return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onClose}><section className="user-popover" role="dialog" aria-modal="true" aria-label="切换学习者" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>学习者空间</span><b>切换学习者</b></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><div className="user-options">{workspace.users.map((user) => <div className={workspace.activeUserId === user.id ? "user-option-row is-active" : "user-option-row"} key={user.id}><button className="user-option-main" type="button" onClick={() => onSelect(user.id)}><span>{user.name.slice(0,1)}</span><div><b>{user.name}</b><small>{user.plans.length} 个计划 · 每周 {user.weeklyHours} 小时</small></div>{workspace.activeUserId === user.id && <Check size={16} />}</button><button className="user-option-detail" type="button" title="查看填写内容" onClick={(event) => { event.stopPropagation(); onViewDetail(user.id) }}><Eye size={15} /> 查看详情</button></div>)}</div><button className="add-user-button" type="button" onClick={onAdd}><UserPlus size={16} /> 新建学习者</button></section></div>
+}
+
+function UserDetailModal({ user, onClose }: { user: WorkspaceUser; onClose: () => void }) {
+  const v2 = user.intakeVersion === 2
+  return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onClose}><section className="user-detail-modal" role="dialog" aria-modal="true" aria-label="学习者详情" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>学习者详情</span><b>{user.name}</b></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div>
+    <div className="user-detail-body">
+      <section className="user-detail-section"><h3>基础信息</h3><dl><div><dt>姓名</dt><dd>{user.name}</dd></div><div><dt>每周投入</dt><dd>{user.weeklyHours} 小时</dd></div><div><dt>Python 水平</dt><dd>{pythonLevelLabel(user.pythonLevel)}</dd></div><div><dt>学习风格</dt><dd>{learningStyleLabel(user.learningStyle)}</dd></div><div><dt>背景描述</dt><dd>{user.background || "未填写"}</dd></div>{user.priorLanguages?.length ? <div><dt>已学语言</dt><dd>{user.priorLanguages.join("、")}</dd></div> : null}</dl></section>
+      {v2 ? <section className="user-detail-section"><h3>画像补充 · 结构化采集</h3><dl><div><dt>学习用途</dt><dd>{goalUseCaseLabel(user.goalUseCase)}</dd></div><div><dt>预期成果</dt><dd>{user.desiredOutcome || "未填写"}</dd></div><div><dt>单次时长</dt><dd>{user.sessionMinutes ? `${user.sessionMinutes} 分钟` : "未填写"}</dd></div><div><dt>讲解偏好</dt><dd>{explanationPreferenceDetailLabel(user.explanationPreference)}</dd></div><div><dt>练习偏好</dt><dd>{practicePreferenceDetailLabel(user.practicePreference)}</dd></div><div><dt>学习节奏</dt><dd>{pacePreferenceDetailLabel(user.pacePreference)}</dd></div>{user.preferredContexts?.length ? <div><dt>熟悉场景</dt><dd>{user.preferredContexts.join("、")}</dd></div> : null}{user.toolConstraints?.length ? <div><dt>工具约束</dt><dd>{user.toolConstraints.join("、")}</dd></div> : null}{user.accommodations?.length ? <div><dt>无障碍需求</dt><dd>{user.accommodations.join("、")}</dd></div> : null}{user.retention ? <div><dt>数据留存</dt><dd>{user.retention === "cross_session" ? "跨会话保留" : "仅本次会话"}</dd></div> : null}</dl></section> : <p className="user-detail-note">该学习者未走结构化采集表单，仅保留基础字段。</p>}
+      <section className="user-detail-section"><h3>学习计划</h3>{user.plans.length ? <ul className="user-detail-plans">{user.plans.map((plan) => <li key={plan.id}><b>{plan.name}</b><small>{plan.sessionId ? `${stageLabelFromSaved(plan.stage)} · ${plan.status ?? "已保存"}` : "尚未建立主 Agent 会话"}</small></li>)}</ul> : <p className="user-detail-note">暂无学习计划。</p>}</section>
+    </div>
+    <div className="user-detail-actions"><button className="primary-action" type="button" onClick={onClose}>关闭</button></div>
+  </section></div>
 }
 
 function ConfirmSwitchUserModal({ targetUser, currentUser, onCancel, onConfirm }: { targetUser: { name: string; plans: unknown[] } | undefined; currentUser?: { name: string }; onCancel: () => void; onConfirm: () => void }) {
@@ -868,6 +897,25 @@ function pythonLevelLabel(level: LearnerProfileDraft["pythonLevel"]) {
   return ({ new: "Python 零基础", beginner: "Python 入门阶段", intermediate: "Python 进阶阶段", advanced: "Python 项目阶段" })[level]
 }
 
+function goalUseCaseLabel(value?: GoalUseCase) {
+  return ({ coursework: "课程学习", competition: "竞赛", job: "求职就业", project: "项目学习", certification: "考证", interest: "兴趣探索", other: "其他" } as Record<string, string>)[value ?? ""] ?? value ?? "未填写"
+}
+function goalUseCaseDetail(value?: GoalUseCase) {
+  return ({ coursework: "贴近课本 · 基础概念讲起 · 练习以选择与基础应用为主", competition: "重算法原理 · 复杂度与边界条件 · 编程与综合题占比更高", job: "更重实际工作场景 · 代码阅读 · 错误排查 · 小型项目练习", project: "重任务拆解 · 可交付成果导向 · 综合应用", certification: "按考纲覆盖考点 · 高频练习与自测", interest: "按兴趣节奏推进 · 通俗讲解为主", other: "按你的背景灵活调整讲解方式" } as Record<string, string>)[value ?? ""] ?? ""
+}
+function learningStyleLabel(value?: LearningStyle) {
+  return ({ practice: "偏练习", concept: "偏概念", project: "偏项目", balanced: "均衡" } as Record<string, string>)[value ?? ""] ?? value ?? "未填写"
+}
+function explanationPreferenceDetailLabel(value?: ExplanationPreference) {
+  return ({ analogy_first: "先类比", principle_first: "先讲原理", example_first: "先看例子", step_by_step: "分步讲解", balanced: "均衡" } as Record<string, string>)[value ?? ""] ?? value ?? "未填写"
+}
+function practicePreferenceDetailLabel(value?: PracticePreference) {
+  return ({ quiz: "选择题", coding: "引导编程", project: "项目任务", mixed: "混合练习" } as Record<string, string>)[value ?? ""] ?? value ?? "未填写"
+}
+function pacePreferenceDetailLabel(value?: PacePreference) {
+  return ({ slow: "慢速稳步", steady: "匀速推进", fast: "快速推进" } as Record<string, string>)[value ?? ""] ?? value ?? "未填写"
+}
+
 function stageLabelFromSaved(stage?: string) {
   return ({ objective_diagnosis: "正在客观诊断", assessment: "学习资源已生成", completed: "计划已完成", blocked: "等待处理阻塞", failed: "流程需要恢复" } as Record<string, string>)[stage ?? ""] ?? "主 Agent会话已建立"
 }
@@ -947,6 +995,8 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const { retry, reset, busy } = useLive()
   const activeSession = useRequiredSession()
   const profile = activeSession.profile
+  // 完整 LearnerProfileV2（背景/偏好/约束/进度）由 publicSessionView 附加到 profile_v2；无则回退 v1 字段。
+  const profileDetail = (activeSession as any).profile_v2 ?? profile
   const formalPath = activeSession.formal_path as any
   const ragResult = activeSession.rag_result as any
   const objectives = activeSession.current_path_node?.objectives ?? []
@@ -974,9 +1024,10 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
     <LearningLoopStepper session={activeSession} />
 
     <section className="week2-summary-grid">
-      <article className="profile-visual-card">
+      <article className="profile-visual-card profile-visual-wide">
         <header><span><UserRound size={18} /></span><div><small>学习者画像 · B公开结果</small><h2>{profile ? difficultyLabel(profile.level) : "尚未生成画像"}</h2></div></header>
-        {profile ? <>
+        {profile ? <div className="profile-layout">
+          <div className="profile-layout-main">
           <div className="profile-level-track"><i style={{ width: `${difficultyPosition(profile.level)}%` }} /><b style={{ left: `${difficultyPosition(profile.level)}%` }} /></div>
           <div className="profile-level-labels"><span>入门</span><span>基础</span><span>进阶</span><span>综合</span></div>
           <div className={`ability-radar ${radar.status === "verified" ? "is-verified" : "is-pending"}`} aria-label="能力雷达图">
@@ -988,28 +1039,40 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
             <p><b>代码认知</b> — 画像等级映射：入门 20% / 基础 45% / 进阶 70% / 综合 90%</p>
             <p><b>诊断表现</b> — 客观题正确数 ÷ 总作答数，封底 15% 封顶 100%</p>
           </div>}
-          <dl><div><dt>本次目标</dt><dd>{profile.goal}</dd></div><div><dt>已掌握</dt><dd>{profile.known_concepts.length ? profile.known_concepts.join("、") : "主 Agent未公开已掌握概念"}</dd></div><div><dt>待补强</dt><dd>{profile.weak_concepts.length ? profile.weak_concepts.join("、") : "本轮诊断未公开薄弱概念"}</dd></div></dl>
+          <dl><div><dt>本次目标</dt><dd>{profile.goal}</dd></div><div><dt>已掌握</dt><dd>{profile.known_concepts.length ? profile.known_concepts.join("、") : "主 Agent未公开已掌握概念"}</dd></div><div><dt>待补强</dt><dd className="weak-concept-cell">{profile.weak_concepts.length ? profile.weak_concepts.map((concept) => <em className="weak-concept-tag" key={concept} title="知识盲区">{concept}</em>) : "本轮诊断未公开薄弱概念"}</dd></div></dl>
           <p className="truth-note">能力雷达需要B公开多个能力维度及数值。当前合同只公开等级和概念集合，因此D不虚构雷达百分比。</p>
-        </> : <MissingContent text="主 Agent尚未公开 B 学习者画像。" />}
+          </div>
+          <div className="profile-detail-block">
+            <b className="profile-detail-title"><Sparkles size={13} /> 画像详情 · 驱动个性化生成</b>
+            {profileDetail.background_context || profileDetail.goal_context || profileDetail.learning_preferences ? <div className="profile-detail-sections">
+              {profileDetail.background_context ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-person"><UserRound size={13} /></span><b>背景信息</b></header><div className="pd-grid"><div><dt>教育阶段</dt><dd>{profileDetail.background_context.education_stage || "未公开"}</dd></div><div><dt>身份角色</dt><dd>{profileDetail.background_context.role_context || "未公开"}</dd></div><div><dt>学科背景</dt><dd>{profileDetail.background_context.discipline_background?.length ? profileDetail.background_context.discipline_background.join("、") : "未公开"}</dd></div><div><dt>先备知识</dt><dd>{profileDetail.background_context.prior_topics?.length ? profileDetail.background_context.prior_topics.join("、") : profileDetail.background_context.prior_languages?.length ? profileDetail.background_context.prior_languages.join("、") : "未公开"}</dd></div></div></section> : null}
+              {profileDetail.goal_context ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-goal"><Target size={13} /></span><b>目标用途</b></header><div className="pd-goal"><span className="pd-use-case">{useCaseLabel(profileDetail.goal_context.use_case)}</span>{profileDetail.goal_context.desired_outcome ? <p>{profileDetail.goal_context.desired_outcome}</p> : null}{profileDetail.goal_context.deadline ? <small>目标期限：{profileDetail.goal_context.deadline}</small> : null}</div></section> : null}
+              {profileDetail.learning_preferences ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-pref"><SlidersHorizontal size={13} /></span><b>学习偏好</b></header><div className="pd-chips"><span title="讲解方式">{explanationPreferenceLabel(profileDetail.learning_preferences.explanation)}</span><span title="练习方式">{practicePreferenceLabel(profileDetail.learning_preferences.practice)}</span><span title="学习节奏">{pacePreferenceLabel(profileDetail.learning_preferences.pace)}</span>{profileDetail.learning_preferences.preferred_contexts?.length ? <span title="熟悉场景">{profileDetail.learning_preferences.preferred_contexts.join("、")}</span> : null}</div></section> : null}
+              {profileDetail.learning_constraints ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-time"><Clock size={13} /></span><b>时间与工具</b></header><div className="pd-grid"><div><dt>每周投入</dt><dd>{formatMinutes(profileDetail.learning_constraints.weekly_time_budget_minutes)}</dd></div><div><dt>单次时长</dt><dd>{profileDetail.learning_constraints.session_time_budget_minutes ? formatMinutes(profileDetail.learning_constraints.session_time_budget_minutes) : "未公开"}</dd></div>{profileDetail.learning_constraints.tool_constraints?.length ? <div><dt>工具约束</dt><dd>{profileDetail.learning_constraints.tool_constraints.join("、")}</dd></div> : null}{profileDetail.learning_constraints.accommodations?.length ? <div><dt>无障碍需求</dt><dd>{profileDetail.learning_constraints.accommodations.join("、")}</dd></div> : null}</div></section> : null}
+              {profileDetail.progress ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-progress"><TrendingUp size={13} /></span><b>知识点掌握进度</b></header>{(() => { const mastery = profileDetail.progress.mastery_by_source_id || {}; const keys = Object.keys(mastery); return keys.length ? <div className="pd-mastery">{keys.slice(0, 6).map((key) => <div className="pd-mastery-row" key={key}><span>{key}</span><i><em style={{ width: `${Math.round((mastery[key] ?? 0) * 100)}%` }} /></i><b>{Math.round((mastery[key] ?? 0) * 100)}%</b></div>)}</div> : <p className="pd-empty">尚未产生测评证据，掌握度将在后续轮次更新</p> })()}<div className="pd-progress-meta"><span>最近准确率：{profileDetail.progress.last_assessment_accuracy != null ? `${Math.round(profileDetail.progress.last_assessment_accuracy * 100)}%` : "暂无"}</span>{profileDetail.progress.recent_error_patterns?.length ? <span>高频错误：{profileDetail.progress.recent_error_patterns.slice(0, 3).join("、")}</span> : null}</div></section> : null}
+            </div> : <p className="pd-empty">主 Agent尚未公开画像详情字段（背景 / 目标 / 偏好 / 约束 / 进度）。</p>}
+            <div className="profile-detail-footer">
+              <span><BadgeCheck size={12} /> 画像版本 {profileDetail.profile_version ?? "v1"}</span>
+              {profileDetail.provenance?.field_sources?.length ? <span className="pd-sources">数据来源：{sourceLabel(profileDetail.provenance.field_sources[0]?.source)} · {profileDetail.provenance.field_sources.length} 项已记录</span> : <span>由主 Agent基于背景、自评与客观诊断生成</span>}
+            </div>
+          </div>
+        </div> : <MissingContent text="主 Agent尚未公开 B 学习者画像。" />}
       </article>
+    </section>
 
+    <div className="wave-divider wave-divider-top" aria-hidden="true" />
+    <section className="week2-lower-grid">
       <article className="knowledge-match-card">
         <header><span><Target size={18} /></span><div><small>知识检索匹配 · A检索 / B采用</small><h2>{candidateCards.length ? `${candidateCards.length} 个知识候选` : "尚无知识候选"}</h2></div></header>
         {candidateCards.length ? <div className="knowledge-candidate-grid">{candidateCards.map((candidate, index) => <article className="knowledge-candidate" key={candidate.sourceId}><div className="knowledge-candidate-top"><span>{String(index + 1).padStart(2, "0")}</span><div><small>知识候选</small><h3>{candidate.title}</h3></div></div><div className="knowledge-candidate-detail"><span>知识点</span><b>{candidate.sourceId}</b></div><div className="knowledge-candidate-reasons"><span>为何选</span>{candidate.reasons.length ? <ol>{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ol> : <p>A 已检索到该知识点，B 将其纳入正式学习路径；当前公开字段未说明更具体的采用原因。</p>}</div></article>)}</div> : <MissingContent text="主 Agent尚未公开知识候选。" />}
         <p className="truth-note">A 先检索知识候选，B 再结合学习目标、学习者画像和先修关系进行选择与排序，形成正式学习路径；这里展示的是被 B 采用的知识节点。</p>
       </article>
-    </section>
-
-    <section className="learning-path-visual">
-      <header><div><small>学习路径图 · B正式路径</small><h2>{formalPath?.original_goal ?? displayPlanName}</h2></div><span>{pathNodes.length} 个节点</span></header>
-      {pathNodes.length ? <div className="path-node-flow">{pathNodes.map((node: any, index: number) => <article className={`path-flow-node status-${node.status ?? "pending"}`} key={node.node_id}><div className="path-flow-index">{String(index + 1).padStart(2, "0")}</div><div><span>{node.status === "in_progress" ? "当前节点" : node.status === "completed" ? "已完成" : node.status === "blocked" ? "受阻" : "待学习"}</span><h3>{titleForPathNode(node)}</h3><p>目标来源：{node.target_source_ids?.join("、") || "未公开"}</p><small>先修：{node.prerequisite_source_ids?.length ? node.prerequisite_source_ids.join("、") : "无公开先修"}{node.goal && titleForPathNode(node) !== node.goal ? ` · 计划：${node.goal}` : ""}</small></div>{index < pathNodes.length - 1 && <ArrowRight className="path-flow-arrow" size={18} />}</article>)}</div> : <MissingContent text="B尚未公开正式学习路径节点。" />}
-    </section>
-
-    <section className="week2-lower-grid">
-      <article className="current-objectives-card"><header><div><small>当前节点与观察目标</small><h2>{titleForPathNode(activeSession.current_path_node)}</h2></div><span>{activeSession.current_path_node?.goal && titleForPathNode(activeSession.current_path_node) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header>{whyCurrent ? <p className="node-why"><b>为什么学它：</b>{whyCurrent}</p> : null}<div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
-      <article className="agent-collaboration-card"><header><div><small>Agent协同过程 · 主 Agent台账</small><h2>{activeSession.worker_ledger.length} 个Worker状态</h2></div><Bot size={22} /></header><div className="agent-collaboration-list">{activeSession.worker_ledger.map((worker) => <article key={worker.worker}><span className={`agent-status status-${worker.status}`} /><div><b>{workerLabel(worker.worker)}</b><p>{worker.summary ?? "主 Agent未公开摘要"}</p></div><em>{worker.status}</em></article>)}</div></article>
+      <article className="current-objectives-card"><header><span className="card-head-icon"><MapPin size={18} /></span><div><small>当前节点与观察目标</small><h2>{titleForPathNode(activeSession.current_path_node)}</h2></div><span>{activeSession.current_path_node?.goal && titleForPathNode(activeSession.current_path_node) !== activeSession.current_path_node.goal ? `${activeSession.current_path_node.goal} · ` : ""}{activeSession.current_path_node?.node_id}</span></header>{whyCurrent ? <p className="node-why"><b>为什么学它：</b>{whyCurrent}</p> : null}<div className="path-chain">{chain.map((entry: any, index: number) => <div className="chain-item" key={entry.node_id}><article className={`chain-node chain-${entry.status}`}><span className="chain-status">{entry.status === "completed" || entry.status === "reference_mastered" ? <Check size={15} /> : <i />}</span><div className="chain-body"><b>{entry.title}</b><small>{entry.source_id}{entry.status === "reference_mastered" ? " · 已掌握" : entry.status === "reference_pending" ? " · 先修" : ""}</small></div><em>{entry.status === "completed" ? "本轮已学习" : entry.status === "in_progress" ? "当前节点" : entry.status === "blocked" ? "受阻" : entry.status === "reference_mastered" ? "已掌握" : entry.status === "reference_pending" ? "先修待补" : "待学习"}</em></article>{index < chain.length - 1 && <ArrowDown className="chain-arrow" size={15} />}</div>)}</div>{objectives.length ? <div className="objective-list"><small className="objective-kicker">当前节点观察目标</small>{objectives.map((objective, index) => <article key={objective.objective_id}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{pathNodeTitle({ target_source_ids: [objective.source_id] }, ragItems)} · {behaviorLabel(objective.observable_behavior)}</b><p>来源 {objective.source_id} · 事实 {objective.required_fact_ids.length ? objective.required_fact_ids.join("、") : "尚未绑定"} · {objective.importance}</p></div></article>)}</div> : null}</article>
+      <div className="wave-divider wave-divider-bottom" aria-hidden="true" />
+      <article className="agent-collaboration-card"><header><span className="card-head-icon"><Bot size={18} /></span><div><small>Agent协同过程 · 主 Agent台账</small><h2>{activeSession.worker_ledger.length} 个Worker状态</h2></div></header><div className="agent-collaboration-list">{activeSession.worker_ledger.map((worker) => <article key={worker.worker}><span className={`agent-status status-${worker.status}`} /><div><b>{workerLabel(worker.worker)}</b><p>{worker.summary ?? "主 Agent未公开摘要"}</p></div><em>{worker.status}</em></article>)}</div></article>
       <ContentReviewCard session={activeSession} />
     </section>
+
 
     {hasBlockedResource && <section className="plan-resource-status is-blocked"><ShieldCheck /><div><b>学习方案已保存，C互动资源尚未通过可信门禁</b><p>{activeSession.blocked_reason ?? "主 Agent未公开具体阻塞原因"}</p></div><button className="secondary-action" disabled={Boolean(busy)} type="button" onClick={recoveryAction.canRetry ? () => void retry() : reset}>{busy ? "正在恢复…" : recoveryAction.label}</button></section>}
     <section className="plan-enter-learning"><div><b>{hasLesson ? "互动学习资源已由主 Agent公开" : "互动学习资源尚未发布"}</b><p>{hasLesson ? "你可以主动进入C生成并经可信审核的讲义、代码实验和理解检查。" : "学习方案仍可查看；D不会用静态内容冒充C资源。"}</p></div><button className="primary-action" disabled={!hasLesson} type="button" onClick={onContinue}>进入互动学习 <ArrowRight /></button></section>
@@ -1020,7 +1083,7 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
 function ContentReviewCard({ session }: { session: PublicSessionFixture }) {
   const review = session.content_review
   if (!review) return null
-  return <article className="agent-collaboration-card"><header><div><small>内容审核 · 发布门禁</small><h2>{reviewStatusLabel(review.overall_status)}</h2></div><ShieldCheck size={22} /></header><div className="agent-collaboration-list">{Object.entries(review.workers).map(([worker, state]) => <article key={worker}><span className={`agent-status status-${state.status}`} /><div><b>{workerLabel(worker)}</b><p>{state.last_error ?? `审核 ${state.review_attempt_no} 次，修复 ${state.repair_attempt_no} 次`}</p></div><em>{state.published ? "published" : state.status}</em></article>)}</div><p className="truth-note">{review.publish_allowed ? "审核已通过，公开资源允许展示。" : "审核未通过前，D 不展示 C 的讲义、代码实验或正式测评。"}</p></article>
+  return <article className="agent-collaboration-card"><header><span className="card-head-icon"><ShieldCheck size={18} /></span><div><small>内容审核 · 发布门禁</small><h2>{reviewStatusLabel(review.overall_status)}</h2></div></header><div className="agent-collaboration-list">{Object.entries(review.workers).map(([worker, state]) => <article key={worker}><span className={`agent-status status-${state.status}`} /><div><b>{workerLabel(worker)}</b><p>{state.last_error ?? `审核 ${state.review_attempt_no} 次，修复 ${state.repair_attempt_no} 次`}</p></div><em>{state.published ? "published" : state.status}</em></article>)}</div><p className="truth-note">{review.publish_allowed ? "审核已通过，公开资源允许展示。" : "审核未通过前，D 不展示 C 的讲义、代码实验或正式测评。"}</p></article>
 }
 
 function resourceFitBasisText(entry: ResourceFitEntry): string {
@@ -1058,12 +1121,13 @@ function ResourceMatchCard({ session, resource, assessment, compact = false }: {
   </article>
 }
 
-function LessonPage({ onAssessment }: { onAssessment: () => void }) {
+function LessonPage({ user, onAssessment }: { user?: WorkspaceUser; onAssessment: () => void }) {
   const { retry, reset, runPublishedCodeLab, debugPublishedCodeLab, runExampleCode, busy } = useLive()
   const activeSession = useRequiredSession()
   const lesson = activeSession.learning_resources.concept_lesson?.payload
   const lab = activeSession.learning_resources.code_lab?.payload
   const adaptation = activeAdaptationView(activeSession)
+  const profileV2 = (activeSession as any).profile_v2 ?? activeSession.profile
   const [tab, setTab] = useState<LessonTab>("lesson")
   const [sideTab, setSideTab] = useState<SideTab>("evidence")
   const switchTab = (next: LessonTab) => {
@@ -1103,7 +1167,7 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const handleSectionScroll = (id: string) => {
     setActiveSection(id)
   }
-  return <div className="lesson-page"><LearningLoopStepper session={activeSession} /><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮结构适配指数"><Sparkles size={14} />结构适配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p></div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
+  return <div className="lesson-page"><LearningLoopStepper session={activeSession} /><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}{user?.goalUseCase ? <span className="lesson-goal-badge"><Target size={13} /> {goalUseCaseLabel(user.goalUseCase)}导向</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮结构适配指数"><Sparkles size={14} />结构适配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p>{user?.goalUseCase ? <div className="lesson-goal-note">本讲义按你的目标定制：{goalUseCaseDetail(user.goalUseCase)}</div> : null}{profileV2?.learning_preferences || profileV2?.progress ? <div className="lesson-profile-note"><Sparkles size={14} /><b>画像驱动本轮生成</b><span>{profileV2.learning_preferences?.explanation ? `讲解方式：${explanationPreferenceDetailLabel(profileV2.learning_preferences.explanation)}` : ""}{profileV2.learning_preferences?.practice ? ` · 练习方式：${practicePreferenceDetailLabel(profileV2.learning_preferences.practice)}` : ""}{profileV2.learning_preferences?.pace ? ` · 节奏：${pacePreferenceDetailLabel(profileV2.learning_preferences.pace)}` : ""}{profileV2.progress?.last_assessment_accuracy != null ? ` · 上轮准确率 ${Math.round(profileV2.progress.last_assessment_accuracy * 100)}%` : ""}</span></div> : null}{adaptation ? <div className="lesson-adaptation-note"><TrendingUp size={14} /><b>本轮适配：{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</b><span>{adaptation.adaptation_summary}</span>{adaptation.addressed_misconception_tags.length ? <em>针对误区：{adaptation.addressed_misconception_tags.join("、")}</em> : null}</div> : null}</div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
     <div className="lesson-tabs lesson-tabs-standalone" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => switchTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => switchTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => switchTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
     <div className={`lesson-layout${tab === "lesson" ? "" : " lesson-layout-no-outline"}`}>
       {tab === "lesson" ? <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { handleSectionClick(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>阅读进度</span><div><i style={{ width: `${readingProgress}%` }} /></div><small>已读 {visitedSections.size} / {visibleSectionCount} 节</small></div></aside> : null}
@@ -1232,6 +1296,42 @@ function CodeViewer({ code, onRun }: { code: string; onRun?: (code: string) => P
   </div>
 }
 
+function labGuideSections(instructions: CodeLabPayload["instructions"]) {
+  // 按"实践目标/操作步骤/预期结果/验收标准/常见错误/拓展任务"标题分区；无结构化标题时返回 null（保持原样渲染）
+  const keywords = ["实践目标", "操作步骤", "前置条件", "示例代码", "预期结果", "验收标准", "常见错误", "错误与解决", "拓展任务", "实践任务"]
+  const heads = instructions.filter((block) => block.block_type === "heading")
+  const headTexts = heads.map((block) => (block as any).title ?? (block as any).text ?? "")
+  const matched = headTexts.filter((text) => keywords.some((keyword) => text.includes(keyword)))
+  if (matched.length < 2) return null
+  const sections: Array<{ title: string; blocks: typeof instructions }> = []
+  let current: { title: string; blocks: typeof instructions } | null = null
+  for (const block of instructions) {
+    const text = block.block_type === "heading" ? ((block as any).title ?? (block as any).text ?? "") : ""
+    if (block.block_type === "heading" && keywords.some((keyword) => text.includes(keyword))) {
+      current = { title: text, blocks: [] }
+      sections.push(current)
+    } else if (current) {
+      current.blocks.push(block)
+    }
+  }
+  return sections.length ? sections : null
+}
+
+function labHintLadder(lab?: CodeLabPayload): { objective_id: string; hints: Array<{ hint_level: number; text: string; citations: any[] }> } | null {
+  // 优先取 lab.hint_ladders（完整结构），回退 programming_task.hint_ladders（简化结构）
+  if (lab?.hint_ladders?.length) return lab.hint_ladders[0]
+  const taskLadder = (lab as any)?.programming_task?.hint_ladders
+  if (taskLadder?.length) return { objective_id: "programming-task", hints: taskLadder.map((h: any) => ({ hint_level: h.level, text: h.text, citations: [] })) }
+  return null
+}
+
+function LabHintPanel({ lab }: { lab?: CodeLabPayload }) {
+  const [level, setLevel] = useState(1)
+  const ladder = labHintLadder(lab)
+  const hint = ladder?.hints.find((item) => item.hint_level === level)
+  return <div className="lab-hint-ladder"><h3><Lightbulb size={15} /> 三级提示 · 卡住时逐步展开</h3>{hint ? <><p className="hint-copy">{hint.text}</p>{hint.citations?.length ? <CitationChips citations={hint.citations} /> : null}<div className="hint-levels">{[1, 2, 3].map((value) => <button className={level === value ? "is-active" : ""} type="button" onClick={() => setLevel(value)} key={value}>提示 {value}</button>)}</div></> : <p className="muted-copy">C 未公开本实验的分层提示。</p>}</div>
+}
+
 function LabContent({ lab, code, setCode, gapAnswers, setGapAnswers, busy, execution, onDebug, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; gapAnswers: Record<string, string>; setGapAnswers: (answers: Record<string, string>) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onDebug: (publicCaseId: string) => Promise<void>; onRun: () => Promise<void> }) {
   if (!lab) return <EmptyState title="代码实验尚未发布" body="D 不会自造 starter code 或测试。请等待主 Agent返回 learning_resources.code_lab。" />
   const task = lab.programming_task
@@ -1254,8 +1354,11 @@ function LabContent({ lab, code, setCode, gapAnswers, setGapAnswers, busy, execu
       <span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span>
       <h2>{lab.title}</h2>
       {task ? <article className="programming-task-card"><div className="programming-task-kind">{guidedOutput ? "引导式运行" : task.task_kind === "code_completion" ? "程序填空" : task.task_kind === "function_implementation" ? "函数实现" : task.task_kind === "debugging_repair" ? "调试修复" : "标准输入输出"}</div><h3>{guidedOutput ? "你要完成什么" : "编程任务"}</h3><p>{legacyGuidedOutput ? "这是一道入门运行练习：程序主体已经写好，你只需在右侧唯一的输入框中填写要输出的文字，并用英文引号包起来；不要输入变量名、等号或 print。" : task.statement}</p><dl><div><dt>{guidedOutput ? "你填写" : "输入"}</dt><dd>{task.input_description}</dd></div><div><dt>{guidedOutput ? "程序输出" : "输出"}</dt><dd>{task.output_description}</dd></div></dl><ul>{task.constraints.map((entry) => <li key={entry}>{entry}</li>)}</ul></article> : null}
-      {lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}
+      {(() => { const guide = labGuideSections(lab.instructions); return guide ? <div className="lab-guide">{guide.map((section, index) => <section className={`lab-guide-section tone-${index % 4}`} key={section.title}><h3>{section.title}</h3><div>{section.blocks.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}</div></section>)}</div> : lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) })()}
+      {lab.practical_guide ? <div className="practical-guide"><h3><Target size={16} /> 实操指南 · {lab.practical_guide.estimated_minutes} 分钟</h3><section className="pg-goal"><small>实践目标</small><p>{lab.practical_guide.practice_goal}</p>{lab.practical_guide.deliverable ? <p className="pg-deliverable">交付物：{lab.practical_guide.deliverable}</p> : null}</section>{lab.practical_guide.steps?.length ? <section className="pg-steps"><small>操作步骤</small><ol>{lab.practical_guide.steps.map((step) => <li key={step.sequence}><b>第 {step.sequence} 步 · {step.title}</b><p>{step.action}</p>{step.input ? <p className="pg-input">输入：{step.input}</p> : null}{step.expected_result ? <p className="pg-expected">预期结果：{step.expected_result}</p> : null}</li>)}</ol></section> : null}{lab.practical_guide.readiness_checks?.length ? <section className="pg-readiness"><small>前置条件</small><ul>{lab.practical_guide.readiness_checks.map((check) => <li key={check.title}><b>{check.title}</b><p>{check.check}（就绪：{check.ready_when}）</p></li>)}</ul></section> : null}{lab.practical_guide.acceptance_criteria?.length ? <section className="pg-acceptance"><small>验收标准</small><ul>{lab.practical_guide.acceptance_criteria.map((criterion) => <li key={criterion.criterion_id}><CheckCircle2 size={14} /><span>{criterion.description}</span></li>)}</ul></section> : null}{lab.practical_guide.troubleshooting?.length ? <section className="pg-errors"><small>常见错误与解决</small><dl>{lab.practical_guide.troubleshooting.map((error, index) => <div key={index}><dt>{error.symptom}</dt><dd>原因：{error.likely_cause} · 解决：{error.recovery_steps?.join("；")}{error.verification ? ` · 验证：${error.verification}` : ""}</dd></div>)}</dl></section> : null}{lab.practical_guide.extension_task ? <section className="pg-extension"><small>拓展任务</small><ul><li><p>{lab.practical_guide.extension_task.task}</p><span>变化维度：{lab.practical_guide.extension_task.changed_dimension}{lab.practical_guide.extension_task.verification ? ` · 验证：${lab.practical_guide.extension_task.verification}` : ""}</span></li></ul></section> : null}</div> : null}
       <div className="public-tests"><h3>公开样例</h3>{(task?.public_examples ?? lab.public_tests).map((test) => <article key={"case_id" in test ? test.case_id : test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div>
+      {lab.reflection_questions?.length ? <div className="lab-reflection"><h3><MessageCircleQuestion size={16} /> 完成实验后，想一想</h3><ol>{lab.reflection_questions.map((question, index) => <li key={index}><span>{String(index + 1).padStart(2, "0")}</span><p>{question}</p></li>)}</ol><small>反思问题来自 C 的公开 reflection_questions，用于检查你是否真正理解。</small></div> : null}
+      <LabHintPanel lab={lab} />
     </section>
     <section className="editor-panel">
       <header><div><Braces size={17} /><b>{guidedOutput ? "填写并运行" : gapMode ? "程序填空" : "Python 编辑器"}</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header>
@@ -1339,7 +1442,7 @@ function AssessmentPage({ onFeedback: _onFeedback }: { onFeedback: () => void })
     ? activeSession.code_execution
     : null
   return <div className="page assessment-page"><PageHeading kicker={`正式测评 · ${assessment.title}`} title="提交后进入 Role C 正式评分" description="正确答案、评分规范与隐藏测试始终保留在服务端。当前作答会通过主 Agent命令提交，不在 D 中评分。" /><LearningLoopStepper session={activeSession} />
-    <section className="assessment-shell"><aside><b>测评进度</b>{assessment.items.map((candidate, itemIndex) => <button className={itemIndex === index ? "is-active" : answers[candidate.item_id] ? "is-complete" : ""} type="button" onClick={() => setIndex(itemIndex)} key={candidate.item_id}><span>{itemIndex + 1}</span><small>{modalityLabel(candidate.modality)}</small></button>)}<p>{complete} / {assessment.items.length} 已作答</p></aside><article className="formal-question"><div className="question-meta"><span>第 {index + 1} 题</span><span>Tier {item.tier}</span><span>{item.max_score} 分</span></div><h2 className={isCodePrompt ? "formal-question-prompt is-code" : "formal-question-prompt"}>{item.prompt}</h2>{item.modality === "code" ? <><PythonCodeEditor value={answers[item.item_id] ?? item.starter_code ?? ""} onChange={(value) => setAssessmentAnswer(item.item_id, value)} minHeight={360} ariaLabel={`正式测评第 ${index + 1} 题 Python 编辑器`} /><div className="assessment-code-run"><button className="secondary-action" disabled={Boolean(busy) || !(answers[item.item_id] ?? item.starter_code ?? "").trim()} type="button" onClick={() => void runAssessmentItemCode(item.item_id, answers[item.item_id] ?? item.starter_code ?? "")}>运行代码</button>{codeExecution ? <div className="run-result is-visible" role="status"><b>{codeExecution.status === "passed" ? "代码检查通过" : codeExecution.status === "blocked" ? "代码暂时无法运行" : "代码检查未通过"}</b><p>{typeof codeExecution.passedChecks === "number" && typeof codeExecution.totalChecks === "number" ? `通过 ${codeExecution.passedChecks} / ${codeExecution.totalChecks} 项检查。` : codeExecution.message ?? "服务端未返回公开检查摘要。"}</p>{codeExecution.feedback?.map((entry) => <small key={entry.code}>{entry.message}</small>)}</div> : null}</div></> : item.options?.length ? <div className="formal-options">{item.options.map((option) => <button className={answers[item.item_id] === option.option_id ? "is-selected" : ""} type="button" onClick={() => setAssessmentAnswer(item.item_id, option.option_id)} key={option.option_id}><span>{option.label}</span><b>{option.text}</b></button>)}</div> : <textarea rows={6} value={answers[item.item_id] ?? ""} onChange={(event) => setAssessmentAnswer(item.item_id, event.target.value)} /> }<div className="formal-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}>上一题</button>{index < assessment.items.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>保存并下一题</button> : <button className="primary-action" disabled={Boolean(busy) || !assessmentComplete(activeSession, answers) || !isLive} type="button" onClick={() => void submitAssessment()}>{busy ? "正在正式评分…" : "提交正式测评"} <ArrowRight /></button>}</div></article></section>
+    <section className="assessment-shell"><aside><b>测评进度</b>{assessment.items.map((candidate, itemIndex) => <button className={itemIndex === index ? "is-active" : answers[candidate.item_id] ? "is-complete" : ""} type="button" onClick={() => setIndex(itemIndex)} key={candidate.item_id}><span>{itemIndex + 1}</span><small>{modalityLabel(candidate.modality)}</small></button>)}<p>{complete} / {assessment.items.length} 已作答</p></aside><article className="formal-question"><div className="question-meta"><span>第 {index + 1} 题</span><span className={`tier-badge tier-${item.tier}`}>{tierDualLabel(item).difficulty}</span><span className="cognition-badge">{tierDualLabel(item).cognition}</span><span>{item.max_score} 分</span></div><h2 className={isCodePrompt ? "formal-question-prompt is-code" : "formal-question-prompt"}>{item.prompt}</h2>{item.modality === "code" ? <><PythonCodeEditor value={answers[item.item_id] ?? item.starter_code ?? ""} onChange={(value) => setAssessmentAnswer(item.item_id, value)} minHeight={360} ariaLabel={`正式测评第 ${index + 1} 题 Python 编辑器`} /><div className="assessment-code-run"><button className="secondary-action" disabled={Boolean(busy) || !(answers[item.item_id] ?? item.starter_code ?? "").trim()} type="button" onClick={() => void runAssessmentItemCode(item.item_id, answers[item.item_id] ?? item.starter_code ?? "")}>运行代码</button>{codeExecution ? <div className="run-result is-visible" role="status"><b>{codeExecution.status === "passed" ? "代码检查通过" : codeExecution.status === "blocked" ? "代码暂时无法运行" : "代码检查未通过"}</b><p>{typeof codeExecution.passedChecks === "number" && typeof codeExecution.totalChecks === "number" ? `通过 ${codeExecution.passedChecks} / ${codeExecution.totalChecks} 项检查。` : codeExecution.message ?? "服务端未返回公开检查摘要。"}</p>{codeExecution.feedback?.map((entry) => <small key={entry.code}>{entry.message}</small>)}</div> : null}</div></> : item.options?.length ? <div className="formal-options">{item.options.map((option) => <button className={answers[item.item_id] === option.option_id ? "is-selected" : ""} type="button" onClick={() => setAssessmentAnswer(item.item_id, option.option_id)} key={option.option_id}><span>{option.label}</span><b>{option.text}</b></button>)}</div> : <textarea rows={6} value={answers[item.item_id] ?? ""} onChange={(event) => setAssessmentAnswer(item.item_id, event.target.value)} /> }<div className="formal-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}>上一题</button>{index < assessment.items.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>保存并下一题</button> : <button className="primary-action" disabled={Boolean(busy) || !assessmentComplete(activeSession, answers) || !isLive} type="button" onClick={() => void submitAssessment()}>{busy ? "正在正式评分…" : "提交正式测评"} <ArrowRight /></button>}</div></article></section>
   </div>
 }
 
@@ -1368,7 +1471,7 @@ function FeedbackPage({ onContinue, masteryNotice, onMasteryDismiss }: { onConti
   const nextRoundGate = nextRoundResourceGate(activeSession)
   const adaptation = activeAdaptationView(activeSession)
 const finalAction = finalFeedbackAction(activeSession)
-  return <div className="page feedback-page"><LearningLoopStepper session={activeSession} />{masteryNotice && <MasteryCelebration notice={masteryNotice} onClose={onMasteryDismiss} />}<PageHeading kicker={`正式反馈 · 第 ${activeSession.round_no > 1 ? activeSession.round_no - 1 : activeSession.round_no} 轮`} title={activeSession.status === "blocked" ? "下一步暂时受阻" : decisionTitle(decision?.action)} description={feedbackSummary || activeSession.blocked_reason || "主 Agent已返回本轮正式决策。"} /> <section className="feedback-result-grid"><article className="score-card"><span>本轮正式得分</span><strong>{feedback?.round_score ? `${feedback.round_score.raw_score} / ${feedback.round_score.max_score}` : "--"}</strong><p>{feedback?.round_score ? `正确率 ${Math.round(feedback.round_score.accuracy * 100)}% · 证据分 ${Math.round(feedback.round_score.evidence_score * 100)}%${wrongCount ? ` · ${wrongCount} 题未答对` : ""}` : "已保留此前评分，等待下一轮恢复。"}</p></article><article className="decision-card"><span>主 Agent下一步</span><h2>{decision?.action ? decisionLabel(decision.action) : "等待恢复"}</h2><p>{decision?.reason_codes?.map(decisionReasonLabel).join("、") || activeSession.blocked_reason || "暂无公开原因码"}</p></article></section><section className="decision-plan-card"><header><div><small>动态规划 · 下一轮方案选择</small><h2>主 Agent基于本轮结果选择下一轮方案</h2></div><span>{decision?.action ?? "pending"}</span></header><div className="decision-plan-grid">{planOptions.map((option) => <article className={decision?.action === option.action ? "is-current" : ""} key={option.action}><b>{option.title}</b><p>{option.description}</p>{decision?.action === option.action ? <em>本轮决策</em> : <i />}</article>)}</div></section>{adaptation ? <section className="adaptation-card"><small>本轮C资源适配说明</small><h2>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</h2><p>{adaptation.adaptation_summary}</p><p>目标：{adaptation.target_objective_ids.join("、") || "主Agent未公开具体目标"}</p>{adaptation.addressed_misconception_tags.length ? <p>针对误区：{adaptation.addressed_misconception_tags.join("、")}</p> : null}</section> : null}{itemViews.length ? <section className="item-feedback-list"><h2>逐题结果{wrongCount ? ` · ${wrongCount} 题待订正` : ""}</h2>{itemViews.map((view, index) => <article className={view.correct === false ? "is-wrong" : view.correct === true ? "is-correct" : "is-blank"} key={view.item_id}><header><span>{modalityLabel(view.modality as any)}</span><b>第 {index + 1} 题</b><em>{view.raw_score} / {view.max_score} 分</em></header><p className="item-prompt">{view.prompt}</p><dl><dt>你的答案</dt><dd>{view.your_answer_text}</dd></dl><div className="item-verdict">{view.correct === true ? "回答正确" : view.correct === false ? "回答错误" : "未作答"}</div>{view.correct_answer_text ? <dl className="correct-answer"><dt>参考答案</dt><dd className={view.correct_answer_kind === "code" ? "is-code" : ""}>{view.correct_answer_text}</dd></dl> : null}{view.feedback_message ? <p className="item-message">{view.feedback_message}</p> : null}{view.next_step ? <p className="item-next">下一步：{view.next_step}</p> : null}{view.correct === false && !view.correct_answer_text ? <small className="answer-boundary">C 本轮未公开结构化参考答案，仅提供评分反馈与下一步建议。</small> : null}</article>)}</section> : feedback?.your_answers?.length ? <section className="item-feedback-list"><p className="answer-boundary">本轮题目快照由旧版会话产生未公开，此处仅显示评分汇总；下一轮重新提交后可查看逐题结果。</p></section> : null}{feedback?.objective_results?.length ? <section className="objective-feedback"><h2>学习目标反馈</h2>{feedback.objective_results.map((item: any) => <article key={item.objective_id}><div><b>{item.objective_id}</b><span>{Math.round(item.accuracy * 100)}%</span></div><div className="objective-meter"><i style={{ width: `${Math.round(item.accuracy * 100)}%` }} /></div><p>{item.misconception_tags?.length ? `需要关注：${item.misconception_tags.join("、")}` : "本轮未返回误区标签"}</p></article>)}</section> : null}<div className="page-actions">{activeSession.status === "blocked" || activeSession.status === "failed" ? (() => { const action = blockedSessionAction(activeSession); return <button className="primary-action" disabled={Boolean(busy)} type="button" onClick={action.canRetry ? () => void retry() : reset}>{busy ? "正在恢复…" : action.label}</button> })() : <button className="primary-action" disabled={!(finalAction?.ready ?? nextRoundGate.ready)} type="button" onClick={onContinue}>{finalAction?.label ?? nextRoundGate.label}</button>}</div></div>
+  return <div className="page feedback-page"><LearningLoopStepper session={activeSession} />{masteryNotice && <MasteryCelebration notice={masteryNotice} onClose={onMasteryDismiss} />}<PageHeading kicker={`正式反馈 · 第 ${activeSession.round_no > 1 ? activeSession.round_no - 1 : activeSession.round_no} 轮`} title={activeSession.status === "blocked" ? "下一步暂时受阻" : decisionTitle(decision?.action)} description={feedbackSummary || activeSession.blocked_reason || "主 Agent已返回本轮正式决策。"} /> <section className="feedback-result-grid"><article className="score-card"><span>本轮正式得分</span><strong>{feedback?.round_score ? `${feedback.round_score.raw_score} / ${feedback.round_score.max_score}` : "--"}</strong><p>{feedback?.round_score ? `正确率 ${Math.round(feedback.round_score.accuracy * 100)}% · 证据分 ${Math.round(feedback.round_score.evidence_score * 100)}%${wrongCount ? ` · ${wrongCount} 题未答对` : ""}` : "已保留此前评分，等待下一轮恢复。"}</p></article><article className="decision-card"><span>主 Agent下一步</span><h2>{decision?.action ? decisionLabel(decision.action) : "等待恢复"}</h2><p>{decision?.reason_codes?.map(decisionReasonLabel).join("、") || activeSession.blocked_reason || "暂无公开原因码"}</p></article></section><section className="decision-plan-card"><header><div><small>动态规划 · 下一轮方案选择</small><h2>主 Agent基于本轮结果选择下一轮方案</h2></div><span>{decision?.action ?? "pending"}</span></header><div className="decision-plan-grid">{planOptions.map((option) => <article className={decision?.action === option.action ? "is-current" : ""} key={option.action}><b>{option.title}</b><p>{option.description}</p>{decision?.action === option.action ? <em>本轮决策</em> : <i />}</article>)}</div></section>{adaptation ? <section className="adaptation-card"><small>本轮C资源适配说明</small><h2>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</h2><p>{adaptation.adaptation_summary}</p><p>目标：{adaptation.target_objective_ids.join("、") || "主Agent未公开具体目标"}</p>{adaptation.addressed_misconception_tags.length ? <p>针对误区：{adaptation.addressed_misconception_tags.join("、")}</p> : null}</section> : null}{itemViews.length ? <section className="item-feedback-list"><h2>逐题结果{wrongCount ? ` · ${wrongCount} 题待订正` : ""}</h2>{itemViews.map((view, index) => <article className={view.correct === false ? "is-wrong" : view.correct === true ? "is-correct" : "is-blank"} key={view.item_id}><header><span>{modalityLabel(view.modality as any)}</span><b>第 {index + 1} 题</b><em>{view.raw_score} / {view.max_score} 分</em></header><p className="item-prompt">{view.prompt}</p><dl><dt>你的答案</dt><dd>{view.your_answer_text}</dd></dl><div className="item-verdict">{view.correct === true ? "回答正确" : view.correct === false ? "回答错误" : "未作答"}</div>{view.correct_answer_text ? <dl className="correct-answer"><dt>参考答案</dt><dd className={view.correct_answer_kind === "code" ? "is-code" : ""}>{view.correct_answer_text}</dd></dl> : null}{view.feedback_message ? <p className="item-message">{view.feedback_message}</p> : null}{view.next_step ? <p className="item-next">下一步：{view.next_step}</p> : null}{view.correct === false && !view.correct_answer_text ? <small className="answer-boundary">C 本轮未公开结构化参考答案，仅提供评分反馈与下一步建议。</small> : null}</article>)}</section> : feedback?.your_answers?.length ? <section className="item-feedback-list"><p className="answer-boundary">本轮题目快照由旧版会话产生未公开，此处仅显示评分汇总；下一轮重新提交后可查看逐题结果。</p></section> : null}{feedback?.objective_results?.length ? <section className="objective-feedback"><h2>学习目标反馈</h2>{feedback.objective_results.map((item: any) => <article key={item.objective_id}><div><b>{item.objective_id}</b><span>{Math.round(item.accuracy * 100)}%</span></div><div className="objective-meter"><i style={{ width: `${Math.round(item.accuracy * 100)}%` }} /></div><p>{item.misconception_tags?.length ? <span className="difficulty-tags">困难识别：{item.misconception_tags.map((tag: string) => <em key={tag} title={tag}>{difficultyTagLabel(tag)}</em>)}</span> : "本轮未返回误区标签"}</p></article>)}</section> : null}<div className="page-actions">{activeSession.status === "blocked" || activeSession.status === "failed" ? (() => { const action = blockedSessionAction(activeSession); return <button className="primary-action" disabled={Boolean(busy)} type="button" onClick={action.canRetry ? () => void retry() : reset}>{busy ? "正在恢复…" : action.label}</button> })() : <button className="primary-action" disabled={!(finalAction?.ready ?? nextRoundGate.ready)} type="button" onClick={onContinue}>{finalAction?.label ?? nextRoundGate.label}</button>}</div></div>
 }
 
 function HistoryPage() {
@@ -1394,8 +1497,8 @@ export function CollaborationDrawer({ session, onClose }: { session: PublicSessi
   return createPortal(<div className="collaboration-drawer-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose() }}><aside className="collaboration-drawer" role="dialog" aria-modal="true" aria-label="多 Agent 协同流程"><header><div><small>主 Agent · 实时编排</small><h2>协同流程</h2><p>{session ? `第 ${session.round_no} 轮 · ${view?.live ? "正在运行" : "当前状态已保存"}` : "尚未创建真实主 Agent会话"}</p></div><button type="button" aria-label="关闭协同流程" onClick={onClose}><X size={20} /></button></header>{view ? <div className="vertical-metro">{view.stations.map((station, index) => <article className={`vertical-station is-${station.state}`} key={station.unit}><div className="vertical-station-mark"><span>{station.state === "completed" ? <Check size={14} /> : station.state === "current" ? <Bot size={14} /> : station.state === "failed" ? "!" : index + 1}</span>{index < view.stations.length - 1 ? <i /> : null}</div><div className="vertical-station-body"><header><b className="agent-art-title">{workerLabel(station.unit)}｜Agent {station.unit}</b><em>{drawerStateLabel(station.state)}</em></header><small className="agent-task-description">● {workerTaskDescription(station.unit)}</small>{station.executionType && station.executionType !== "unknown" ? <small className="agent-execution-type">{drawerExecutionTypeLabel(station.executionType)}</small> : null}<p>{station.summary}</p><footer><span>第 {station.attempt} 次尝试</span><span>公开产物 {station.publicOutputCount}</span>{station.hadFailure ? <span className="drawer-retry">保留失败/重试记录</span> : null}</footer></div></article>)}</div> : <section className="collaboration-empty"><Bot size={32} /><h3>暂无真实协同记录</h3><p>创建学习计划并启动主 Agent后，这里会按真实 worker_ledger_history 显示执行顺序。</p></section>}<footer className="collaboration-legend"><span><i className="legend-current" /> 正在做</span><span><i className="legend-pending" /> 未工作</span><span><i className="legend-completed" /> 已完成</span><span><i className="legend-waiting" /> 等待用户输入</span><small>紫色动态图标仅在真实会话运行时出现</small></footer></aside></div>, document.body)
 }
 
-function PageHeading({ kicker, title, description }: { kicker: string; title: string; description: string }) {
-  return <header className="page-heading"><span>{kicker}</span><h1>{title}</h1><p>{description}</p></header>
+function PageHeading({ kicker, title, description, icon }: { kicker: string; title: string; description: string; icon?: React.ReactNode }) {
+  return <header className="page-heading">{icon ? <span className="page-heading-icon">{icon}</span> : null}<div><span>{kicker}</span><h1>{title}</h1><p>{description}</p></div></header>
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
@@ -1489,6 +1592,31 @@ function modalityLabel(modality: AssessmentPayload["items"][number]["modality"])
   return ({ mcq: "选择题", true_false: "判断题", trace: "代码追踪", short_answer: "简答题", code: "代码题" })[modality]
 }
 
+/** 双重分阶标签：优先用 C 公开的 difficulty_band/cognitive_level 独立字段，缺失时回退 tier 推导（不伪造） */
+function tierDualLabel(item: { tier?: 1 | 2 | 3; difficulty_band?: "foundation" | "improvement" | "integration" | "extension"; cognitive_level?: "remember" | "understand" | "apply" | "analyze" | "create" }) {
+  const bandMap: Record<string, string> = { foundation: "基础题", improvement: "提高题", integration: "综合题", extension: "拓展题" }
+  const levelMap: Record<string, string> = { remember: "记忆", understand: "理解", apply: "应用", analyze: "分析", create: "创造" }
+  if (item.difficulty_band && item.cognitive_level) {
+    return { difficulty: bandMap[item.difficulty_band] ?? "基础题", cognition: `${levelMap[item.cognitive_level] ?? item.cognitive_level}`, tier: item.tier }
+  }
+  const tierMap = ({ 1: { difficulty: "基础题", cognition: "记忆·理解" }, 2: { difficulty: "提高题", cognition: "应用·分析" }, 3: { difficulty: "综合题", cognition: "综合·创造" } } as Record<number, { difficulty: string; cognition: string }>)[item.tier ?? 1] ?? { difficulty: "基础题", cognition: "记忆·理解" }
+  return { ...tierMap, tier: item.tier }
+}
+
+/** 困难识别标签：把 misconception/error 标签映射为欧阳江栋的 6 类困难（概念忘记/不会转代码/不会调试/边界条件/题目理解困难/其他），未识别保持原文 */
+function difficultyTagLabel(tag: string) {
+  const rules: Array<{ keys: string[]; label: string }> = [
+    { keys: ["concept", "定义", "概念", "principle", "forget"], label: "概念忘记" },
+    { keys: ["转代码", "syntax", "语法", "translate", "写代码"], label: "不会转代码" },
+    { keys: ["debug", "调试", "trace", "追踪", "运行"], label: "不会调试" },
+    { keys: ["boundary", "边界", "off-by-one", "结束值", "range", "skips_last", "skips", "last_element", "integer_division", "整除"], label: "边界条件错误" },
+    { keys: ["understand", "理解", "题意", "prompt"], label: "题目理解困难" },
+  ]
+  const lower = tag.toLowerCase()
+  const hit = rules.find((rule) => rule.keys.some((key) => lower.includes(key)))
+  return hit?.label ?? "其他困难"
+}
+
 interface RadarDimension { label: string; value: number }
 
 function RadarChart({ dimensions }: { dimensions: RadarDimension[] }) {
@@ -1544,6 +1672,27 @@ function RadarChart({ dimensions }: { dimensions: RadarDimension[] }) {
 
 function difficultyLabel(value?: string) {
   return ({ beginner: "入门", basic: "基础", intermediate: "进阶", integrated: "综合" } as Record<string, string>)[value ?? ""] ?? value ?? "未公开"
+}
+
+/** 画像 v2 字段标签映射（B 枚举 → 前端中文展示） */
+function useCaseLabel(value?: string) {
+  return ({ coursework: "课程学习", competition: "竞赛备战", job: "求职就业", project: "项目学习", certification: "考证认证", interest: "兴趣拓展", other: "其他" } as Record<string, string>)[value ?? ""] ?? value ?? "未公开"
+}
+function explanationPreferenceLabel(value?: string) {
+  return ({ analogy_first: "先类比再讲原理", principle_first: "先讲原理", example_first: "先看例子", step_by_step: "按任务分步讲", balanced: "均衡搭配" } as Record<string, string>)[value ?? ""] ?? value ?? "未公开"
+}
+function practicePreferenceLabel(value?: string) {
+  return ({ quiz: "选择题练习", coding: "引导编程", project: "项目实践", mixed: "混合练习" } as Record<string, string>)[value ?? ""] ?? value ?? "未公开"
+}
+function pacePreferenceLabel(value?: string) {
+  return ({ slow: "慢速稳妥", steady: "匀速推进", fast: "快速进阶" } as Record<string, string>)[value ?? ""] ?? value ?? "未公开"
+}
+function formatMinutes(value: number | undefined | null) {
+  if (value == null || !Number.isFinite(value)) return "未公开"
+  return value >= 60 ? `${Math.round(value / 60 * 10) / 10}小时` : `${value}分钟`
+}
+function sourceLabel(value?: string) {
+  return ({ learner: "学习者填写", objective_diagnosis: "客观诊断", assessment_history: "测评历史", learner_memory: "历史记忆", system_default: "系统默认" } as Record<string, string>)[value ?? ""] ?? value ?? "未知"
 }
 
 function difficultyPosition(value?: string) {
