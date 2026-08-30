@@ -44,7 +44,7 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
   if (typeof value.command_id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(value.command_id)) {
     errors.push("command_id is required and must be safe")
   }
-  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "run_code_lab", "run_assessment_code", "run_example_code", "retry"].includes(String(value.type))) {
+  if (!["submit_profile_answers", "submit_diagnosis_answers", "submit_assessment_answers", "submit_profile_gap_answer", "run_code_lab", "run_assessment_code", "run_example_code", "retry"].includes(String(value.type))) {
     errors.push("Unsupported command type")
   }
   if (value.type === "submit_profile_answers") {
@@ -57,6 +57,13 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
       errors.push("submit_profile_answers.payload.answers must be a non-empty profile answer array")
     }
   }
+  if (value.type === "submit_profile_gap_answer") {
+    const payload = isRecord(value.payload) ? value.payload : null
+    if (!payload || typeof payload.question_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.question_id)) errors.push("profile gap question_id is required and must be safe")
+    if (!payload || typeof payload.source_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.source_id)) errors.push("profile gap source_id is required and must be safe")
+    if (!payload || typeof payload.answer !== "string" || payload.answer.trim().length === 0 || payload.answer.length > 500) errors.push("profile gap answer is required and bounded")
+  }
+
   if (value.type === "run_code_lab") {
     const payload = isRecord(value.payload) ? value.payload : null
     if (!payload || typeof payload.lab_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.lab_id)) {

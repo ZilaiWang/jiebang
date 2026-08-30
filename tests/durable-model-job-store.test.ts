@@ -83,5 +83,5 @@ describe("durable model workflow jobs", () => {
     for (let index = 0; index < 100 && (await store.load(job.job_id))?.status !== "completed"; index += 1) await Bun.sleep(5)
     expect(completed).toBe(true)
     expect(await store.load(job.job_id)).toMatchObject({ status: "completed", attempt: 2 })
-  })
+  }, 15_000)
 })

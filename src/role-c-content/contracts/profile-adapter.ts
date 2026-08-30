@@ -1,5 +1,7 @@
 import type { LearnerProfile } from "../../role-b-profile/types"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import type { ProfileConfidenceState } from "../../role-b-profile/profile-confidence"
+import type { LearningBarrier } from "../../role-b-profile/profile-gap-questions"
 import { redactDirectIdentifiers, sanitizeFreeTextList } from "../../privacy/privacy-boundary"
 import type { GoalProfile } from "../planning/personalization-policy"
 import type { LearnerLevel, SchemaVersion } from "./common"
@@ -24,6 +26,8 @@ export interface LearnerProfileSnapshot {
   weak_concepts: string[]
   goal: string
   goal_profile?: GoalProfile
+  learning_barriers?: Array<{ source_id: string; barrier: LearningBarrier; count: number }>
+  confidence_state?: ProfileConfidenceState
   preferred_contexts: string[]
   accommodations: string[]
   provenance_ref?: string
@@ -63,6 +67,8 @@ export interface ProfileSnapshotOptions {
   goal_profile?: GoalProfile
   preferred_contexts?: string[]
   accommodations?: string[]
+  learning_barriers?: Array<{ source_id: string; barrier: LearningBarrier; count: number }>
+  confidence_state?: ProfileConfidenceState
   provenance_ref?: string
   pedagogy_contract?: RoleCPedagogyContract
 }
@@ -86,6 +92,8 @@ export function adaptLearnerProfile(
     preferred_contexts: sanitizeFreeTextList(options.preferred_contexts ?? []),
     accommodations: sanitizeFreeTextList(options.accommodations ?? []),
     provenance_ref: options.provenance_ref,
+    learning_barriers: structuredClone(options.learning_barriers ?? profile.learning_barriers ?? []),
+    confidence_state: structuredClone(options.confidence_state ?? profile.confidence_state),
     ...(options.pedagogy_contract
       ? { pedagogy_contract: structuredClone(options.pedagogy_contract) }
       : {}),

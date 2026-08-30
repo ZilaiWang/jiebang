@@ -14,6 +14,7 @@ export interface PersonalizationInput {
   progress_state: ProgressState
   known_objective_count: number
   weak_objective_count: number
+  learning_barriers?: Array<{ source_id: string; barrier: import("../../role-b-profile/profile-gap-questions").LearningBarrier; count: number }>
 }
 
 export interface PersonalizationPolicy {
@@ -55,6 +56,7 @@ export function buildPersonalizationPolicy(input: PersonalizationInput): Persona
   let challenge_ratio = mastered ? 0.65 : 0.35
   let project_ratio = input.goal_profile === "job_interview" ? 0.35 : 0.15
   let extension_ratio = mastered ? 0.2 : 0.05
+  const dominantBarrier = input.learning_barriers?.slice().sort((a, b) => b.count - a.count)[0]
   let practice_mode = goal.practice_mode
   if (input.goal_profile === "algorithm_competition" && !struggling) {
     challenge_ratio = mastered ? 0.75 : 0.5
@@ -74,6 +76,7 @@ export function buildPersonalizationPolicy(input: PersonalizationInput): Persona
     reading_density = advanced ? "high" : "medium"
     if (input.goal_profile === "coursework") practice_mode = "integrated_practice"
   }
+  if (dominantBarrier) scaffold_level = 3
   const total = review_ratio + challenge_ratio + project_ratio + extension_ratio
   const normalize = (value: number) => Math.round((value / total) * 100) / 100
   return {
@@ -94,6 +97,6 @@ export function buildPersonalizationPolicy(input: PersonalizationInput): Persona
       project_ratio: normalize(project_ratio),
       extension_ratio: normalize(extension_ratio),
     },
-    reasons: [`goal_profile=${input.goal_profile}`, `learner_level=${input.learner_level}`, `progress_state=${input.progress_state}`, `known_objectives=${input.known_objective_count}`, `weak_objectives=${input.weak_objective_count}`],
+    reasons: [`goal_profile=${input.goal_profile}`, `learner_level=${input.learner_level}`, `progress_state=${input.progress_state}`, `known_objectives=${input.known_objective_count}`, `weak_objectives=${input.weak_objective_count}`, ...(dominantBarrier ? [`barrier=${dominantBarrier.barrier}`] : [])],
   }
 }

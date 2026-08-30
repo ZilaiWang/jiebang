@@ -4,6 +4,8 @@
 // 词表约定: level 四档枚举与 schemas/rag_request.schema.json 及知识库难度完全一致。
 import type { KnowledgeDifficulty } from "../knowledge/types"
 import type { GoalProfile } from "../role-c-content/planning/personalization-policy"
+import type { LearningBarrier } from "./profile-gap-questions"
+import type { ProfileConfidenceState } from "./profile-confidence"
 
 // 每条抽取字段的原文引用：field 指向被支撑的字段名，text 是学习者原话逐字片段
 export interface EvidenceQuote {
@@ -65,6 +67,8 @@ export interface LearnerProfile {
   weak_concepts: string[]
   goal: string
   goal_profile?: GoalProfile
+  learning_barriers?: Array<{ source_id: string; barrier: LearningBarrier; count: number }>
+  confidence_state?: ProfileConfidenceState
   ability_dimensions?: AbilityDimension[]
 }
 

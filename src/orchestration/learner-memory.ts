@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto"
 import { join } from "node:path"
 import type { WorkerName } from "./types"
 import type { PriorAssessmentItem } from "../role-c-content/agents/types"
+import type { LearningBarrier } from "../role-b-profile/profile-gap-questions"
+import type { ProfileConfidenceState, ProfileConfidenceDimension } from "../role-b-profile/profile-confidence"
 
 export interface LearnerMemorySnapshot {
   schema_version: "1.0"
@@ -12,6 +14,9 @@ export interface LearnerMemorySnapshot {
   weak_source_ids: string[]
   completed_sessions: string[]
   recent_errors: Array<{ source_id: string; pattern: string; count: number }>
+  learning_barriers?: Array<{ source_id: string; barrier: LearningBarrier; count: number }>
+  confidence_state?: ProfileConfidenceState
+  profile_observations?: Array<{ dimension: ProfileConfidenceDimension; value: string; count: number }>
   /** Answer-free public forms retained for lifetime duplicate detection. */
   recent_assessment_items?: PriorAssessmentItem[]
   updated_at: string
@@ -43,7 +48,18 @@ export interface MemorySummaryForProfile {
   claimed_known: string[]
   claimed_weak: string[]
   quotes: Array<{ field: string; text: string }>
+  learning_barriers?: Array<{ source_id: string; barrier: LearningBarrier; count: number }>
+  confidence_state?: ProfileConfidenceState
+  profile_observations?: Array<{ dimension: ProfileConfidenceDimension; value: string; count: number }>
 }
+
+export function appendLearningBarrier(snapshot: LearnerMemorySnapshot, input: { source_id: string; barrier: LearningBarrier }): LearnerMemorySnapshot {
+  const next = structuredClone(snapshot); const list = next.learning_barriers ?? []; const found = list.find((item) => item.source_id === input.source_id && item.barrier === input.barrier); if (found) found.count += 1; else list.push({ ...input, count: 1 }); next.learning_barriers = list; return next
+}
+export function appendProfileObservation(snapshot: LearnerMemorySnapshot, input: { dimension: ProfileConfidenceDimension; value: string }): LearnerMemorySnapshot {
+  const next = structuredClone(snapshot); const list = next.profile_observations ?? []; const found = list.find((item) => item.dimension === input.dimension && item.value === input.value); if (found) found.count += 1; else list.push({ ...input, count: 1 }); next.profile_observations = list; return next
+}
+export function learnerMemoryProfileProjection(snapshot: LearnerMemorySnapshot): Pick<MemorySummaryForProfile, "learning_barriers" | "confidence_state" | "profile_observations"> { return { learning_barriers: structuredClone(snapshot.learning_barriers ?? []), confidence_state: structuredClone(snapshot.confidence_state), profile_observations: structuredClone(snapshot.profile_observations ?? []) } }
 
 export async function loadLearnerMemory(rootDir: string, learnerId: string): Promise<LearnerMemorySnapshot> {
   try {
@@ -100,6 +116,9 @@ export function appendPersistenceEvents(
 
 export function memorySummaryForProfile(snapshot: LearnerMemorySnapshot): MemorySummaryForProfile {
   return {
+    learning_barriers: structuredClone(snapshot.learning_barriers ?? []),
+    confidence_state: structuredClone(snapshot.confidence_state),
+    profile_observations: structuredClone(snapshot.profile_observations ?? []),
     claimed_known: [...snapshot.mastered_source_ids],
     claimed_weak: [...snapshot.weak_source_ids],
     quotes: [{ field: "learner_memory", text: `learner memory ${snapshot.learner_id}: mastered=${snapshot.mastered_source_ids.join(",")}; weak=${snapshot.weak_source_ids.join(",")}` }],
