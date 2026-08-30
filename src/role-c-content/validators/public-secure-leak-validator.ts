@@ -509,6 +509,17 @@ function codeLabLearnerStrings(payload: CodeLabPublicPayload): string[] {
     ...((payload.hint_ladders ?? []).flatMap((ladder) =>
       ladder.hints.map((hint) => hint.text))),
     ...(payload.reflection_questions ?? []),
+    ...(payload.practical_guide ? [
+      payload.practical_guide.practice_goal,
+      payload.practical_guide.deliverable,
+      ...payload.practical_guide.readiness_checks.flatMap((entry) => [entry.title, entry.check, entry.ready_when]),
+      ...payload.practical_guide.steps.flatMap((entry) => [entry.title, entry.action, entry.input, entry.expected_result, entry.verification]),
+      ...payload.practical_guide.acceptance_criteria.flatMap((entry) => [entry.description, entry.expected_behavior]),
+      ...payload.practical_guide.troubleshooting.flatMap((entry) => [entry.symptom, entry.likely_cause, ...entry.recovery_steps, entry.verification]),
+      payload.practical_guide.extension_task.task,
+      payload.practical_guide.extension_task.changed_dimension,
+      payload.practical_guide.extension_task.verification,
+    ] : []),
   ]
 }
 

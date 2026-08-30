@@ -22,6 +22,7 @@ import type {
   ReviewRevisionContext,
   RunReviewedCPipelineOptions,
 } from "./types"
+import { REVIEW_BLOCK_LOCATOR_FIELDS } from "./types"
 
 export async function runReviewedCPipeline(
   input: CPipelineInput,
@@ -642,18 +643,7 @@ function recoveryActionMatchesScope(
 function validReviewFinding(finding: ContentReviewFinding): boolean {
   const locator = finding.locator
   const locatorValid = locator === undefined || (
-    [
-      "claim",
-      "misconception",
-      "quiz",
-      "hint",
-      "public_test",
-      "starter_code",
-      "render_content",
-      "reflection",
-      "option",
-      "assessment_item",
-    ].includes(locator.field)
+    (REVIEW_BLOCK_LOCATOR_FIELDS as readonly string[]).includes(locator.field)
     && nonEmpty(locator.ref_id)
     && optionalNonEmpty(locator.parent_block_id)
     && optionalNonEmpty(locator.objective_id)

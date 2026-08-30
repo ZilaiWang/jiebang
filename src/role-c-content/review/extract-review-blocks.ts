@@ -48,7 +48,7 @@ export function extractConceptBlocks(artifact: ConceptLessonArtifact): ReviewCon
       { field: "misconception", ref_id: item.misconception_tag, objective_id: item.objective_id },
       item.explanation,
       item.citations,
-      "evidence_anchored",
+      "citation_only",
       "narrative_explanation",
     )),
     ...payload.micro_checks.map((block) => makeBlock(
@@ -77,6 +77,38 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
     payload.objective_coverage.flatMap((coverage) =>
       coverage.instruction_block_ids.map((blockId) => [blockId, coverage.objective_id] as const)),
   )
+  const guide = payload.practical_guide
+  const publicTestCitations = new Map(payload.public_tests.map((test) => [test.test_id, test.citations]))
+  const guideBlocks: ReviewContentBlock[] = guide ? [
+    makeBlock(
+      "code_lab",
+      { field: "practical_guide_goal", ref_id: guide.guide_id, objective_id: guide.extension_task.objective_id },
+      `${guide.practice_goal}\n交付物：${guide.deliverable}`,
+      guide.extension_task.citations,
+      "citation_only",
+      "normative_task",
+    ),
+    ...guide.readiness_checks.map((entry) => makeBlock(
+      "code_lab", { field: "practical_guide_readiness", ref_id: entry.slot_id, objective_id: entry.objective_id },
+      `${entry.title}\n检查：${entry.check}\n就绪标准：${entry.ready_when}`, entry.citations, "citation_only", "normative_task",
+    )),
+    ...guide.steps.map((entry) => makeBlock(
+      "code_lab", { field: "practical_guide_step", ref_id: entry.slot_id, objective_id: entry.objective_id },
+      `${entry.title}\n操作：${entry.action}\n输入：${entry.input}\n预期：${entry.expected_result}\n验证：${entry.verification}`, entry.citations, "citation_only", "normative_task",
+    )),
+    ...guide.acceptance_criteria.map((entry) => makeBlock(
+      "code_lab", { field: "practical_guide_acceptance", ref_id: entry.criterion_id, objective_id: entry.objective_id },
+      `${entry.description}\n预期行为：${entry.expected_behavior}`, publicTestCitations.get(entry.public_test_id) ?? [], "citation_only", "normative_task",
+    )),
+    ...guide.troubleshooting.map((entry) => makeBlock(
+      "code_lab", { field: "practical_guide_troubleshooting", ref_id: entry.slot_id, objective_id: entry.objective_id },
+      `症状：${entry.symptom}\n可能原因：${entry.likely_cause}\n恢复：${entry.recovery_steps.join("；")}\n验证：${entry.verification}`, entry.citations, "citation_only", "normative_task",
+    )),
+    makeBlock(
+      "code_lab", { field: "practical_guide_extension", ref_id: guide.extension_task.slot_id, objective_id: guide.extension_task.objective_id },
+      `${guide.extension_task.task}\n改变维度：${guide.extension_task.changed_dimension}\n验证：${guide.extension_task.verification}`, guide.extension_task.citations, "citation_only", "normative_task",
+    ),
+  ] : []
   return [
     ...payload.instructions.flatMap((block) =>
       reviewRenderBlock(
@@ -118,6 +150,7 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       "citation_only",
       "normative_task",
     )),
+    ...guideBlocks,
   ]
 }
 

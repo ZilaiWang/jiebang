@@ -8,6 +8,7 @@ import type {
   LearnerProfileSnapshot,
   LearningPathNode,
   ProfileDriftSuggestion,
+  ProgrammingTaskPublic,
   PublicRagEvidencePack,
   RoleCLearningSessionDelivery,
   RoleCReviewedReleaseDelivery,
@@ -15,6 +16,8 @@ import type {
   SubmissionEnvelope,
 } from "../role-c-content"
 import type { GenerationRecoveryContext } from "../role-c-content"
+import type { PracticalGuidePublicPayload } from "../role-c-content/planning/practical-guide-plan"
+import type { AssessmentCognitiveLevel, AssessmentDifficultyBand } from "../role-c-content/planning/assessment-taxonomy"
 
 export const ROLE_C_API_PATHS = {
   generate: "/api/role-c/generate",
@@ -34,6 +37,8 @@ export interface RoleDPublicCitation {
 export interface RoleDAssessmentItem {
   id: string
   tier: 1 | 2 | 3
+  difficulty_band?: AssessmentDifficultyBand
+  cognitive_level?: AssessmentCognitiveLevel
   modality: "mcq" | "true_false" | "trace" | "short_answer" | "code"
   prompt: string
   options: string[]
@@ -94,6 +99,8 @@ export interface RoleDCodeLab {
   public_tests: RoleDCodeLabPublicTest[]
   hint_ladders: RoleDCodeLabHintLadder[]
   reflection_questions: string[]
+  programming_task?: ProgrammingTaskPublic
+  practical_guide?: PracticalGuidePublicPayload
 }
 
 export interface RoleDWorkflowEvent {
@@ -301,8 +308,33 @@ export interface RunRoleCCodeLabInput {
   runId: string
   learnerId: string
   labId: string
-  code: string
+  code?: string
+  gapAnswers?: Record<string, string>
 }
+
+export interface DebugRoleCCodeLabInput extends RunRoleCCodeLabInput {
+  publicCaseId?: string
+  customInput?: unknown
+}
+
+export type DebugRoleCCodeLabResult =
+  | {
+      status: "completed"
+      executionId: string
+      runId: string
+      labId: string
+      mode: "sample" | "custom"
+      input: unknown
+      expectedBehavior?: string
+      actual: unknown
+    }
+  | {
+      status: "failed" | "timeout" | "blocked"
+      executionId: string
+      labId: string
+      code: string
+      message: string
+    }
 
 export type RoleCCodeLabFeedbackCode =
   | "assertion_failed"
@@ -330,6 +362,7 @@ export type RunRoleCCodeLabResult =
       passedChecks: number
       totalChecks: number
       scoreRatio: number
+      verdict: import("../role-c-content/programming/contracts").JudgeVerdict
       feedback: RoleCCodeLabFeedback[]
     }
   | {

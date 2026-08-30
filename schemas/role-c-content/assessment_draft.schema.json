@@ -24,6 +24,8 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "assessment_difficulty_band": { "enum": ["foundation", "improvement", "integration", "extension"] },
+    "assessment_cognitive_level": { "enum": ["remember", "understand", "apply", "analyze", "create"] },
     "citation": {
       "type": "object",
       "required": ["source_id", "fact_id", "relation"],
@@ -106,6 +108,8 @@
         "objective_id": { "type": "string", "minLength": 1 },
         "observation_key": { "type": "string", "minLength": 1 },
         "tier": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "difficulty_band": { "$ref": "#/$defs/assessment_difficulty_band" },
+        "cognitive_level": { "$ref": "#/$defs/assessment_cognitive_level" },
         "modality": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] },
         "prompt": { "type": "string", "minLength": 1, "maxLength": 3000 },
         "options": {
@@ -347,6 +351,8 @@
         "item_id": { "type": "string", "minLength": 1 },
         "objective_id": { "type": "string", "minLength": 1 },
         "tier": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "difficulty_band": { "$ref": "#/$defs/assessment_difficulty_band" },
+        "cognitive_level": { "$ref": "#/$defs/assessment_cognitive_level" },
         "modality": { "enum": ["mcq", "true_false", "trace", "short_answer", "code"] },
         "max_score": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
         "answer_spec": { "$ref": "#/$defs/answer_spec" },

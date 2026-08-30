@@ -37,7 +37,8 @@ export function roleCContentModelCallBudget(input: RoleCContentBudgetWorkload): 
   const reviewedReleases = 1 + nonNegativeCount(input.max_external_revisions ?? 2)
 
   const conceptCalls = objectiveCount * candidateCount * authorAttempts
-  const codeLabCalls = candidateCount * authorAttempts + authorAttempts
+  // Public tournament plus independent reference and input-author stages.
+  const codeLabCalls = candidateCount * authorAttempts + 2 * authorAttempts
   const assessmentCalls = assessmentItemCount * candidateCount * authorAttempts + authorAttempts
   // One independent batch critic per concept segment, code lab, and assessment item.
   const candidateCriticCalls = objectiveCount + 1 + assessmentItemCount

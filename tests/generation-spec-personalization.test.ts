@@ -3,6 +3,7 @@ import { contentHash } from "../src/role-c-content/contracts/common"
 import { buildGenerationSpec } from "../src/role-c-content/contracts/generation-spec"
 import { adaptLearnerProfile, defineLearningPathNode } from "../src/role-c-content/contracts/profile-adapter"
 import type { LearnerProfile } from "../src/role-b-profile/types"
+import { validateRoleCSchema } from "../src/role-c-content/validators/runtime-schema-validator"
 
 function fixture() {
   const profile: LearnerProfile = {
@@ -24,7 +25,7 @@ function fixture() {
     objectives: [{
       objective_id: "O1",
       source_id: "K009",
-      required_fact_ids: ["F1"],
+      required_fact_ids: ["F001"],
       observable_behavior: "recognize",
       importance: "core",
     }],
@@ -43,7 +44,7 @@ function fixture() {
     results: [{
       source_id: "K009",
       title: "列表",
-      facts: [{ source_id: "K009", fact_id: "F1", content: "列表可以按顺序保存多个元素。" }],
+      facts: [{ source_id: "K009", fact_id: "F001", content: "列表可以按顺序保存多个元素。" }],
     }],
     evidence_sufficiency: { ok: true, missing_misconception_ids: [], worked_example_count: 1 },
   } as any
@@ -70,6 +71,10 @@ describe("buildGenerationSpec personalization integration", () => {
       progress_state: "building",
     })
     expect(result.spec.personalization_policy).toBeDefined()
+    expect(validateRoleCSchema("generation_spec.schema.json", result.spec)).toMatchObject({
+      ok: true,
+      issues: [],
+    })
   })
 
   test("goal policy does not alter target facts or objective behavior", () => {
@@ -86,7 +91,7 @@ describe("buildGenerationSpec personalization integration", () => {
     if (!result.ok) return
     expect(result.spec.targets[0]).toMatchObject({
       objective_id: "O1",
-      required_fact_ids: ["F1"],
+      required_fact_ids: ["F001"],
       observable_behavior: "recognize",
     })
   })

@@ -73,7 +73,7 @@ describe("project model runtime", () => {
     expect(new ModelExecutionBudget().snapshot().max_model_calls).toBe(
       ROLE_C_CONTENT_MODEL_CALL_BUDGET,
     )
-    expect(ROLE_C_CONTENT_MODEL_CALL_BUDGET).toBe(249)
+    expect(ROLE_C_CONTENT_MODEL_CALL_BUDGET).toBe(258)
   })
 
   test("sizes the content budget from objectives, items, and candidate count", () => {
@@ -81,12 +81,12 @@ describe("project model runtime", () => {
       objective_count: 1,
       assessment_item_count: 5,
       public_candidate_count: 1,
-    })).toBe(123)
+    })).toBe(132)
     expect(roleCContentModelCallBudget({
       objective_count: 2,
       assessment_item_count: 6,
       public_candidate_count: 3,
       max_external_revisions: 0,
-    })).toBe(103)
+    })).toBe(106)
   })
 })

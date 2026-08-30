@@ -54,7 +54,8 @@ import {
   newClientId,
   retryOrchestratorSession,
   runAssessmentCode as requestAssessmentCode,
-  runCodeLab as requestCodeLab,
+  submitCodeLab as requestCodeLab,
+  debugCodeLab as requestCodeLabDebug,
   runExampleCode as requestExampleCode,
   saveProviderConfiguration,
   submitAssessmentAnswers,
@@ -69,6 +70,7 @@ import {
   type FactIndex,
 } from "./fact-lookup"
 import { codeSubmissionHint, labFeedbackExplanations, publicTestChecklist } from "./lab-feedback"
+import { effectiveGapAnswerFormat, gapAnswerGuidance, gapAnswerIssue, gapTemplatePreview } from "./gap-guidance"
 import { LoopVisualizerToggle } from "./loop-visualizer"
 import { LearningLoopStepper } from "./learning-progress"
 import { abilityRadarView, activeAdaptationView, agentTimelineView, answersMatchAssessmentItems, answersToSubmission, assessmentComplete, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, collaborationDrawerView, completedNodeFromPath, diagnosisComplete, finalFeedbackAction, initialGoalSelection, isFinalAdvanceSession, isFinalMasterySession, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, nextRoundResourceGate, nextUnmasteredPathNode, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, resourceMatchView, sessionNeedsEventRefresh, shouldPollOrchestratorSession, type ResourceFitEntry } from "./orchestrator-view"
@@ -155,7 +157,8 @@ export type LiveContextValue = {
   submitProfileClarification: (answers: Array<{ question_id: string; value: string | string[] | number }>) => Promise<void>
   submitAssessment: () => Promise<void>
   runAssessmentItemCode: (itemId: string, code: string) => Promise<void>
-  runPublishedCodeLab: (labId: string, code: string) => Promise<void>
+  runPublishedCodeLab: (labId: string, submission: string | { gap_answers: Record<string, string> }) => Promise<void>
+  debugPublishedCodeLab?: (labId: string, submission: string | { gap_answers: Record<string, string> }, publicCaseId: string) => Promise<void>
   runExampleCode: (code: string) => Promise<any>
   retry: () => Promise<void>
   refreshEvents: () => Promise<void>
@@ -239,9 +242,9 @@ export function App() {
   useEffect(() => {
     getProviderConfiguration().then(setProvider).catch(() => setProvider({ configured: false, provider_mode: "model", endpoint: "", model_id: "" }))
     // 检测 Docker 状态
-    fetch("/health").then(r => r.json()).then(data => {
-      setDockerStatus(data?.docker ?? { ready: false, error: "无法检测 Docker 状态" })
-    }).catch(() => setDockerStatus({ ready: false, error: "无法连接主 Agent，请确认已启动" }))
+    checkDockerReady()
+      .then(setDockerStatus)
+      .catch(() => setDockerStatus({ ready: false, error: "无法连接主 Agent，请确认已启动" }))
   }, [])
 
   useEffect(() => {
@@ -475,17 +478,27 @@ export function App() {
         setError(reason instanceof Error ? reason.message : "代码运行失败")
       } finally { setBusy("") }
     },
-    runPublishedCodeLab: async (labId, code) => {
-      if (!liveSession || !labId || !code.trim()) return
+    runPublishedCodeLab: async (labId, submission) => {
+      if (!liveSession || !labId || (typeof submission === "string" ? !submission.trim() : Object.keys(submission.gap_answers).length === 0)) return
       setBusy("正在通过 Docker 运行代码实验…")
       setError("")
       try {
         await applySession(
-          await requestCodeLab(liveSession.session_id, learnerId, labId, code),
+          await requestCodeLab(liveSession.session_id, learnerId, labId, submission),
           { keepPage: true },
         )
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "代码实验运行失败")
+      } finally { setBusy("") }
+    },
+    debugPublishedCodeLab: async (labId, submission, publicCaseId) => {
+      if (!liveSession || !labId || !publicCaseId || (typeof submission === "string" ? !submission.trim() : Object.keys(submission.gap_answers).length === 0)) return
+      setBusy("正在通过 Docker 调试公开样例…")
+      setError("")
+      try {
+        await applySession(await requestCodeLabDebug(liveSession.session_id, learnerId, labId, submission, { public_case_id: publicCaseId }), { keepPage: true })
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "公开样例调试失败")
       } finally { setBusy("") }
     },
     runExampleCode: async (code) => {
@@ -1046,7 +1059,7 @@ function ResourceMatchCard({ session, resource, assessment, compact = false }: {
 }
 
 function LessonPage({ onAssessment }: { onAssessment: () => void }) {
-  const { retry, reset, runPublishedCodeLab, runExampleCode, busy } = useLive()
+  const { retry, reset, runPublishedCodeLab, debugPublishedCodeLab, runExampleCode, busy } = useLive()
   const activeSession = useRequiredSession()
   const lesson = activeSession.learning_resources.concept_lesson?.payload
   const lab = activeSession.learning_resources.code_lab?.payload
@@ -1063,10 +1076,12 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const [visitedSections, setVisitedSections] = useState<Set<string>>(new Set())
   const [matchOpen, setMatchOpen] = useState(false)
   const [code, setCode] = useState(lab?.starter_code ?? "")
+  const [gapAnswers, setGapAnswers] = useState<Record<string, string>>({})
   const [lastExecutedCode, setLastExecutedCode] = useState<string | null>(null)
   const lessonArtifactId = activeSession.learning_resources.concept_lesson?.artifact_id
   useEffect(() => {
     setCode(lab?.starter_code ?? "")
+    setGapAnswers({})
     setLastExecutedCode(null)
   }, [activeSession.round_no, activeSession.learning_resources.code_lab?.payload?.lab_id])
   // 切到新讲义时清空已读记录（按 artifact 身份隔离，不带旧讲义的进度）。
@@ -1093,7 +1108,7 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
     <div className={`lesson-layout${tab === "lesson" ? "" : " lesson-layout-no-outline"}`}>
       {tab === "lesson" ? <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { handleSectionClick(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>阅读进度</span><div><i style={{ width: `${readingProgress}%` }} /></div><small>已读 {visitedSections.size} / {visibleSectionCount} 节</small></div></aside> : null}
       <section className="lesson-main">
-        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} onRunExample={runExampleCode} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} busy={busy} execution={lastExecutedCode === code && activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onRun={async () => { if (!lab) return; await runPublishedCodeLab(lab.lab_id, code); setLastExecutedCode(code) }} /> : <ChecksContent lesson={lesson} />}
+        {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} onRunExample={runExampleCode} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} gapAnswers={gapAnswers} setGapAnswers={setGapAnswers} busy={busy} execution={activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onDebug={async (publicCaseId) => { if (!lab || !debugPublishedCodeLab) return; const submission = lab.programming_task?.submission_mode === "gap_answers" ? { gap_answers: gapAnswers } : code; await debugPublishedCodeLab(lab.lab_id, submission, publicCaseId) }} onRun={async () => { if (!lab) return; const submission = lab.programming_task?.submission_mode === "gap_answers" ? { gap_answers: gapAnswers } : code; await runPublishedCodeLab(lab.lab_id, submission); setLastExecutedCode(typeof submission === "string" ? submission : JSON.stringify(submission)) }} /> : <ChecksContent lesson={lesson} />}
       </section>
       <aside className="lesson-side">{tab === "checks" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : null}</> : <><div className="side-tabs"><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</>}</aside>
           </div>
@@ -1173,6 +1188,21 @@ function PythonCodeEditor({ value, onChange, minHeight = 260, ariaLabel = "Pytho
   return <div className="python-editor" aria-label={ariaLabel}><Editor value={value} onValueChange={onChange} highlight={highlightPython} padding={16} textareaId={ariaLabel.replace(/\s+/g, "-")} style={{ minHeight, fontFamily: 'Consolas, "Liberation Mono", monospace', fontSize: 13, lineHeight: 1.7 }} /><p className="code-submit-hint">{codeSubmissionHint(executionMode)}</p></div>
 }
 
+function judgeVerdictLabel(verdict: NonNullable<PublicSessionFixture["code_execution"]>["verdict"]): string {
+  return ({
+    accepted: "评测通过",
+    compile_error: "语法错误",
+    wrong_answer: "结果错误",
+    presentation_error: "输出格式错误",
+    runtime_error: "运行时错误",
+    time_limit_exceeded: "运行超时",
+    memory_limit_exceeded: "内存超限",
+    output_limit_exceeded: "输出超限",
+    security_violation: "违反运行规则",
+    internal_error: "评测服务异常",
+  } as const)[verdict ?? "internal_error"]
+}
+
 function CodeViewer({ code, onRun }: { code: string; onRun?: (code: string) => Promise<any> }) {
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<{ status: string; stdout: string; error?: string } | null>(null)
@@ -1202,26 +1232,46 @@ function CodeViewer({ code, onRun }: { code: string; onRun?: (code: string) => P
   </div>
 }
 
-function LabContent({ lab, code, setCode, busy, execution, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onRun: () => Promise<void> }) {
+function LabContent({ lab, code, setCode, gapAnswers, setGapAnswers, busy, execution, onDebug, onRun }: { lab?: CodeLabPayload; code: string; setCode: (code: string) => void; gapAnswers: Record<string, string>; setGapAnswers: (answers: Record<string, string>) => void; busy: string; execution: PublicSessionFixture["code_execution"]; onDebug: (publicCaseId: string) => Promise<void>; onRun: () => Promise<void> }) {
   if (!lab) return <EmptyState title="代码实验尚未发布" body="D 不会自造 starter code 或测试。请等待主 Agent返回 learning_resources.code_lab。" />
+  const task = lab.programming_task
+  const gapMode = task?.submission_mode === "gap_answers" && task.gap_template
+  const gapIssues = gapMode
+    ? Object.fromEntries(task!.gap_template!.gaps.map((gap) => [gap.gap_id, gapAnswerIssue(gap, gapAnswers[gap.gap_id] ?? "")]))
+    : {}
+  const gapReady = Boolean(gapMode && task!.gap_template!.gaps.every((gap) =>
+    gapAnswers[gap.gap_id]?.trim() && !gapIssues[gap.gap_id]))
+  const guidedOutput = Boolean(gapMode && task!.gap_template!.gaps.every((gap) =>
+    effectiveGapAnswerFormat(gap) === "python_string_literal"))
+  const legacyGuidedOutput = Boolean(guidedOutput && task!.gap_template!.gaps.some((gap) => !gap.answer_format))
   const feedback = labFeedbackExplanations(execution?.feedback)
   const checklist = execution && execution.status !== "passed"
     ? publicTestChecklist(lab.public_tests)
     : []
+  const firstPublicCaseId = task?.public_examples[0]?.case_id ?? lab.public_tests[0]?.test_id
   return <div className="lab-workspace">
     <section className="lab-instructions">
       <span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span>
       <h2>{lab.title}</h2>
+      {task ? <article className="programming-task-card"><div className="programming-task-kind">{guidedOutput ? "引导式运行" : task.task_kind === "code_completion" ? "程序填空" : task.task_kind === "function_implementation" ? "函数实现" : task.task_kind === "debugging_repair" ? "调试修复" : "标准输入输出"}</div><h3>{guidedOutput ? "你要完成什么" : "编程任务"}</h3><p>{legacyGuidedOutput ? "这是一道入门运行练习：程序主体已经写好，你只需在右侧唯一的输入框中填写要输出的文字，并用英文引号包起来；不要输入变量名、等号或 print。" : task.statement}</p><dl><div><dt>{guidedOutput ? "你填写" : "输入"}</dt><dd>{task.input_description}</dd></div><div><dt>{guidedOutput ? "程序输出" : "输出"}</dt><dd>{task.output_description}</dd></div></dl><ul>{task.constraints.map((entry) => <li key={entry}>{entry}</li>)}</ul></article> : null}
       {lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}
-      <div className="public-tests"><h3>公开测试</h3>{lab.public_tests.map((test) => <article key={test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div>
+      <div className="public-tests"><h3>公开样例</h3>{(task?.public_examples ?? lab.public_tests).map((test) => <article key={"case_id" in test ? test.case_id : test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div>
     </section>
     <section className="editor-panel">
-      <header><div><Braces size={17} /><b>Python 编辑器</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header>
-      <PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" executionMode={lab.execution_contract.execution_mode} />
-      <footer><button type="button" onClick={() => setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="run-button" disabled={Boolean(busy) || !code.trim()} type="button" onClick={() => void onRun()}><Play size={15} /> {busy ? "运行中…" : "运行代码"}</button></footer>
+      <header><div><Braces size={17} /><b>{guidedOutput ? "填写并运行" : gapMode ? "程序填空" : "Python 编辑器"}</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header>
+      {gapMode ? <div className="gap-editor">
+        <div className="gap-howto"><b>只填写下面的空格</b><span>不用复制整段代码。你填写后，系统会自动放入完整程序。</span></div>
+        <div className="gap-preview-head"><b>完整代码预览</b><small>方括号表示尚未填写的位置，不是需要输入的代码。</small></div>
+        <pre aria-label="填写后的完整代码预览">{gapTemplatePreview(task!.gap_template!, gapAnswers)}</pre>
+        {task!.gap_template!.gaps.map((gap) => {
+          const issue = gapIssues[gap.gap_id]
+          return <label key={gap.gap_id}><b>{gap.label}</b><small>{gapAnswerGuidance(gap)}</small>{gap.max_lines > 1 ? <textarea value={gapAnswers[gap.gap_id] ?? ""} placeholder={gap.placeholder ?? "填写代码"} onChange={(event) => setGapAnswers({ ...gapAnswers, [gap.gap_id]: event.target.value })} /> : <input value={gapAnswers[gap.gap_id] ?? ""} placeholder={gap.placeholder ?? "填写代码"} onChange={(event) => setGapAnswers({ ...gapAnswers, [gap.gap_id]: event.target.value })} />}{issue ? <span className="gap-answer-error" role="alert">{issue}</span> : null}</label>
+        })}
+      </div> : <PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" executionMode={lab.execution_contract.execution_mode} />}
+      <footer><button type="button" onClick={() => gapMode ? setGapAnswers({}) : setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="secondary-action" disabled={Boolean(busy) || !firstPublicCaseId || (gapMode ? !gapReady : !code.trim())} type="button" onClick={() => firstPublicCaseId && void onDebug(firstPublicCaseId)}><Play size={15} /> 调试公开样例</button><button className="run-button" disabled={Boolean(busy) || (gapMode ? !gapReady : !code.trim())} type="button" onClick={() => void onRun()}><ShieldCheck size={15} /> {busy ? "评测中…" : "正式提交"}</button></footer>
       {execution ? <div className={`run-result is-visible ${execution.status === "passed" ? "" : "is-fail"}`.trim()} role="status">
-        <b>{execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b>
-        <p>{typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>
+        <b>{execution.status === "completed" ? "公开样例调试完成" : execution.verdict ? judgeVerdictLabel(execution.verdict) : execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b>
+        <p>{execution.status === "completed" ? `实际结果：${typeof execution.actual === "string" ? execution.actual : JSON.stringify(execution.actual)}` : typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>
         {feedback.length ? <div className="failure-reasons">{feedback.map((entry) => <p key={entry.code}><b>{entry.label}</b>{entry.message}</p>)}</div> : null}
         {checklist.length ? <details className="public-test-checklist"><summary>按公开测试自查</summary>{checklist.map((item) => <article key={item.test_id}><b>{item.description}</b><p>{item.expected_behavior}</p></article>)}</details> : null}
       </div> : null}

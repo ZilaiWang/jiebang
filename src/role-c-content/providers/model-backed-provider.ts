@@ -44,6 +44,8 @@ import {
   ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
   CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT,
+  CODE_LAB_REFERENCE_STAGE_SYSTEM_PROMPT,
+  CODE_LAB_TEST_INPUT_STAGE_SYSTEM_PROMPT,
   CODE_LAB_EXECUTION_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_PUBLIC_SAFETY_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_STARTER_REPAIR_SYSTEM_PROMPT,
@@ -86,6 +88,7 @@ import {
   mapWithConcurrency,
   mergeConceptSegments,
   canonicalizeTestComparison,
+  classifyOutputContract,
   asStandardInput,
   normalizeAssessmentPair,
   expectedOnlyReferenceFailureCodes,
@@ -110,6 +113,8 @@ import {
   type CodeLabObjectivePlan,
   type CodeLabPublicAuthorPayload,
   type CodeLabSecureAuthorPayload,
+  type CodeLabReferenceAuthorPayload,
+  type CodeLabTestInputsAuthorPayload,
   type AssessmentSecureAuthorPayload,
   type AssessmentPublicAuthorPayload,
   type AssessmentItemPlan,
@@ -128,6 +133,7 @@ import {
   validateAssessmentPairValidity,
   validateAssessmentPublicValidity,
 } from "../quality/assessment-validity"
+import { validateInputCandidates } from "../programming/test-plan"
 
 export interface ModelBackedProviderOptions {
   /** Staged is the production path; monolithic remains available for compatibility and benchmarks. */
@@ -479,6 +485,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const publicModelInput = projectCodeLabPublicModelInput(modelInput, objectivePlan)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const taskContract = request.resource_blueprint?.code_lab.task_contract
+    const practicalGuidePlan = request.resource_blueprint?.code_lab.practical_guide_plan
+    const programmingProblem = request.resource_blueprint?.code_lab.programming_problem
     // 执行接口由 planning 层的 CodeLabTaskContract 决定（先设计题，再定判题接口）。
     // 生产路径（content-pipeline / worker-adapters）必须先构建 blueprint 传入契约；
     // deriveCodeLabExecutionMode 仅作为显式标记的兼容 fallback（单测/脚本/旧数据），
@@ -506,6 +514,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           objective_plan: objectivePlan,
           execution_mode: executionMode,
           ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
+          ...(practicalGuidePlan ? { practical_guide_plan: structuredClone(practicalGuidePlan) } : {}),
+          ...(programmingProblem ? { programming_problem: structuredClone(programmingProblem) } : {}),
         },
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
@@ -544,6 +554,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedAuthor,
           objectivePlan,
           taskContract,
+          practicalGuidePlan,
+          programmingProblem,
         )
         if (planIssues.length > 0) return planIssues
         const normalized = materializeCodeLabPublicAuthorPayload(
@@ -551,6 +563,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedAuthor,
           identity.lab_id,
           objectivePlan,
+          practicalGuidePlan,
+          programmingProblem,
         )
         return validationIssues(validateCodeLabPublicStage(request, normalized))
       },
@@ -571,6 +585,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         contract: {
           targets: publicModelInput.contract.targets,
           task_contract: taskContract,
+          programming_problem: programmingProblem,
           objective_plan: objectivePlan,
         },
       }),
@@ -594,17 +609,19 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       normalizedPublicAuthor,
       identity.lab_id,
       objectivePlan,
+      practicalGuidePlan,
+      programmingProblem,
     )
     const securePlan = request.resource_blueprint?.code_lab.secure_plan
       ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
-    const publicTestInputs = normalizedPublic.public_tests.map((test) => test.input)
-    const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- 若本任务需要读取输入：hidden_tests[].input 请用能覆盖边界、反例、极端情况的「新数据」，避开这些 public 已用的输入：${JSON.stringify(publicTestInputs)}，并根据 reference_solution 重算 expected。\n- 若本任务是纯输出（不读取输入）：public 和 hidden 的 input 都留空（""）是合法的，区分度放在 expected 输出内容上，不要求 input 不同。\n- function 模式的参数用结构不同的非空封装，并重算 expected。`
-    const secureAuthorPayload = taskContract?.learner_action === "recall_fact"
-      ? materializeRecallFactSecureAuthorPayload(request, securePlan)
-      : await this.generateStage<CodeLabSecureAuthorPayload>({
-      task: "role-c.code-lab.secure",
-      system_prompt: CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT,
-      input: {
+    const publicInputRecords = [
+      ...normalizedPublic.public_tests.map((test) => ({ input: structuredClone(test.input) })),
+      ...(normalizedPublic.programming_task?.public_examples.map((test) => ({ input: structuredClone(test.input) })) ?? []),
+    ].filter((entry, index, entries) => entries.findIndex((candidate) =>
+      contentHash(candidate.input) === contentHash(entry.input)) === index)
+    const publicTestInputs = publicInputRecords.map((entry) => entry.input)
+    const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- hidden_tests[].input 使用覆盖典型、边界、防硬编码和错误路径的新数据，避开 public 输入：${JSON.stringify(publicTestInputs)}。\n- 只输出 input/partition_id/note/misconception_tag；不得输出 expected 或 comparison，可信 Docker 会执行参考解计算标准答案。\n- 纯输出任务可以使用空 input；function 模式必须使用 args/kwargs 调用封装。`
+    const secureStageInput = {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
         concept: modelInput.concept,
@@ -615,58 +632,99 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           test_suite_id: identity.test_suite_id,
           execution_contract: normalizedPublic.execution_contract,
           ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
+          ...(programmingProblem ? { programming_problem: structuredClone(programmingProblem) } : {}),
           objective_plan: securePlan,
         },
         private_input_rules: secureInputRules,
-      },
-      output_schema_id: "role_c_code_lab_secure_author_payload_v1",
-      output_schema: fragment("code_lab_draft.schema.json", "/$defs/secure_author_payload"),
-      temperature: 0,
-      max_tokens: this.codeLabSecureMaxTokens,
-      idempotency_identity: {
-        spec_id: request.generation_spec.spec_id,
-        lab_id: identity.lab_id,
-        public_hash: contentHash(normalizedPublic),
-        stage: "secure",
-        prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
-      },
-      max_repairs: maxRepairs,
-      diagnostic_sink: this.stageFailureDiagnosticSink,
-      validate: (payload) => {
-        const schema = validateRoleCSchemaFragment("code_lab_draft.schema.json", "/$defs/secure_author_payload", payload)
-        if (!schema.ok) return validationIssues(schema)
-        const normalizedAuthor = normalizeCodeLabSecureAuthorPayload(
-          normalizeCodeLabSecureAuthorPayloadLenient(
-            payload,
-            securePlan,
-            normalizedPublic.execution_contract.execution_mode,
-            normalizedPublic.public_tests.map((test) => test.input),
-            normalizedPublic.execution_contract.output_contract,
-          ),
-          normalizedPublic.execution_contract,
-        )
-        const authorIssues = validateCodeLabSecureAuthorAgainstPlan(
-          normalizedAuthor,
-          securePlan,
-          normalizedPublic.execution_contract.execution_mode,
-        )
-        if (authorIssues.length > 0) return authorIssues
-        const normalized = materializeCodeLabSecureAuthorPayload(
-          request.generation_spec,
-          normalizedAuthor,
-          normalizedPublic,
-          identity.test_suite_id,
-          securePlan,
-        )
-        const planIssues = validateCodeLabSecureAgainstPlan(normalized, securePlan)
-        if (planIssues.length > 0) return planIssues
-        const report = validateCodeLabDraftStructure(request, {
-          public_draft: { payload: normalizedPublic },
-          secure_draft: { payload: normalized },
-        })
-        return validationIssuesExcludingRepairablePublicAnswerLeak(report)
-      },
-        })
+      }
+    const secureAuthorPayload: CodeLabSecureAuthorPayload = taskContract?.learner_action === "recall_fact"
+      ? materializeRecallFactSecureAuthorPayload(request, securePlan)
+      : await (async () => {
+          const identityBase = {
+            spec_id: request.generation_spec.spec_id,
+            lab_id: identity.lab_id,
+            public_hash: contentHash(normalizedPublic),
+            prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+          }
+          const reference = await this.generateStage<CodeLabReferenceAuthorPayload>({
+            task: "role-c.code-lab.reference",
+            system_prompt: CODE_LAB_REFERENCE_STAGE_SYSTEM_PROMPT,
+            input: secureStageInput,
+            output_schema_id: "role_c_code_lab_secure_reference_author_payload_v1",
+            output_schema: fragment("code_lab_draft.schema.json", "/$defs/secure_reference_author_payload"),
+            temperature: 0,
+            max_tokens: this.codeLabSecureMaxTokens,
+            idempotency_identity: { ...identityBase, stage: "reference" },
+            max_repairs: maxRepairs,
+            diagnostic_sink: this.stageFailureDiagnosticSink,
+            validate: (payload) => {
+              const schema = validateRoleCSchemaFragment("code_lab_draft.schema.json", "/$defs/secure_reference_author_payload", payload)
+              if (!schema.ok) return validationIssues(schema)
+              const issues: string[] = []
+              if (Boolean(payload.secondary_reference_solution) !== Boolean(programmingProblem?.require_secondary_oracle)) {
+                issues.push(programmingProblem?.require_secondary_oracle
+                  ? "高难任务必须提供 secondary_reference_solution"
+                  : "当前任务不得提供 secondary_reference_solution")
+              }
+              if (payload.mutation_variants.length !== securePlan.mutation_variants.length) {
+                issues.push(`mutation_variants 数量应为 ${securePlan.mutation_variants.length}`)
+              }
+              payload.mutation_variants.forEach((entry, index) => {
+                const planned = securePlan.mutation_variants[index]
+                if (planned && entry.misconception_tag !== planned.misconception_id) {
+                  issues.push(`mutation_variants[${index}] misconception_tag 应为 ${planned.misconception_id}`)
+                }
+              })
+              return issues
+            },
+          })
+          const inputs = await this.generateStage<CodeLabTestInputsAuthorPayload>({
+            task: "role-c.code-lab.test-inputs",
+            system_prompt: CODE_LAB_TEST_INPUT_STAGE_SYSTEM_PROMPT,
+            input: { ...secureStageInput, reference_contract: { reference_hash: contentHash(reference.reference_solution) } },
+            output_schema_id: "role_c_code_lab_secure_test_inputs_author_payload_v1",
+            output_schema: fragment("code_lab_draft.schema.json", "/$defs/secure_test_inputs_author_payload"),
+            temperature: 0.15,
+            max_tokens: this.codeLabSecureMaxTokens,
+            idempotency_identity: { ...identityBase, reference_hash: contentHash(reference.reference_solution), stage: "test-inputs" },
+            max_repairs: maxRepairs,
+            diagnostic_sink: this.stageFailureDiagnosticSink,
+            validate: (payload) => {
+              const schema = validateRoleCSchemaFragment("code_lab_draft.schema.json", "/$defs/secure_test_inputs_author_payload", payload)
+              if (!schema.ok) return validationIssues(schema)
+              const combined: CodeLabSecureAuthorPayload = { ...reference, hidden_tests: payload.hidden_tests.map((test) => ({ ...test, comparison: { kind: "exact" as const } })) }
+              const normalized = normalizeCodeLabSecureAuthorPayload(
+                normalizeCodeLabSecureAuthorPayloadLenient(combined, securePlan, normalizedPublic.execution_contract.execution_mode, publicTestInputs, normalizedPublic.execution_contract.output_contract),
+                normalizedPublic.execution_contract,
+              )
+              const planIssues = validateCodeLabSecureAuthorAgainstPlan(
+                normalized,
+                securePlan,
+                normalizedPublic.execution_contract.execution_mode,
+                programmingProblem,
+              )
+              if (!programmingProblem) return planIssues
+              return [
+                ...planIssues,
+                ...validateInputCandidates(
+                  programmingProblem,
+                  publicInputRecords,
+                  normalized.hidden_tests.map((test, index) => ({
+                    case_id: securePlan.hidden_tests[index]?.test_id ?? `hidden-${index + 1}`,
+                    input: structuredClone(test.input),
+                    partition_id: test.partition_id ?? "nominal",
+                    note: test.note ?? "",
+                    ...(test.misconception_tag ? { misconception_tag: test.misconception_tag } : {}),
+                  })),
+                ).issues,
+              ]
+            },
+          })
+          return {
+            ...reference,
+            hidden_tests: inputs.hidden_tests.map((test) => ({ ...test, comparison: { kind: "exact" as const } })),
+          }
+        })()
     const normalizedSecureAuthorPayload = normalizeCodeLabSecureAuthorPayload(
       normalizeCodeLabSecureAuthorPayloadLenient(
         secureAuthorPayload,
@@ -683,6 +741,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       normalizedPublic,
       identity.test_suite_id,
       securePlan,
+      Boolean(programmingProblem),
     )
     const initialReport = validateCodeLabDraftStructure(request, {
       public_draft: { payload: normalizedPublic },
@@ -736,10 +795,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
 
     const modelInput = buildCodeLabModelInput(request)
     const identity = buildLabIdentity(request.generation_spec)
-    const objectivePlan = buildCodeLabSecurePlan(
-      request.generation_spec,
-      identity.test_suite_id,
-    )
+    const objectivePlan = request.resource_blueprint?.code_lab.secure_plan
+      ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
     let publicPayload = structuredClone(draft.public_draft.payload)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const verificationIssues = feedback.issues
@@ -856,7 +913,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           feedback,
         )
         if (patchIssues.length > 0) return patchIssues
-        const repaired = normalizeCodeLabSecure(
+        let repaired = normalizeCodeLabSecure(
           request.generation_spec,
           applyCodeLabExecutionRepairPatch(
             draft.secure_draft.payload,
@@ -866,6 +923,9 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           identity.test_suite_id,
           objectivePlan,
         )
+        if (request.resource_blueprint?.code_lab.programming_problem) {
+          repaired = markTrustedExpectedPending(repaired)
+        }
         const planIssues = validateCodeLabSecureAgainstPlan(
           repaired,
           objectivePlan,
@@ -877,7 +937,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           feedback,
         )
         if (progressIssues.length > 0) return progressIssues
-        return validationIssues(validateCodeLabDraftStructure(request, {
+        return validationIssuesExcludingRepairablePublicAnswerLeak(validateCodeLabDraftStructure(request, {
           public_draft: { payload: publicPayload },
           secure_draft: { payload: repaired },
         }))
@@ -896,13 +956,16 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       repairedSecure,
       verificationIssues,
     )
-    const securePayload = normalizeCodeLabSecure(
+    let securePayload = normalizeCodeLabSecure(
       request.generation_spec,
       securedWithExpected,
       publicPayload,
       identity.test_suite_id,
       objectivePlan,
     )
+    if (request.resource_blueprint?.code_lab.programming_problem) {
+      securePayload = markTrustedExpectedPending(securePayload)
+    }
     return {
       public_draft: { payload: publicPayload },
       secure_draft: { payload: securePayload },
@@ -1425,10 +1488,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const { request } = input
     const modelInput = buildCodeLabModelInput(request)
     const identity = buildLabIdentity(request.generation_spec)
-    const securePlan = buildCodeLabSecurePlan(
-      request.generation_spec,
-      identity.test_suite_id,
-    )
+    const securePlan = request.resource_blueprint?.code_lab.secure_plan
+      ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const validatePatch = (candidatePatch: CodeLabPublicSafetyRepairPatch): string[] => {
       const schema = validateRoleCSchemaFragment(
@@ -1460,10 +1521,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         identity.test_suite_id,
         securePlan,
       )
-      return validationIssues(validateCodeLabDraftStructure(request, {
+      return validationIssueStrings({ issues: validateCodeLabDraftStructure(request, {
         public_draft: { payload: candidate },
         secure_draft: { payload: frozenSecure },
-      }))
+      }).issues.filter((issue) => !isTrustedExpectedDerivationIssue(issue.code)) })
     }
     const issueCodes = validateCodeLabDraftStructure(request, {
       public_draft: { payload: input.public_payload },
@@ -1472,18 +1533,24 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const deterministicRepair = shouldUseDeterministicPublicSafetyRepair(issueCodes)
     let patch: CodeLabPublicSafetyRepairPatch
     if (deterministicRepair) {
-      patch = conservativeCodeLabPublicSafetyPatch(
+      const candidate = conservativeCodeLabPublicSafetyRepair(
         input.public_payload,
         input.secure_payload.reference_solution,
       )
-      const fallbackIssues = validatePatch(patch)
+      const fallbackIssues = validateCodeLabPublicSafetyRepairCandidate(
+        request,
+        candidate,
+        input.secure_payload,
+        identity.test_suite_id,
+        securePlan,
+      )
       if (fallbackIssues.length > 0) {
         throw new ModelOutputValidationError(
           "role-c.code-lab.public.safety-repair",
           fallbackIssues,
         )
       }
-      return applyCodeLabPublicSafetyPatch(input.public_payload, patch)
+      return candidate
     }
     try {
       patch = await this.generateStage<CodeLabPublicSafetyRepairPatch>({
@@ -1544,10 +1611,8 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     const { request } = input
     const modelInput = buildCodeLabModelInput(request)
     const identity = buildLabIdentity(request.generation_spec)
-    const securePlan = buildCodeLabSecurePlan(
-      request.generation_spec,
-      identity.test_suite_id,
-    )
+    const securePlan = request.resource_blueprint?.code_lab.secure_plan
+      ?? buildCodeLabSecurePlan(request.generation_spec, identity.test_suite_id)
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
     const starterPatch = await this.generateStage<CodeLabStarterRepairPatch>({
       task: "role-c.code-lab.public.starter-repair",
@@ -2190,6 +2255,7 @@ const REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES = new Set([
 ])
 
 const DETERMINISTIC_STARTER_LEAK_CODES = new Set([
+  "reference_solution_leak",
   "starter_equals_reference",
 ])
 
@@ -2293,10 +2359,15 @@ export function conservativeCodeLabPublicSafetyPatch(
   prior: CodeLabPublicPayload,
   referenceSolution?: string,
 ): CodeLabPublicSafetyRepairPatch {
-  const starterCode = minimalSafeStarter(
-    prior.starter_code,
-    prior.execution_contract,
+  const normalize = (text: string) => text.replace(/#[^\n]*/g, "").replace(/\s+/g, "").trim()
+  const normalizedReference = normalize(referenceSolution ?? "")
+  const normalizedStarter = normalize(prior.starter_code)
+  const starterContainsCompleteReference = Boolean(
+    normalizedReference && normalizedStarter.includes(normalizedReference),
   )
+  const starterCode = starterContainsCompleteReference
+    ? minimalSafeStarter(prior.starter_code, prior.execution_contract)
+    : prior.starter_code
   const sanitize = (value: string, fallback: string) =>
     referenceSolution && containsReferenceImplementationLine(
       value,
@@ -2336,6 +2407,152 @@ export function conservativeCodeLabPublicSafetyPatch(
     reflection_questions: prior.reflection_questions.map((question) =>
       sanitize(question, "你的实现如何对应题目的输入、处理和输出要求？")),
   }
+}
+
+/**
+ * Removes reference implementation material from every learner-visible code-lab
+ * surface.  The legacy repair patch predates programming_task/practical_guide,
+ * so applying it alone can leave the exact answer in the richer task card.
+ */
+export function conservativeCodeLabPublicSafetyRepair(
+  prior: CodeLabPublicPayload,
+  referenceSolution: string,
+): CodeLabPublicPayload {
+  const repaired = applyCodeLabPublicSafetyPatch(
+    prior,
+    conservativeCodeLabPublicSafetyPatch(prior, referenceSolution),
+  )
+  const sanitize = (value: string, fallback: string): string =>
+    containsReferenceImplementationLine(value, referenceSolution, repaired.starter_code)
+      ? fallback
+      : value
+
+  if (repaired.programming_task) {
+    const task = structuredClone(repaired.programming_task)
+    task.statement = sanitize(
+      task.statement,
+      "请按照输入、输出和约束完成程序；只修改题目指定的学习者作答区域。",
+    )
+    task.input_description = sanitize(task.input_description, "输入格式以执行合同为准。")
+    task.output_description = sanitize(task.output_description, "输出应满足题目声明的可观察行为。")
+    task.constraints = task.constraints.map((entry) =>
+      sanitize(entry, "实现必须满足题目给出的执行合同与边界约束。"))
+    if (task.starter_code) {
+      task.starter_code = sanitizeCodeLabPublicCode(
+        task.starter_code,
+        referenceSolution,
+        repaired.starter_code,
+      )
+    }
+    if (task.gap_template) {
+      task.gap_template.template_code = sanitizeCodeLabPublicCode(
+        task.gap_template.template_code,
+        referenceSolution,
+        task.gap_template.template_code,
+      )
+    }
+    task.public_examples = task.public_examples.map((example, index) => ({
+      ...example,
+      description: sanitize(example.description, `公开样例 ${index + 1}`),
+      expected_behavior: sanitize(
+        example.expected_behavior,
+        "输出应满足题面声明的行为。",
+      ),
+    }))
+    task.hint_ladders = task.hint_ladders.map((hint) => ({
+      ...hint,
+      text: sanitize(hint.text, [
+        "先确认输入、输出和待完成区域。",
+        "把任务拆成读取、处理与输出三个步骤。",
+        "用公开样例逐项检查自己的实现。",
+      ][hint.level - 1]!),
+    }))
+    repaired.programming_task = task
+  }
+
+  if (repaired.practical_guide) {
+    const guide = structuredClone(repaired.practical_guide)
+    guide.practice_goal = sanitize(guide.practice_goal, "完成并验证本轮编程任务。")
+    guide.deliverable = sanitize(guide.deliverable, "一份满足执行合同的可运行程序。")
+    guide.readiness_checks = guide.readiness_checks.map((check) => ({
+      ...check,
+      title: sanitize(check.title, "准备检查"),
+      check: sanitize(check.check, "确认输入、输出和允许使用的工具。"),
+      ready_when: sanitize(check.ready_when, "能够说明任务的输入与输出。"),
+    }))
+    guide.steps = guide.steps.map((step) => ({
+      ...step,
+      title: sanitize(step.title, `步骤 ${step.sequence}`),
+      action: sanitize(step.action, "实现当前步骤要求的行为。"),
+      input: sanitize(step.input, "使用题目给出的公开输入。"),
+      expected_result: sanitize(step.expected_result, "结果符合当前步骤的公开约束。"),
+      verification: sanitize(step.verification, "运行公开样例并核对结果。"),
+    }))
+    guide.acceptance_criteria = guide.acceptance_criteria.map((criterion) => ({
+      ...criterion,
+      description: sanitize(criterion.description, "通过对应公开测试。"),
+      expected_behavior: sanitize(criterion.expected_behavior, "行为符合题面约束。"),
+    }))
+    guide.troubleshooting = guide.troubleshooting.map((item) => ({
+      ...item,
+      symptom: sanitize(item.symptom, "运行结果与公开样例不一致。"),
+      likely_cause: sanitize(item.likely_cause, "输入、处理或输出步骤存在偏差。"),
+      recovery_steps: item.recovery_steps.map((step) =>
+        sanitize(step, "逐项对照执行合同和公开样例定位偏差。")),
+      verification: sanitize(item.verification, "重新运行公开样例确认修复。"),
+    }))
+    guide.extension_task = {
+      ...guide.extension_task,
+      task: sanitize(guide.extension_task.task, "在保持执行合同的前提下完成一个变式。"),
+      changed_dimension: sanitize(guide.extension_task.changed_dimension, "输入边界"),
+      verification: sanitize(guide.extension_task.verification, "运行公开样例和新增边界样例。"),
+    }
+    repaired.practical_guide = guide
+  }
+  return repaired
+}
+
+function sanitizeCodeLabPublicCode(
+  value: string,
+  referenceSolution: string,
+  fallback: string,
+): string {
+  const normalize = (text: string) => text.replace(/#[^\n]*/g, "").replace(/\s+/g, "").trim()
+  const reference = normalize(referenceSolution)
+  const current = normalize(value)
+  if (reference && current.includes(reference)) return fallback
+  const referenceLines = referenceSolution.split(/\r?\n/u)
+    .map(normalize)
+    .filter((line) => line.length >= 6)
+  if (!referenceLines.some((line) => current.includes(line))) return value
+  return value.split(/\r?\n/u).map((line) => {
+    const normalized = normalize(line)
+    if (!referenceLines.includes(normalized)) return line
+    const indent = /^\s*/u.exec(line)?.[0] ?? ""
+    return `${indent}# TODO: 完成此步骤`
+  }).join("\n")
+}
+
+function validateCodeLabPublicSafetyRepairCandidate(
+  request: CodeLabRequest,
+  candidate: CodeLabPublicPayload,
+  securePayload: CodeLabSecurePayload,
+  testSuiteId: string,
+  securePlan: ReturnType<typeof buildCodeLabSecurePlan>,
+): string[] {
+  const publicIssues = validationIssues(validateCodeLabPublicStage(request, candidate))
+  if (publicIssues.length > 0) return publicIssues
+  const frozenSecure = normalizeCodeLabSecure(
+    request.generation_spec,
+    securePayload,
+    candidate,
+    testSuiteId,
+    securePlan,
+  )
+  return validationIssueStrings({ issues: validateCodeLabDraftStructure(request, {
+    public_draft: { payload: candidate },
+    secure_draft: { payload: frozenSecure },
+  }).issues.filter((issue) => !isTrustedExpectedDerivationIssue(issue.code)) })
 }
 
 function codeLabPublicSafetyRepairSchema(
@@ -2400,7 +2617,42 @@ export function normalizeCodeLabPublicAuthorPayload(
       ]
       objective.reflection_question = "你填写的文本如何完整表达本目标给出的事实？"
     }
+    if (normalized.programming_task) {
+      normalized.programming_task.gap_template = {
+        schema_version: "code-gap-template.v1",
+        template_code: [
+          "# 只填写当前事实对应的字符串表达式",
+          "fact_text = {{gap:fact_text}}",
+          "print(fact_text)",
+          "",
+        ].join("\n"),
+        gaps: [{
+          gap_id: "fact_text",
+          label: "要输出的文字（需要包含引号）",
+          kind: "expression",
+          answer_format: "python_string_literal",
+          max_chars: 500,
+          max_lines: 1,
+          placeholder: "例如：\"一行文字\"",
+        }],
+      }
+    }
   }
+  normalized.programming_task?.gap_template?.gaps.forEach((gap, index) => {
+    gap.answer_format ??= gap.kind === "identifier"
+      ? "python_identifier"
+      : gap.kind === "statement" || gap.kind === "block"
+        ? "python_statement"
+        : "python_expression"
+    if (!gap.label.trim() || /^(?:gap|空|todo|待填)$/iu.test(gap.label.trim())) {
+      gap.label = `第 ${index + 1} 处要补全的代码`
+    }
+    gap.placeholder ??= gap.answer_format === "python_identifier"
+      ? "例如：total"
+      : gap.answer_format === "python_statement"
+        ? "填写一条 Python 语句"
+        : "填写一个 Python 表达式"
+  })
   return normalized
 }
 
@@ -2447,16 +2699,40 @@ function normalizeCodeLabSecureAuthorPayload(
       contract.entry_point,
       normalized.hidden_tests.map((test) => test.input),
     )
+    if (normalized.secondary_reference_solution) {
+      normalized.secondary_reference_solution = ensureZeroArgumentEntryPoint(
+        normalizeFunctionReturnSemantics(normalized.secondary_reference_solution),
+        contract.entry_point,
+        normalized.hidden_tests.map((test) => test.input),
+      )
+    }
   } else {
     normalized.reference_solution = ensureZeroArgumentFunctionIsInvoked(
       normalized.reference_solution,
     )
-    normalizePrintedStdoutExpectations(
-      normalized.reference_solution,
-      normalized.hidden_tests,
-    )
+    if (normalized.secondary_reference_solution) {
+      normalized.secondary_reference_solution = ensureZeroArgumentFunctionIsInvoked(
+        normalized.secondary_reference_solution,
+      )
+    }
+    const legacyExpected = normalized.hidden_tests.filter((test): test is typeof test & {
+      expected: unknown
+      comparison: { kind: string }
+    } => test.expected !== undefined && test.comparison !== undefined)
+    normalizePrintedStdoutExpectations(normalized.reference_solution, legacyExpected)
   }
   return normalized
+}
+
+function markTrustedExpectedPending(payload: CodeLabSecurePayload): CodeLabSecurePayload {
+  const pending = structuredClone(payload)
+  pending.hidden_tests.forEach((test) => {
+    test.expected = { __trusted_expected_pending__: true }
+    test.comparison = classifyOutputContract(pending.execution_contract.output_contract) === "number"
+      ? { kind: "numeric", abs_tolerance: 1e-9, rel_tolerance: 1e-9 }
+      : { kind: "exact" }
+  })
+  return pending
 }
 
 function normalizeAssessmentSecureAuthorPayload(
@@ -2627,11 +2903,6 @@ function normalizeCodeLabExecutionRepairPatch(
     structuredClone(test.input),
   ]))
   normalized.hidden_test_repairs.forEach((test) => {
-    test.comparison = canonicalizeTestComparison(test.comparison as unknown, test.expected)
-    if (test.comparison.kind === "numeric" && typeof test.expected === "string") {
-      const coerced = Number(test.expected.trim())
-      if (Number.isFinite(coerced)) test.expected = coerced
-    }
     const input = contract.execution_mode === "function"
       ? normalizeEmptyFunctionInvocation(test.input)
       : asStandardInput(test.input)
@@ -2648,10 +2919,6 @@ function normalizeCodeLabExecutionRepairPatch(
     } else {
       normalized.reference_solution = ensureZeroArgumentFunctionIsInvoked(
         normalized.reference_solution,
-      )
-      normalizePrintedStdoutExpectations(
-        normalized.reference_solution,
-        normalized.hidden_test_repairs,
       )
     }
   }

@@ -57,6 +57,10 @@ export function createCodeLabAgent(
         let verification = verifier
           ? await verifier.verifyCodeLab(request, structuredClone(draft))
           : { execution_verified: false, issues: ["未配置独立 code-lab verifier"] }
+        if (verification.materialized_draft) {
+          draft = structuredClone(verification.materialized_draft)
+          structural = validateCodeLabDraftStructure(request, draft)
+        }
         const activeVerifier = verifier
         const repairAfterVerification = provider.repairCodeLabAfterVerification?.bind(provider)
         const verificationRepairLimit = activeVerifier
@@ -108,6 +112,10 @@ export function createCodeLabAgent(
             request,
             structuredClone(draft),
           )
+          if (verification.materialized_draft) {
+            draft = structuredClone(verification.materialized_draft)
+            structural = validateCodeLabDraftStructure(request, draft)
+          }
         }
         const objectiveCoverage = verification.objective_coverage ?? structural.objective_coverage
         return {

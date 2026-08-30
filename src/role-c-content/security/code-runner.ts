@@ -27,6 +27,8 @@ export interface CodeExecutionRequest {
   memory_mb: number
   max_output_bytes: number
   network_allowed: false
+  /** Trust-plane only: return raw reference outputs instead of comparing them. */
+  derive_expected?: true
 }
 
 export interface CodeExecutionResult {
@@ -36,6 +38,8 @@ export interface CodeExecutionResult {
   score_ratio: number
   failure_codes: string[]
   runner_image_digest: string
+  /** Present only for trusted reference-oracle execution. Never return to learners. */
+  derived_outputs?: unknown[]
 }
 
 export interface CodeTestSuiteResolver {
@@ -311,7 +315,9 @@ export class DockerPythonCodeRunner implements CodeRunner {
       if (!isDockerHarnessResponse(parsed, suite.tests.length)) {
         return runnerError(this.runner_image_digest, "invalid_runner_response", totalTests)
       }
-      return evaluateHarnessResults(parsed.results, suite.tests, this.runner_image_digest)
+      return request.derive_expected
+        ? deriveHarnessOutputs(parsed.results, suite.tests.length, this.runner_image_digest)
+        : evaluateHarnessResults(parsed.results, suite.tests, this.runner_image_digest)
     } catch {
       return runnerError(this.runner_image_digest, "invalid_runner_json", totalTests)
     }
@@ -711,6 +717,28 @@ function evaluateHarnessResults(
     score_ratio: scoreRatio,
     failure_codes: failureCodes,
     runner_image_digest: imageDigest,
+  }
+}
+
+function deriveHarnessOutputs(
+  results: DockerHarnessResult[],
+  expectedCount: number,
+  imageDigest: string,
+): CodeExecutionResult {
+  const failureCodes: string[] = []
+  const outputs: unknown[] = []
+  results.forEach((entry, index) => {
+    if (entry.outcome === "returned") outputs.push(structuredClone(entry.actual))
+    else failureCodes.push(`oracle_case_${index + 1}:${entry.outcome}${entry.error_type ? `:${entry.error_type}` : ""}`)
+  })
+  return {
+    status: failureCodes.length === 0 && outputs.length === expectedCount ? "passed" : "failed",
+    passed_tests: outputs.length,
+    total_tests: expectedCount,
+    score_ratio: expectedCount === 0 ? 0 : outputs.length / expectedCount,
+    failure_codes: failureCodes,
+    runner_image_digest: imageDigest,
+    ...(failureCodes.length === 0 ? { derived_outputs: outputs } : {}),
   }
 }
 
