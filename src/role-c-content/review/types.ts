@@ -122,6 +122,13 @@ export interface ContentSemanticAuditPort {
         fact_id: string
         content: string
       }>
+      /** Reviewed KB examples whose complete fact_refs are inside this block's citation closure. */
+      cited_examples?: Array<{
+        title: string
+        code: string
+        explanation: string
+        fact_refs: Array<{ source_id: string; fact_id: string }>
+      }>
     }>
   }): Promise<SemanticReviewBlockResult[]>
 }

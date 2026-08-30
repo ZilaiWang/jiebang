@@ -80,4 +80,29 @@ describe("改进方案4 第八节：block-level 语义审核缓存", () => {
     await port.auditArtifact({ run_id: "r", artifact_kind: "concept", artifact_id: "a", evidence_hash: "e", blocks: changedFacts })
     expect(callLog).toEqual([1, 1]) // 两次都调用模型
   })
+
+  test("reviewed cited examples participate in the semantic cache identity", async () => {
+    const callLog: number[] = []
+    const gateway = mockGateway((blocks) => {
+      const list = blocks as Array<{ review_block_id: string }>
+      callLog.push(list.length)
+      return list.map((_b, block_index) => ({ block_index, verdict: "supported" as const, reason: "", unsupported_text: [] }))
+    })
+    const port = new ModelContentSemanticAuditPort(gateway)
+    const withExample = [{
+      ...block("b1", "for item in values"),
+      cited_examples: [{
+        title: "遍历列表",
+        code: "for item in values:\n    print(item)",
+        explanation: "逐个处理列表元素",
+        fact_refs: [{ source_id: "K001", fact_id: "F1" }],
+      }],
+    }]
+    await port.auditArtifact({ run_id: "r", artifact_kind: "concept", artifact_id: "a", evidence_hash: "e", blocks: withExample })
+    await port.auditArtifact({
+      run_id: "r", artifact_kind: "concept", artifact_id: "a", evidence_hash: "e",
+      blocks: [{ ...withExample[0]!, cited_examples: [{ ...withExample[0]!.cited_examples[0]!, code: "for item in values:\n    pass" }] }],
+    })
+    expect(callLog).toEqual([1, 1])
+  })
 })

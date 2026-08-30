@@ -849,6 +849,7 @@ export function validateCodeLabPublicAuthorAgainstPlan(
   },
   practicalGuidePlan?: PracticalGuidePlan,
   programmingProblem?: ProgrammingProblemBlueprint,
+  evidence?: RagEvidencePack,
 ): string[] {
   const issues: string[] = []
   if (payload.objectives.length !== plan.length) {
@@ -868,7 +869,26 @@ export function validateCodeLabPublicAuthorAgainstPlan(
       && !isEmptyProgramInput(entry.public_test.input)) {
       issues.push(`objectives[${index}].public_test.input recall_fact 任务必须为空输入`)
     }
+    const normalizedHints = entry.hints.map(normalizeHintText)
+    if (new Set(normalizedHints).size !== normalizedHints.length) {
+      issues.push(`objectives[${index}].hints 三级提示不得重复或只改标点`)
+    }
+    if (entry.hints.some((hint) => GENERIC_CODE_LAB_HINT.test(hint))) {
+      issues.push(`objectives[${index}].hints 必须针对当前实验内容生成，不得使用通用占位提示`)
+    }
+    const hintAnchors = hintAnchorsForPlan(plan[index], evidence)
+    if (hintAnchors.length > 0) {
+      const anchoredCount = entry.hints.filter((hint) =>
+        hintAnchors.some((anchor) => normalizeHintText(hint).includes(anchor))).length
+      if (anchoredCount < 2) {
+        issues.push(`objectives[${index}].hints 至少两级必须点明当前事实、概念或操作`)
+      }
+    }
   })
+  const allHints = payload.objectives.flatMap((entry) => entry.hints.map(normalizeHintText))
+  if (payload.objectives.length > 1 && new Set(allHints).size !== allHints.length) {
+    issues.push("不同 objective 的提示不得复用同一套文案")
+  }
   if (taskContract?.learner_action === "recall_fact") {
     const executable = payload.starter_code
       .split(/\r?\n/u)
@@ -934,6 +954,26 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     payload.starter_code,
   ))
   return issues
+}
+
+const GENERIC_CODE_LAB_HINT = /^(?:先定位本目标要求表达的核心事实|确认填写内容保留了事实中的主语、对象和关系|只替换\s*TODO\s*字符串|先找到题面中.*目标句子|输入框只填写等号右边的内容)/u
+
+function normalizeHintText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[\s，。！？；：、,.!?;:'"“”‘’`()（）\[\]【】_-]+/gu, "")
+}
+
+function hintAnchorsForPlan(
+  plan: CodeLabObjectivePlan | undefined,
+  evidence: RagEvidencePack | undefined,
+): string[] {
+  if (!plan || !evidence) return []
+  const cited = new Set(plan.citations.map((citation) => `${citation.source_id}:${citation.fact_id}`))
+  const text = evidence.results.flatMap((source) => [
+    ...(source.source_id === plan.source_id ? [source.title] : []),
+    ...source.facts.flatMap((fact) => cited.has(`${fact.source_id}:${fact.fact_id}`) ? [fact.content] : []),
+  ]).join(" ")
+  const tokens = text.match(/[A-Za-z_][A-Za-z0-9_]{2,}|[\p{Script=Han}]{2,8}/gu) ?? []
+  return [...new Set(tokens.map(normalizeHintText).filter((token) => token.length >= 2))].slice(0, 24)
 }
 
 function isEmptyProgramInput(value: unknown): boolean {
@@ -1198,12 +1238,12 @@ function normalizeGuidedFactOutputTask(
   gap.answer_format = "python_string_literal"
   gap.max_lines = 1
   gap.placeholder = "例如：\"一行文字\""
-  const guidance = `把目标句子用英文引号包起来：${pythonStringLiteral(fact)}`
-  task.hint_ladders = [
-    { level: 1, text: "先找到题面中“程序应完整输出”的目标句子。" },
-    { level: 2, text: "输入框只填写等号右边的内容，因此不要写变量名或 print。" },
-    { level: 3, text: guidance },
-  ]
+  const authoredLadder = payload.hint_ladders.find((ladder) =>
+    ladder.objective_id === primaryPlan?.objective_id) ?? payload.hint_ladders[0]
+  task.hint_ladders = authoredLadder?.hints.map((hint, index) => ({
+    level: (index + 1) as 1 | 2 | 3,
+    text: hint.text,
+  })) ?? []
   payload.instructions = payload.instructions.map((block) => {
     if (block.block_type !== "paragraph") return block
     block.text = "本题的目标是完成一次清晰的“填写—运行—核对输出”操作。你只需填写一个带引号的字符串，程序的赋值和输出结构已经提供。"
@@ -1220,18 +1260,7 @@ function normalizeGuidedFactOutputTask(
     description: "运行填写后的完整程序",
     expected_behavior: `标准输出应为：${fact}`,
   }))
-  payload.hint_ladders = payload.hint_ladders.map((ladder) => ({
-    ...ladder,
-    hints: ladder.hints.map((hint, index) => ({
-      ...hint,
-      text: task.hint_ladders[index]?.text ?? hint.text,
-    })),
-  }))
   payload.reflection_questions = ["运行前，你填写的是完整代码，还是只填写等号右边的字符串？"]
-}
-
-function pythonStringLiteral(value: string): string {
-  return JSON.stringify(value)
 }
 
 /**

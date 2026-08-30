@@ -314,8 +314,26 @@ async function auditSemanticBlocks(
         content: fact.content,
       }] : []
     })
+    const citationKeys = new Set(semanticCitations.map((citation) =>
+      `${citation.source_id}:${citation.fact_id}`))
+    const citedExamples = request.evidence_pack.results.flatMap((item) =>
+      item.examples.filter((example) =>
+        example.fact_refs.length > 0
+        && example.fact_refs.every((reference) =>
+          citationKeys.has(`${reference.source_id}:${reference.fact_id}`)))
+        .map((example) => ({
+          title: example.title,
+          code: example.code,
+          explanation: example.explanation,
+          fact_refs: example.fact_refs.map((reference) => ({ ...reference })),
+        })))
     return citedFacts.length === semanticCitations.length
-      ? [{ ...block, citations: semanticCitations, cited_facts: citedFacts }]
+      ? [{
+          ...block,
+          citations: semanticCitations,
+          cited_facts: citedFacts,
+          ...(citedExamples.length ? { cited_examples: citedExamples } : {}),
+        }]
       : []
   })
   const results = await port.auditArtifact({

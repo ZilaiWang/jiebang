@@ -16,6 +16,7 @@ import { ROLE_C_PROMPT_MANIFEST_VERSION } from "../src/role-c-content/prompts"
 function segmentRequest(targets: Array<{ objective_id: string; source_id: string; fact_ids: string[]; behavior: string }>, facts: Array<{ source_id: string; fact_id: string; content: string; capabilities?: string[] }>): ConceptTutorRequest {
   return {
     generation_spec: {
+      schema_version: "1.0",
       spec_id: "SPEC-1",
       run_id: "RUN-1",
       targets: targets.map((t) => ({
@@ -25,10 +26,35 @@ function segmentRequest(targets: Array<{ objective_id: string; source_id: string
         observable_behavior: t.behavior,
         importance: "core",
       })),
-      path_node: { goal: "x", target_source_ids: [...new Set(targets.map((t) => t.source_id))], prerequisite_source_ids: [] },
-      learner_adaptation: { level: "basic" },
+      evidence_content_hash: `sha256:${"1".repeat(64)}`,
+      versions: {
+        profile_version: "PROFILE-TEST",
+        prompt_version: ROLE_C_PROMPT_MANIFEST_VERSION,
+        model_config_hash: "MODEL-TEST",
+        kb_version: "KB-TEST",
+        rag_version: "RAG-TEST",
+        schema_version: "1.0",
+      },
+      profile_ref: { profile_id: "PROFILE-1", profile_version: "PROFILE-TEST", profile_content_hash: `sha256:${"2".repeat(64)}` },
+      path_node: { node_id: "NODE-1", goal: "x", target_source_ids: [...new Set(targets.map((t) => t.source_id))], prerequisite_source_ids: [] },
+      learner_adaptation: {
+        level: "basic",
+        known_concepts: [],
+        weak_concepts: [],
+        preferred_contexts: [],
+        scaffold_level: 2,
+        reading_density: "medium",
+        accommodations: [],
+      },
       difficulty: { domain_complexity: 1, cognitive_demand: 1, reasoning_steps: 1, code_complexity: 0, prerequisite_load: 0, scaffold_strength: 2 },
-      policies: { seed: 1, max_semantic_revision: 1, max_tool_retry: 1 },
+      assessment_blueprint: { tier_1_count: 1, tier_2_count: 0, tier_3_count: 0, required_modalities: ["mcq"] },
+      policies: {
+        external_knowledge_allowed: false,
+        citation_required: true,
+        seed: 1,
+        max_semantic_revision: 1,
+        max_tool_retry: 1,
+      },
       evidence_ref: "ev-1",
     },
     evidence_pack: {

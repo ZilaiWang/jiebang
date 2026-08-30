@@ -99,6 +99,14 @@ describe("第 6 项统一资源链", () => {
     expect(payload.practical_guide!.acceptance_criteria.map((entry) => entry.public_test_id)).toEqual(payload.public_tests.map((test) => test.test_id))
     expect(payload.practical_guide!.steps).toHaveLength(guidePlan.step_slots.length)
     expect(validatePracticalGuideForRelease(payload.practical_guide!)).toEqual([])
+    const todoInstruction = structuredClone(payload.practical_guide!)
+    todoInstruction.steps[0]!.action = "将题面可见的 TODO 替换为符合目标的列表处理语句"
+    expect(validatePracticalGuideForRelease(todoInstruction)).toEqual([])
+    const unfinished = structuredClone(payload.practical_guide!)
+    unfinished.steps[0]!.action = "TODO"
+    expect(validatePracticalGuideForRelease(unfinished)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "placeholder_visible_text", path: "$.steps[0].action" }),
+    ]))
     expect(validateRoleCSchemaFragment("code_lab_draft.schema.json", "/$defs/public_payload", payload).ok).toBe(true)
     const guideGoal = extractCodeLabBlocks({
       status: "ready",

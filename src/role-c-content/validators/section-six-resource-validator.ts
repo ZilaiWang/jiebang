@@ -3,7 +3,12 @@ import { validateAssessmentTaxonomyPlan, type AssessmentTaxonomyInputItem, type 
 
 export interface SectionSixValidationIssue { code: string; path: string; message: string }
 
-const PLACEHOLDER = /(?:待补充|待完善|稍后填写|占位|TODO|TBD|示例内容|某知识点|xxx|请自行补充|根据实际情况(?:处理)?即可|视情况而定|按需处理即可)/iu
+// Code-completion guides legitimately refer to a visible TODO marker. Treat
+// only standalone placeholders (or genuinely generic filler wording) as
+// unfinished content; matching the token anywhere rejected valid actions such
+// as “把 TODO 替换为循环语句”.
+const PLACEHOLDER_ONLY = /^(?:待补充|待完善|稍后填写|占位(?:内容)?|TODO|TBD|示例内容|某知识点|x{2,})[。.!！]?$/iu
+const GENERIC_FILLER = /(?:请自行补充|根据实际情况(?:处理)?即可|视情况而定|按需处理即可)/iu
 const CONTRACT_REFS = new Set<PracticalGuideContractRef>([
   "execution.entry_point", "execution.input_contract", "execution.output_contract",
   "execution.allowed_imports", "public_tests",
@@ -67,6 +72,6 @@ function binding(entry: { citations: unknown[]; contract_refs: PracticalGuideCon
   entry.contract_refs.forEach((ref) => { if (!CONTRACT_REFS.has(ref)) add(issues, "unknown_contract_ref", `${path}.contract_refs`, `未知合同引用 ${ref}`) })
   if (entry.contract_refs.includes("public_tests") && !entry.public_test_ids.length) add(issues, "public_test_ref_empty", `${path}.public_test_ids`, "引用 public_tests 时必须给出测试 ID")
 }
-function text(value: string, path: string, issues: SectionSixValidationIssue[]): void { const normalized = value?.trim() ?? ""; if (!normalized) add(issues, "empty_visible_text", path, "学习者可见文本不能为空"); else if (PLACEHOLDER.test(normalized)) add(issues, "placeholder_visible_text", path, `禁止占位或泛化文本：${normalized}`) }
+function text(value: string, path: string, issues: SectionSixValidationIssue[]): void { const normalized = value?.trim() ?? ""; if (!normalized) add(issues, "empty_visible_text", path, "学习者可见文本不能为空"); else if (PLACEHOLDER_ONLY.test(normalized) || GENERIC_FILLER.test(normalized)) add(issues, "placeholder_visible_text", path, `禁止占位或泛化文本：${normalized}`) }
 function add(issues: SectionSixValidationIssue[], code: string, path: string, message: string): void { issues.push({ code, path, message }) }
 function dedupe(issues: SectionSixValidationIssue[]): SectionSixValidationIssue[] { return [...new Map(issues.map((entry) => [`${entry.code}:${entry.path}:${entry.message}`, entry])).values()] }

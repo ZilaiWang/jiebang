@@ -99,13 +99,26 @@ function codeLabDimensions(payload: unknown, design: LearningDesignSpecV2): Qual
   const hasIncompleteStarter = /TODO|pass|NotImplementedError|待完成|\{\{gap:/u.test(starter)
   const tests = objectives.flatMap((objective) => objective.public_test ? [objective.public_test] : [])
   const reflections = objectives.filter((objective) => String(objective.reflection_question ?? "").trim().length > 0)
-  const hints = objectives.flatMap((objective) => Array.isArray(objective.hints) ? objective.hints : [])
+  const hints = objectives.flatMap((objective) => Array.isArray(objective.hints)
+    ? objective.hints.map((hint) => String(hint))
+    : [])
+  const normalizedHints = hints.map(normalize).filter(Boolean)
+  const hintUniqueness = ratio(new Set(normalizedHints).size, normalizedHints.length)
+  const genericHintRate = ratio(hints.filter((hint) =>
+    /(?:本目标要求表达的核心事实|事实中的主语、对象和关系|只替换\s*TODO\s*字符串)/u.test(hint)).length, hints.length)
+  const hintProgression = hints.length === 0
+    ? 0.35
+    : average([
+        clamp(hints.length / Math.max(3, objectives.length * 3)),
+        hintUniqueness,
+        1 - genericHintRate,
+      ])
   return [
     dimension("objective_alignment", ratio(objectives.length, design.objectives.length), 1.3, true, "每个目标都有可执行练习职责"),
     dimension("task_authenticity", bool(/(?:实现|完成|输入|输出|返回|统计|处理|判断)/u.test(text)), 1, true, "任务要求学习者产出可观察结果"),
     dimension("starter_scaffolding", average([bool(hasIncompleteStarter), bool(starter.length >= 8), bool(!looksCompleteSolution(starter))]), 1.1, true, "starter 明确学习者负责区域且未泄露完整实现"),
     dimension("public_test_clarity", ratio(tests.length, Math.max(1, objectives.length)), 1, true, "公开测试描述可帮助学习者自查"),
-    dimension("hint_fading", hints.length === 0 ? 0.35 : clamp(0.55 + Math.min(3, hints.length) * 0.12), 0.8, false, "提示支持逐步完成而不直接给答案"),
+    dimension("hint_fading", hintProgression, 0.8, false, "提示针对当前任务逐级增加信息且不复用通用模板"),
     dimension("reflection_value", ratio(reflections.length, Math.max(1, objectives.length)), 0.7, false, "反思问题连接实现与目标规则"),
   ]
 }

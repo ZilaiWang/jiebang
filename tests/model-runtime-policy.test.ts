@@ -3,6 +3,8 @@ import {
   ModelExecutionBudget,
   ModelExecutionBudgetExceededError,
   ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+  ROLE_C_DURABLE_JOB_DEADLINE_MS,
+  ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
   classifyProviderFailure,
   modelCallPolicy,
   roleCContentModelCallBudget,
@@ -70,9 +72,12 @@ describe("project model runtime", () => {
   })
 
   test("default content budget covers three reviewed candidates", () => {
-    expect(new ModelExecutionBudget().snapshot().max_model_calls).toBe(
+    const snapshot = new ModelExecutionBudget().snapshot()
+    expect(snapshot.max_model_calls).toBe(
       ROLE_C_CONTENT_MODEL_CALL_BUDGET,
     )
+    expect(snapshot.hard_deadline_ms).toBe(ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS)
+    expect(ROLE_C_DURABLE_JOB_DEADLINE_MS).toBeGreaterThan(snapshot.hard_deadline_ms)
     expect(ROLE_C_CONTENT_MODEL_CALL_BUDGET).toBe(258)
   })
 

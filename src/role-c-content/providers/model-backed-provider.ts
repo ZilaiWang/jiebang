@@ -340,6 +340,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     request: ConceptTutorRequest,
   ): Promise<ArtifactDraft<ConceptLessonPayload>> {
     assertVersionCompatibility(request, this.gateway)
+    assertGenerationSpecProviderInput(request.generation_spec)
     if (this.generationStrategy === "monolithic") return this.generateConceptLessonMonolithic(request)
 
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
@@ -472,6 +473,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
 
   async generateCodeLab(request: CodeLabRequest): Promise<CodeLabDraft> {
     assertVersionCompatibility(request, this.gateway, CODE_LAB_PROMPT_VERSION)
+    assertGenerationSpecProviderInput(request.generation_spec)
     if (this.generationStrategy === "monolithic") {
       // monolithic 是兼容/基准路径（非生产入口），不走 staged_contract；
       // 生产入口（content-pipeline / worker-adapters）一律 staged + blueprint。
@@ -556,6 +558,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           taskContract,
           practicalGuidePlan,
           programmingProblem,
+          request.evidence_pack,
         )
         if (planIssues.length > 0) return planIssues
         const normalized = materializeCodeLabPublicAuthorPayload(
@@ -974,6 +977,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
 
   async generateAssessment(request: TieredEvaluatorRequest): Promise<AssessmentDraft> {
     assertVersionCompatibility(request, this.gateway, EVALUATOR_AUTHOR_PROMPT_VERSION)
+    assertGenerationSpecProviderInput(request.generation_spec)
     if (this.generationStrategy === "monolithic") return this.generateAssessmentMonolithic(request)
 
     const modelInput = buildAssessmentAuthorModelInput(request)
@@ -2610,11 +2614,6 @@ export function normalizeCodeLabPublicAuthorPayload(
       objective.public_test.input = ""
       objective.public_test.description = "运行程序，检查事实文本是否按题目要求输出。"
       objective.public_test.expected_behavior = "标准输出应与本目标要求填写的事实文本一致。"
-      objective.hints = [
-        "先定位本目标要求表达的核心事实。",
-        "确认填写内容保留了事实中的主语、对象和关系。",
-        "只替换 TODO 字符串，不改动变量赋值和输出语句。",
-      ]
       objective.reflection_question = "你填写的文本如何完整表达本目标给出的事实？"
     }
     if (normalized.programming_task) {
@@ -3238,6 +3237,18 @@ function relevantHiddenTestsChanged(
 
 export function validationIssueStrings(report: { issues: Array<{ code?: string; path: string; message: string }> }): string[] {
   return report.issues.map((entry) => `${entry.code ? `[${entry.code}] ` : ""}${entry.path}: ${entry.message}`)
+}
+
+function assertGenerationSpecProviderInput(
+  spec: ConceptTutorRequest["generation_spec"],
+): void {
+  const report = validateRoleCSchema("generation_spec.schema.json", spec)
+  if (!report.ok) {
+    throw new ModelOutputValidationError(
+      "generation_spec.preflight",
+      validationIssueStrings(report),
+    )
+  }
 }
 
 export function validateStageRepairProgress<T>(
