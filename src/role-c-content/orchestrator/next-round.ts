@@ -926,6 +926,11 @@ function buildReadyNextRound(input: {
   focus_objective_ids: string[]
 }): NextRoundPreparation {
   const identity = requestIdentity(input.identity)
+  const generationAction = input.generation_action
+    ?? (input.action === "reprofile" ? undefined : input.action)
+  if (!generationAction) {
+    throw new Error("NEXT_ROUND_REPROFILE_GENERATION_ACTION_REQUIRED")
+  }
   const built = buildGenerationSpec({
     run_id: followUpRunId(input.identity),
     profile_snapshot: input.profile,
@@ -933,6 +938,7 @@ function buildReadyNextRound(input: {
     evidence_pack: input.evidence,
     versions: selectedGenerationVersions(input.input),
     seed: followUpSeed(input.identity),
+    progress_state: progressStateForGenerationAction(generationAction),
     ...(input.difficulty ? { difficulty: input.difficulty } : {}),
     ...(input.adaptive_shell ? { adaptive_shell: input.adaptive_shell } : {}),
   })
@@ -941,11 +947,6 @@ function buildReadyNextRound(input: {
   }
   const triggerDecision = deepFreeze(structuredClone(input.input.feedback.final_decision))
   const profileContentHash = contentHash(input.profile)
-  const generationAction = input.generation_action
-    ?? (input.action === "reprofile" ? undefined : input.action)
-  if (!generationAction) {
-    throw new Error("NEXT_ROUND_REPROFILE_GENERATION_ACTION_REQUIRED")
-  }
   const frozenInput = freezePipelineInput({
     generation_spec: built.spec,
     evidence_pack: input.evidence,
@@ -988,6 +989,14 @@ function buildReadyNextRound(input: {
     evidence_pack: frozenInput.evidence_pack,
     pipeline_input: frozenInput,
   }
+}
+
+function progressStateForGenerationAction(
+  action: "remediate" | "reinforce" | "advance",
+): "struggling" | "stable" | "starting" {
+  if (action === "remediate") return "struggling"
+  if (action === "reinforce") return "stable"
+  return "starting"
 }
 
 function specBuildBlocked(

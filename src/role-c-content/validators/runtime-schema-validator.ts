@@ -1,7 +1,12 @@
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020"
+import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { ArtifactEnvelope } from "../contracts/common"
+import {
+  GENERATION_SPEC_CONTRACT_KEYS,
+  GENERATION_SPEC_CONTRACT_VERSION,
+} from "../contracts/generation-spec"
 import type { ValidationIssue, ValidationReport } from "./citation-validator"
 
 const ROLE_C_SCHEMA_FILES = [
@@ -66,6 +71,24 @@ for (const file of ROLE_C_SCHEMA_FILES) {
   const validator = ajv.getSchema(schemaId)
   if (!validator) throw new Error(`Role C Schema 无法编译：${file}`)
   validators.set(file, validator)
+}
+
+assertGenerationSpecSchemaParity()
+
+const schemaRegistryFingerprint = `sha256:${createHash("sha256")
+  .update(JSON.stringify(ROLE_C_SCHEMA_FILES.map((file) => [file, schemas.get(file)])))
+  .digest("hex")}`
+
+export function roleCSchemaRegistryMetadata(): {
+  fingerprint: string
+  loaded_schema_count: number
+  generation_spec_contract: typeof GENERATION_SPEC_CONTRACT_VERSION
+} {
+  return {
+    fingerprint: schemaRegistryFingerprint,
+    loaded_schema_count: ROLE_C_SCHEMA_FILES.length,
+    generation_spec_contract: GENERATION_SPEC_CONTRACT_VERSION,
+  }
 }
 
 export function getRoleCSchema(file: RoleCSchemaFile): Record<string, unknown> {
@@ -155,12 +178,87 @@ export function validateArtifactStatusSemantics(
 }
 
 function schemaErrors(file: RoleCSchemaFile, errors: ErrorObject[]): ValidationIssue[] {
-  return errors.map((error) => ({
-    code: `schema_${error.keyword}`,
-    path: error.instancePath || "$",
-    message: `${file}: ${error.message ?? "不符合 Schema"}`,
-    severity: "critical" as const,
-  }))
+  return errors.map((error) => {
+    if (error.keyword === "additionalProperties") {
+      const property = String((error.params as { additionalProperty?: unknown }).additionalProperty ?? "<unknown>")
+      return {
+        code: "schema_additionalProperties",
+        path: appendSchemaPath(error.instancePath, property),
+        message: `${file}: 不允许额外字段 "${property}"；请检查运行代码、Schema 与持久化数据是否来自同一版本`,
+        severity: "critical" as const,
+      }
+    }
+    if (error.keyword === "required") {
+      const property = String((error.params as { missingProperty?: unknown }).missingProperty ?? "<unknown>")
+      return {
+        code: "schema_required",
+        path: appendSchemaPath(error.instancePath, property),
+        message: `${file}: 缺少必需字段 "${property}"`,
+        severity: "critical" as const,
+      }
+    }
+    if (error.keyword === "enum") {
+      const allowed = (error.params as { allowedValues?: unknown }).allowedValues
+      return {
+        code: "schema_enum",
+        path: schemaPath(error.instancePath),
+        message: `${file}: 值不在允许集合中${Array.isArray(allowed) ? `：${allowed.join("、")}` : ""}`,
+        severity: "critical" as const,
+      }
+    }
+    return {
+      code: `schema_${error.keyword}`,
+      path: schemaPath(error.instancePath),
+      message: `${file}: ${error.message ?? "不符合 Schema"}`,
+      severity: "critical" as const,
+    }
+  })
+}
+
+function schemaPath(pointer: string): string {
+  if (!pointer) return "$"
+  return `$${pointer.split("/").filter(Boolean).map((token) => {
+    const value = token.replace(/~1/g, "/").replace(/~0/g, "~")
+    return /^\d+$/.test(value) ? `[${value}]` : `.${value}`
+  }).join("")}`
+}
+
+function appendSchemaPath(pointer: string, property: string): string {
+  return `${schemaPath(pointer)}.${property}`
+}
+
+function assertGenerationSpecSchemaParity(): void {
+  const root = schemas.get("generation_spec.schema.json")
+  if (!root) throw new Error("GENERATION_SPEC_SCHEMA_MISSING")
+  const checks: Array<{ name: string; value: unknown; expected: readonly string[] }> = [
+    { name: "root", value: root, expected: GENERATION_SPEC_CONTRACT_KEYS.root },
+    { name: "versions", value: at(root, "properties", "versions"), expected: GENERATION_SPEC_CONTRACT_KEYS.versions },
+    { name: "profile_ref", value: at(root, "properties", "profile_ref"), expected: GENERATION_SPEC_CONTRACT_KEYS.profile_ref },
+    { name: "path_node", value: at(root, "properties", "path_node"), expected: GENERATION_SPEC_CONTRACT_KEYS.path_node },
+    { name: "target", value: at(root, "properties", "targets", "items"), expected: GENERATION_SPEC_CONTRACT_KEYS.target },
+    { name: "learner_adaptation", value: at(root, "properties", "learner_adaptation"), expected: GENERATION_SPEC_CONTRACT_KEYS.learner_adaptation },
+    { name: "personalization_policy", value: at(root, "properties", "personalization_policy"), expected: GENERATION_SPEC_CONTRACT_KEYS.personalization_policy },
+    { name: "personalization_strategy", value: at(root, "properties", "personalization_policy", "properties", "teaching_strategy"), expected: GENERATION_SPEC_CONTRACT_KEYS.personalization_strategy },
+    { name: "difficulty", value: at(root, "properties", "difficulty"), expected: GENERATION_SPEC_CONTRACT_KEYS.difficulty },
+    { name: "assessment_blueprint", value: at(root, "properties", "assessment_blueprint"), expected: GENERATION_SPEC_CONTRACT_KEYS.assessment_blueprint },
+    { name: "policies", value: at(root, "properties", "policies"), expected: GENERATION_SPEC_CONTRACT_KEYS.policies },
+  ]
+  for (const check of checks) {
+    const actual = Object.keys((check.value as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}).sort()
+    const expected = [...check.expected].sort()
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      throw new Error(`GENERATION_SPEC_SCHEMA_CODE_DRIFT:${check.name}:schema=${actual.join(",")}:code=${expected.join(",")}`)
+    }
+  }
+}
+
+function at(root: unknown, ...keys: string[]): unknown {
+  let current = root
+  for (const key of keys) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined
+    current = (current as Record<string, unknown>)[key]
+  }
+  return current
 }
 
 function issue(code: string, path: string, message: string): ValidationIssue {

@@ -8,6 +8,8 @@ import {
   ModelExecutionBudget,
   ModelExecutionBudgetExceededError,
   ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+  ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
+  ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS,
   classifyProviderFailure,
   retryDelayMs,
   sharedModelCircuitBreaker,
@@ -462,7 +464,8 @@ export class ModelOutputValidationError extends Error {
     readonly stage: string,
     readonly issues: string[],
   ) {
-    super(`${stage} 未通过分阶段输出校验`)
+    const detail = issues.slice(0, 6).join("；")
+    super(`${stage} 未通过分阶段输出校验${detail ? `：${detail}` : ""}`)
     this.name = "ModelOutputValidationError"
   }
 }
@@ -499,8 +502,14 @@ export function createRoleCModelGatewayFromEnv(
       offline: optionalPositiveCount(resolvedEnv.MODEL_RUNTIME_OFFLINE_MAX_IN_FLIGHT, 1),
     }),
     execution_budget: overrides.execution_budget ?? new ModelExecutionBudget({
-      soft_deadline_ms: optionalPositiveInteger(resolvedEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS, 180_000),
-      hard_deadline_ms: optionalPositiveInteger(resolvedEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS, 360_000),
+      soft_deadline_ms: optionalPositiveInteger(
+        resolvedEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS,
+        ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS,
+      ),
+      hard_deadline_ms: optionalPositiveInteger(
+        resolvedEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS,
+        ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
+      ),
       max_model_calls: optionalPositiveCount(
         resolvedEnv.MODEL_RUNTIME_MAX_MODEL_CALLS,
         ROLE_C_CONTENT_MODEL_CALL_BUDGET,

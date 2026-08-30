@@ -39,6 +39,8 @@ import { join, resolve } from "node:path"
 import { appendFile, mkdir } from "node:fs/promises"
 import {
   ModelExecutionBudget,
+  ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
+  ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS,
   roleCContentModelCallBudget,
   type ModelCallTrace,
 } from "../model-runtime"
@@ -310,8 +312,14 @@ export async function generateRoleCForRoleDWithRuntime(
           on_trace: modelTraceSink(runtime.dataDirectory),
           trace_context: { run_id: input.runId },
           execution_budget: new ModelExecutionBudget({
-            soft_deadline_ms: positiveRuntimeInteger(runtimeEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS, 180_000),
-            hard_deadline_ms: positiveRuntimeInteger(runtimeEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS, 360_000),
+            soft_deadline_ms: positiveRuntimeInteger(
+              runtimeEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS,
+              ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS,
+            ),
+            hard_deadline_ms: positiveRuntimeInteger(
+              runtimeEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS,
+              ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
+            ),
             max_model_calls: positiveRuntimeInteger(runtimeEnv.MODEL_RUNTIME_MAX_MODEL_CALLS, modelCallBudget),
             max_transport_retries_total: nonNegativeRuntimeInteger(
               runtimeEnv.MODEL_RUNTIME_TRANSPORT_RETRY_BUDGET,
@@ -403,6 +411,9 @@ export async function generateRoleCForRoleDWithRuntime(
       profile_snapshot: profileSnapshot,
       path_node: pathNode,
       evidence_pack: evidencePack,
+      ...(nextRoundAction
+        ? { progress_state: progressStateForRoundAction(nextRoundAction) }
+        : {}),
       versions: {
         prompt_version: ROLE_C_PROMPT_MANIFEST_VERSION,
         model_config_hash: modelGateway
@@ -581,6 +592,14 @@ export async function generateRoleCForRoleDWithRuntime(
       ),
     },
   }
+}
+
+function progressStateForRoundAction(
+  action: NonNullable<GenerateRoleCForRoleDInput["next_round_context"]>["action"],
+): "starting" | "stable" | "struggling" {
+  if (action === "remediate") return "struggling"
+  if (action === "reinforce") return "stable"
+  return "starting"
 }
 
 function roleCPublicCandidateCount(value: string | undefined): 1 | 2 | 3 {

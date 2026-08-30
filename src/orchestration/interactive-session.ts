@@ -57,6 +57,7 @@ import {
   AtomicFileDurableJobStore,
   DurableJobRunner,
   ROLE_C_CONTENT_MODEL_CALL_BUDGET,
+  ROLE_C_DURABLE_JOB_DEADLINE_MS,
   createModelWorkflowJob,
   type ModelWorkflowJobKind,
 } from "../model-runtime"
@@ -364,7 +365,7 @@ export class InteractiveSessionStore {
       run_id: record.run_id,
       kind,
       current_stage: kind === "initial_content_round" ? "initial_content" : "next_content",
-      deadline_ms: 8 * 60_000,
+      deadline_ms: ROLE_C_DURABLE_JOB_DEADLINE_MS,
       // Model/runtime retries and explicit user recovery own retry policy. The
       // durable job itself is replayed only after a crashed/expired lease.
       max_attempts: 1,
@@ -1106,18 +1107,21 @@ export class InteractiveSessionStore {
     // atomic rename of the refreshed lock file.
     await handle.close()
     handle = undefined
-    let heartbeatRunning = false
+    let heartbeatPromise: Promise<void> | null = null
     const heartbeat = setInterval(() => {
-      if (heartbeatRunning) return
-      heartbeatRunning = true
-      void refreshOwnedLock(lockPath, ownerToken)
+      if (heartbeatPromise) return
+      heartbeatPromise = refreshOwnedLock(lockPath, ownerToken)
         .catch(() => undefined)
-        .finally(() => { heartbeatRunning = false })
+        .finally(() => { heartbeatPromise = null })
     }, Math.min(500, Math.max(100, Math.floor(STALE_LOCK_MS / 3))))
     try {
       return await action()
     } finally {
       clearInterval(heartbeat)
+      // A heartbeat may already have passed its final ownership check and be
+      // about to rename its temporary file. Releasing first would allow that
+      // rename to recreate a ghost lock after the command completed.
+      await heartbeatPromise
       await releaseOwnedLock(lockPath, ownerToken)
     }
   }

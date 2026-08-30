@@ -1068,8 +1068,8 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
   const [sideTab, setSideTab] = useState<SideTab>("evidence")
   const switchTab = (next: LessonTab) => {
     setTab(next)
-    // 理解检查只有学习提示；讲义/实验默认知识来源
-    if (next === "checks") setSideTab("hint")
+    // 理解检查和代码实验优先展示各自的 C 公开提示。
+    if (next === "checks" || next === "lab") setSideTab("hint")
     else setSideTab("evidence")
   }
   const [activeSection, setActiveSection] = useState("prerequisite")
@@ -1110,7 +1110,7 @@ function LessonPage({ onAssessment }: { onAssessment: () => void }) {
       <section className="lesson-main">
         {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} onRunExample={runExampleCode} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} gapAnswers={gapAnswers} setGapAnswers={setGapAnswers} busy={busy} execution={activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onDebug={async (publicCaseId) => { if (!lab || !debugPublishedCodeLab) return; const submission = lab.programming_task?.submission_mode === "gap_answers" ? { gap_answers: gapAnswers } : code; await debugPublishedCodeLab(lab.lab_id, submission, publicCaseId) }} onRun={async () => { if (!lab) return; const submission = lab.programming_task?.submission_mode === "gap_answers" ? { gap_answers: gapAnswers } : code; await runPublishedCodeLab(lab.lab_id, submission); setLastExecutedCode(typeof submission === "string" ? submission : JSON.stringify(submission)) }} /> : <ChecksContent lesson={lesson} />}
       </section>
-      <aside className="lesson-side">{tab === "checks" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button></div>{sideTab === "hint" ? <HintPanel lesson={lesson} /> : null}</> : <><div className="side-tabs"><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "evidence" ? <EvidencePanel lesson={lesson} /> : <AgentPanel />}</>}</aside>
+      <aside className="lesson-side">{tab === "checks" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button></div>{sideTab === "hint" ? <HintPanel resource={lesson} /> : null}</> : tab === "lab" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">实验提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel resource={lab} /> : sideTab === "evidence" ? <EvidencePanel resource={lab} /> : <AgentPanel />}</> : <><div className="side-tabs"><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "evidence" ? <EvidencePanel resource={lesson} /> : <AgentPanel />}</>}</aside>
           </div>
           {matchOpen ? <Modal title="本轮结构适配指数" subtitle="规则估计 · 尚未校准" onClose={() => setMatchOpen(false)}><ResourceMatchCard session={activeSession} resource={lesson} assessment={activeSession.assessment?.payload} /></Modal> : null}
   </div>
@@ -1289,18 +1289,21 @@ function ChecksContent({ lesson }: { lesson: LessonPayload }) {
   }) : <MissingContent text="C 未公开 micro_checks，D 不补造理解题。" />}</div>
 }
 
-function HintPanel({ lesson }: { lesson?: LessonPayload }) {
+function HintPanel({ resource }: { resource?: Pick<LessonPayload, "hint_ladders"> | Pick<CodeLabPayload, "hint_ladders"> }) {
   const [level, setLevel] = useState(1)
-  const ladder = lesson?.hint_ladders?.[0]
+  const ladder = resource?.hint_ladders?.[0]
   const hint = ladder?.hints.find((item) => item.hint_level === level)
   return <div className="side-panel-content"><span className="side-kicker"><Lightbulb size={15} /> 分层提示</span><h3>{ladder ? `${ladder.objective_id} 的提示阶梯` : "当前没有公开提示"}</h3>{hint ? <><p className="hint-copy">{hint.text}</p><CitationChips citations={hint.citations} /><div className="hint-levels">{[1, 2, 3].map((value) => <button className={level === value ? "is-active" : ""} type="button" onClick={() => setLevel(value)} key={value}>提示 {value}</button>)}</div></> : <p className="muted-copy">D 不会临时生成提示。接入后仅展示 C 公开的 hint_ladders。</p>}</div>
 }
 
-function EvidencePanel({ lesson }: { lesson?: LessonPayload }) {
+function EvidencePanel({ resource }: { resource?: Pick<LessonPayload, "used_evidence"> & Partial<Pick<LessonPayload, "prerequisite_bridge">> | Pick<CodeLabPayload, "used_evidence"> }) {
   const activeSession = useRequiredSession()
   const factIndex = buildFactIndex(activeSession.rag_result)
   const [openKey, setOpenKey] = useState<string | null>(null)
-  const evidence = uniqueCitations([...(lesson?.used_evidence ?? []), ...(lesson ? lesson.prerequisite_bridge.flatMap(blockCitations) : [])])
+  const prerequisiteCitations = resource && "prerequisite_bridge" in resource
+    ? resource.prerequisite_bridge?.flatMap(blockCitations) ?? []
+    : []
+  const evidence = uniqueCitations([...(resource?.used_evidence ?? []), ...prerequisiteCitations])
   return <div className="side-panel-content"><span className="side-kicker"><ShieldCheck size={15} /> 可追溯证据</span><h3>{evidence.length} 条公开引用</h3><p className="muted-copy">只展示 source_id / fact_id；缺失证据会如实显示，不生成虚构来源。</p><div className="evidence-list">{evidence.map((citation) => {
     const key = `${citation.source_id}-${citation.fact_id}`
     const hit = lookupFact(factIndex, citation)

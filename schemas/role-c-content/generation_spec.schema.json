@@ -207,7 +207,7 @@
       "properties": {
         "external_knowledge_allowed": { "const": false },
         "citation_required": { "const": true },
-        "max_semantic_revision": { "enum": [1, 2] },
+        "max_semantic_revision": { "enum": [0, 1, 2] },
         "max_tool_retry": { "type": "integer", "minimum": 0, "maximum": 2 },
         "seed": { "type": "integer" }
       },

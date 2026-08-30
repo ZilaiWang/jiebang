@@ -20,6 +20,15 @@ export interface RoleCContentBudgetWorkload {
 }
 
 /**
+ * Candidate authoring, independent critics, secure materialization and A/B
+ * semantic review form one quality workflow. The durable job deliberately
+ * outlives its model budget so the accepted release can still be persisted.
+ */
+export const ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS = 360_000
+export const ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS = 480_000
+export const ROLE_C_DURABLE_JOB_DEADLINE_MS = 600_000
+
+/**
  * Derive the hard call ceiling from the actual Role C authoring workload.
  *
  * Public authoring is a candidate tournament: every objective/assessment item
@@ -81,8 +90,8 @@ export class ModelExecutionBudget {
   private usedTransportRetries = 0
 
   constructor(readonly limits: ExecutionBudgetLimits = {
-    soft_deadline_ms: 180_000,
-    hard_deadline_ms: 360_000,
+    soft_deadline_ms: ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS,
+    hard_deadline_ms: ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
     max_model_calls: ROLE_C_CONTENT_MODEL_CALL_BUDGET,
     max_transport_retries_total: 3,
   }) {

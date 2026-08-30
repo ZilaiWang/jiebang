@@ -81,9 +81,30 @@ export function materializeGapCode(
 export function failClosedStarterCode(template: CodeGapTemplate): string {
   const answers = Object.fromEntries(template.gaps.map((gap) => [
     gap.gap_id,
-    gap.kind === "block" ? 'raise NotImplementedError("TODO")' : "__TODO__",
+    failClosedGapPlaceholder(gap),
   ]))
   return materializeGapCode(template, answers).code
+}
+
+/**
+ * Produce an inert placeholder which is valid for the gap's frozen syntax
+ * contract.  The starter must be renderable before a learner has answered,
+ * while still failing closed when it is executed unchanged.
+ */
+function failClosedGapPlaceholder(gap: CodeGapSpec): string {
+  switch (gap.answer_format) {
+    case "python_string_literal":
+      return '"TODO"'
+    case "python_identifier":
+      return "__TODO__"
+    case "python_statement":
+      return 'raise NotImplementedError("TODO")'
+    case "python_expression":
+      return "__TODO__"
+  }
+  return gap.kind === "block" || gap.kind === "statement"
+    ? 'raise NotImplementedError("TODO")'
+    : "__TODO__"
 }
 
 function normalizeAnswer(value: string, gap: CodeGapSpec): string {

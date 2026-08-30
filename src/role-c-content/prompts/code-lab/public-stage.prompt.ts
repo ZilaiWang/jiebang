@@ -42,8 +42,10 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 
 【practical_guide 实操指南】
 - staged_contract.practical_guide_plan 是冻结结构：readiness_slots、step_slots、troubleshooting_slots 的数量和顺序必须逐项对应；不得新增、删除或合并槽位。
+- 输出前分别核对数组长度：readiness_checks 必须等于 readiness_slots，steps 必须等于 step_slots，troubleshooting 必须等于 troubleshooting_slots；一个 slot 只对应一个条目。
 - practice_goal 写当前真实任务的实践目标；deliverable 写学习者最终可提交、可运行、可验证的具体产物。
 - readiness_checks 每项写“检查什么、何时算就绪”；steps 每项必须同时写 action、input、expected_result、verification，形成可执行闭环，不能只写概念说明。
+- 程序填空题可以在指南中明确提到题面可见的 TODO 或待填写区域；这类文字是在说明学习者操作，不是未完成的占位正文。
 - troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。
 - extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。
 - 验收条件由编排器根据 public_tests 确定性生成，模型不得另造测试 ID 或期望值。
@@ -97,6 +99,8 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - Level 1（方向）：指出思考方向，不涉及具体做法
 - Level 2（结构）：只依据当前 facts 指出要选择或填写的目标语义
 - Level 3（细节）：说明如何在 starter 已给骨架内应用当前事实；不得教授 evidence 未包含的函数、运算符、语法或运行机制
+- 三级提示必须逐条结合当前 objective 的事实内容、概念名、变量变化或输入输出关系即时创作；至少两级要明确点出本实验特有的概念或操作。不得复用“定位核心事实 / 保留主语对象关系 / 只替换 TODO”之类可套在任何实验上的固定模板，也不得让不同 objective 使用相同提示。
+- Level 1、2、3 不能只是同一句话换标点或近义改写；信息应逐级增加。Level 3 可以给出针对本题的伪代码、状态变化或定位位置，但除题面已经公开目标文本的 recall_fact 外，不得直接给出可提交的完整答案。
 - learner_adaptation.level=basic 时，三级提示可以指出已引用的事实或操作顺序，但不得给出可以逐字复制成完整答案的连续代码语句；学习者仍需自己把两到三个步骤连接起来。
 
 【reflection_question 反思题】

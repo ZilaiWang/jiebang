@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { buildProgrammingProblemBlueprint } from "../src/role-c-content/programming/problem-blueprint"
-import { materializeGapCode, validateGapLearnerContract, validateGapTemplate } from "../src/role-c-content/programming/gap-template"
+import { failClosedStarterCode, materializeGapCode, validateGapLearnerContract, validateGapTemplate } from "../src/role-c-content/programming/gap-template"
 import { resolveProgrammingSubmission } from "../src/role-c-content/programming/submission-contract"
 import { validateInputCandidates } from "../src/role-c-content/programming/test-plan"
 import { judgeVerdictFromExecution } from "../src/role-c-content/programming/judge-protocol"
@@ -59,6 +59,32 @@ describe("Role C programming workbench", () => {
     expect(() => materializeGapCode(template, { fact_text: "111" })).toThrow("必须填写带英文单引号或双引号")
     expect(materializeGapCode(template, { fact_text: '"Python 是一种通用编程语言。"' }).code)
       .toContain('fact_text = "Python 是一种通用编程语言。"')
+    expect(failClosedStarterCode(template)).toBe('fact_text = "TODO"\nprint(fact_text)\n')
+  })
+
+  test("builds contract-valid fail-closed starters for every supported gap format", () => {
+    const template = {
+      schema_version: "code-gap-template.v1" as const,
+      template_code: [
+        "name = {{gap:name}}",
+        "value = {{gap:value}}",
+        "{{gap:statement}}",
+        "if True:",
+        "    {{gap:block}}",
+        "",
+      ].join("\n"),
+      gaps: [
+        { gap_id: "name", label: "变量名", kind: "identifier" as const, answer_format: "python_identifier" as const, max_chars: 40, max_lines: 1 },
+        { gap_id: "value", label: "表达式", kind: "expression" as const, answer_format: "python_expression" as const, max_chars: 80, max_lines: 1 },
+        { gap_id: "statement", label: "语句", kind: "statement" as const, answer_format: "python_statement" as const, max_chars: 100, max_lines: 1 },
+        { gap_id: "block", label: "代码块", kind: "block" as const, max_chars: 100, max_lines: 2 },
+      ],
+    }
+    const starter = failClosedStarterCode(template)
+    expect(starter).toContain("name = __TODO__")
+    expect(starter).toContain("value = __TODO__")
+    expect(starter).toContain('raise NotImplementedError("TODO")')
+    expect(starter).not.toContain("{{gap:")
   })
 
   test("rejects ambiguous learner-facing blanks instead of exposing internal markers", () => {
