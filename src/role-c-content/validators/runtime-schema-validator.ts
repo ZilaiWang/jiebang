@@ -7,6 +7,12 @@ import {
   GENERATION_SPEC_CONTRACT_KEYS,
   GENERATION_SPEC_CONTRACT_VERSION,
 } from "../contracts/generation-spec"
+import {
+  LEARNER_PROFILE_SNAPSHOT_CONTRACT_KEYS,
+} from "../contracts/profile-adapter"
+import {
+  ROLE_C_EXPRESSION_CONTEXT_CONTRACT_KEYS,
+} from "../../role-b-profile/expression-context-contract"
 import type { ValidationIssue, ValidationReport } from "./citation-validator"
 
 const ROLE_C_SCHEMA_FILES = [
@@ -25,6 +31,7 @@ const ROLE_C_SCHEMA_FILES = [
   "dynamic_feedback_delivery.schema.json",
   "dynamic_feedback_result.schema.json",
   "evidence_gap_request.schema.json",
+  "expression_context.schema.json",
   "fact_audit_packet.schema.json",
   "generation_spec.schema.json",
   "grade_feedback.schema.json",
@@ -74,6 +81,8 @@ for (const file of ROLE_C_SCHEMA_FILES) {
 }
 
 assertGenerationSpecSchemaParity()
+assertLearnerProfileSnapshotSchemaParity()
+assertExpressionContextSchemaParity()
 
 const schemaRegistryFingerprint = `sha256:${createHash("sha256")
   .update(JSON.stringify(ROLE_C_SCHEMA_FILES.map((file) => [file, schemas.get(file)])))
@@ -249,6 +258,40 @@ function assertGenerationSpecSchemaParity(): void {
     if (JSON.stringify(actual) !== JSON.stringify(expected)) {
       throw new Error(`GENERATION_SPEC_SCHEMA_CODE_DRIFT:${check.name}:schema=${actual.join(",")}:code=${expected.join(",")}`)
     }
+  }
+}
+
+export function assertLearnerProfileSnapshotSchemaParity(): void {
+  const root = schemas.get("learner_profile_snapshot.schema.json")
+  if (!root) throw new Error("LEARNER_PROFILE_SNAPSHOT_SCHEMA_MISSING")
+  assertPropertyParity(
+    "LEARNER_PROFILE_SNAPSHOT_SCHEMA_CODE_DRIFT:root",
+    root,
+    LEARNER_PROFILE_SNAPSHOT_CONTRACT_KEYS.root,
+  )
+}
+
+export function assertExpressionContextSchemaParity(): void {
+  const root = schemas.get("expression_context.schema.json")
+  if (!root) throw new Error("EXPRESSION_CONTEXT_SCHEMA_MISSING")
+  assertPropertyParity("EXPRESSION_CONTEXT_SCHEMA_CODE_DRIFT:root", root, ROLE_C_EXPRESSION_CONTEXT_CONTRACT_KEYS.root)
+  assertPropertyParity(
+    "EXPRESSION_CONTEXT_SCHEMA_CODE_DRIFT:source_profile",
+    at(root, "properties", "source_profile"),
+    ROLE_C_EXPRESSION_CONTEXT_CONTRACT_KEYS.source_profile,
+  )
+  assertPropertyParity(
+    "EXPRESSION_CONTEXT_SCHEMA_CODE_DRIFT:guardrails",
+    at(root, "properties", "guardrails"),
+    ROLE_C_EXPRESSION_CONTEXT_CONTRACT_KEYS.guardrails,
+  )
+}
+
+function assertPropertyParity(label: string, value: unknown, expectedKeys: readonly string[]): void {
+  const actual = Object.keys((value as { properties?: Record<string, unknown> } | undefined)?.properties ?? {}).sort()
+  const expected = [...expectedKeys].sort()
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label}:schema=${actual.join(",")}:code=${expected.join(",")}`)
   }
 }
 

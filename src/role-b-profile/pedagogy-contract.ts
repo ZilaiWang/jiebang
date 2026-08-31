@@ -18,6 +18,7 @@ export type PracticeShape =
 
 export type TransferDistance = "near" | "medium" | "far"
 export type ScaffoldStrength = 1 | 2 | 3 | 4
+export type LearningTimeHorizon = "unspecified" | "urgent" | "near_term" | "long_term"
 
 /**
  * A deterministic, answer-free contract between Role B and Role C.
@@ -81,6 +82,8 @@ export interface RoleCPedagogyContract {
     session_minutes: number
     recommended_chunks: number
     checkpoint_interval_minutes: number
+    deadline: string | null
+    time_horizon: LearningTimeHorizon
   }
   constraints: {
     tool_constraints: string[]
@@ -118,6 +121,7 @@ export function buildRoleCPedagogyContract(profile: LearnerProfileV2): RoleCPeda
     ...profile.learning_constraints.accommodations,
     ...goalPolicy.accommodations,
   ])
+  const timeHorizon = classifyTimeHorizon(profile.goal_context.deadline, profile.updated_at)
 
   return {
     schema_version: "1.0",
@@ -168,6 +172,8 @@ export function buildRoleCPedagogyContract(profile: LearnerProfileV2): RoleCPeda
       session_minutes: sessionMinutes,
       recommended_chunks: Math.max(1, Math.ceil(profile.learning_constraints.weekly_time_budget_minutes / sessionMinutes)),
       checkpoint_interval_minutes: Math.min(20, Math.max(8, Math.round(sessionMinutes / 2))),
+      deadline: profile.goal_context.deadline,
+      time_horizon: timeHorizon,
     },
     constraints: {
       tool_constraints: [...profile.learning_constraints.tool_constraints],
@@ -178,6 +184,7 @@ export function buildRoleCPedagogyContract(profile: LearnerProfileV2): RoleCPeda
       `讲解顺序来自学习者明确选择的 explanation=${profile.learning_preferences.explanation}。`,
       `练习形态结合 practice=${profile.learning_preferences.practice} 与 goal_use_case=${profile.goal_context.use_case}。`,
       `每周时间预算 ${profile.learning_constraints.weekly_time_budget_minutes} 分钟被转换为可完成的学习单元。`,
+      `deadline 仅形成 pacing.time_horizon=${timeHorizon}，不改变目标、难度或评分。`,
       "事实、目标、答案、评分和安全边界保持不变。",
     ],
   }
@@ -321,6 +328,8 @@ function genericContract(profile: LearnerProfileV2): RoleCPedagogyContract {
       session_minutes: minutes,
       recommended_chunks: 1,
       checkpoint_interval_minutes: 15,
+      deadline: null,
+      time_horizon: "unspecified",
     },
     constraints: { tool_constraints: [], accommodations: [] },
     rationale: ["学习者关闭了个性化，返回通用均衡教学合同。", "Locked Core 保持不变。"],
@@ -367,4 +376,15 @@ function unique(values: string[]): string[] {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function classifyTimeHorizon(deadline: string | null, observedAt: string): LearningTimeHorizon {
+  if (!deadline) return "unspecified"
+  const deadlineMs = Date.parse(deadline)
+  const observedMs = Date.parse(observedAt)
+  if (!Number.isFinite(deadlineMs) || !Number.isFinite(observedMs)) return "unspecified"
+  const days = Math.ceil((deadlineMs - observedMs) / 86_400_000)
+  if (days <= 7) return "urgent"
+  if (days <= 30) return "near_term"
+  return "long_term"
 }

@@ -7,9 +7,9 @@ import {
   selectDiagnosticEvidenceTargets,
   type DiagnosticEvidenceTarget,
 } from "../knowledge/diagnostic-selector"
-import { loadLearnerMemory, saveLearnerMemory, appendPersistenceEvents, appendLearningBarrier, type PersistenceEvent } from "./learner-memory"
+import { loadLearnerMemory, saveLearnerMemory, appendPersistenceEvents, appendLearningBarrier, appendProfileObservation, type PersistenceEvent } from "./learner-memory"
 import { buildProfileGapQuestions, shouldAskProfileQuestion, classifyLearningBarrier, type ProfileGapQuestion, type ProfileQuestionDimension } from "../role-b-profile/profile-gap-questions"
-import { profileConfidenceStateFromProfile, planNextProfileQuestion, applyProfileConfidenceAnswer, type ProfileConfidenceDimension, type ProfileConfidenceState } from "../role-b-profile/profile-confidence"
+import { profileConfidenceStateFromProfile, planNextProfileQuestion, applyProfileConfidenceAnswer, applyProfileConfidenceAnswerWithWriteback, normalizeProfileConfidenceAnswer, type ProfileConfidenceDimension, type ProfileConfidenceState } from "../role-b-profile/profile-confidence"
 import { sanitizeLearnerRequestForStorage } from "../privacy/privacy-boundary"
 import { createScaffoldWorkerInvocation, runWorkerAdapter } from "./worker-adapters"
 import { ORCHESTRATION_WORKER_SEQUENCE } from "./state-machine"
@@ -45,12 +45,13 @@ import { RoleBLearningProgressAdapter } from "../role-b-profile/teaching-audit/l
 import {
   applyProfileClarificationAnswer,
   assessProfileIntake,
+  buildRoleCProfileSnapshotOptions,
   isLearnerProfileV2,
   type ProfileClarificationAnswer,
 } from "../role-b-profile/learner-profile-v2"
 import { createLocalBPathPlanningPort } from "../role-c-content/review/local-b-path-planning-port"
 import type { KnowledgeBase } from "../knowledge/types"
-import type { LearnerProfileSnapshot } from "../role-c-content/contracts/profile-adapter"
+import { adaptLearnerProfile, type LearnerProfileSnapshot } from "../role-c-content/contracts/profile-adapter"
 import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/model-gateway"
 import {
   ModelDiagnosticQuestionAuthor,
@@ -847,12 +848,12 @@ export class InteractiveSessionStore {
       const sourceId = String(payload.source_id ?? "")
       const answer = String(payload.answer ?? "")
       const learnerMemory = await loadLearnerMemory(this.data_root, record.learner_request.learner_id ?? record.session_id)
-      // 置信度追问（PROFILE-CONFIDENCE-*）无知识来源，只更新置信度，不写学习障碍。
+      let updatedMemory = learnerMemory
+      // 普通障碍追问直接形成结构化障碍；置信度追问由下方的规范化写回统一处理。
       const isConfidenceQuestion = questionId.startsWith("PROFILE-CONFIDENCE-")
       if (!isConfidenceQuestion) {
         const barrier = classifyLearningBarrier(answer)
-        const updatedMemory = appendLearningBarrier(learnerMemory, { source_id: sourceId, barrier })
-        await saveLearnerMemory(this.data_root, updatedMemory)
+        updatedMemory = appendLearningBarrier(updatedMemory, { source_id: sourceId, barrier })
         // 同步合并进会话画像，使 publicSessionView 能随 profile 暴露学习障碍。
         const profile = record.profile as { learning_barriers?: Array<{ source_id: string; barrier: string; count: number }> } | null
         if (profile) {
@@ -864,13 +865,47 @@ export class InteractiveSessionStore {
       // 9/10 多轮追问：答完当前问题后按置信度更新，若还有低置信度维度则继续追问（停止规则：无候选即停）。
       const confidenceState = record.private.profile_confidence
       const askedQuestion = (record.waiting_for?.items ?? []).find((item: any) => item.question_id === questionId) as { dimension?: string } | undefined
-      if (confidenceState && askedQuestion?.dimension) {
-        const updatedConfidence = applyProfileConfidenceAnswer(confidenceState, {
-          question_id: questionId,
-          dimension: askedQuestion.dimension as ProfileConfidenceDimension,
-          answer,
-        })
+      if (isConfidenceQuestion && confidenceState && askedQuestion?.dimension) {
+        const dimension = askedQuestion.dimension as ProfileConfidenceDimension
+        let updatedConfidence: ProfileConfidenceState
+        let observationValue: string
+        if (record.profile && isLearnerProfileV2(record.profile)) {
+          const writeback = applyProfileConfidenceAnswerWithWriteback({
+            profile: record.profile,
+            state: confidenceState,
+            question_id: questionId,
+            dimension,
+            answer,
+            source_id: sourceId,
+            next_profile_version: `${record.profile.profile_id}-v2-r${record.profile.revision + 1}`,
+          })
+          record.profile = writeback.profile
+          record.private.learner_profile_snapshot = adaptLearnerProfile(
+            writeback.profile,
+            buildRoleCProfileSnapshotOptions(writeback.profile),
+          )
+          updatedConfidence = writeback.confidence_state
+          observationValue = writeback.observation_value
+          if (writeback.learning_barrier) {
+            updatedMemory = appendLearningBarrier(updatedMemory, {
+              source_id: sourceId || "PROFILE-GENERAL",
+              barrier: writeback.learning_barrier,
+            })
+          }
+        } else {
+          updatedConfidence = applyProfileConfidenceAnswer(confidenceState, {
+            question_id: questionId,
+            dimension,
+            answer,
+          })
+          observationValue = normalizeProfileConfidenceAnswer(dimension, answer).value
+        }
         record.private.profile_confidence = updatedConfidence
+        updatedMemory = appendProfileObservation(
+          { ...updatedMemory, confidence_state: structuredClone(updatedConfidence) },
+          { dimension, value: observationValue },
+        )
+        await saveLearnerMemory(this.data_root, updatedMemory)
         const nextQuestion = planNextProfileQuestion(updatedConfidence)
         if (nextQuestion) {
           // 仍有低置信度维度 → 继续追问（多轮）
@@ -890,10 +925,15 @@ export class InteractiveSessionStore {
           }
           record.events.push(event(record.session_id, "session_updated", "profile_gap", `B 置信度追问：${nextQuestion.dimension}（影响度 ${nextQuestion.priority_score}）`, new Date().toISOString(), "profile-builder"))
           record.updated_at = new Date().toISOString()
-          return publicSessionView(record)
+          const response = publicSessionView(record)
+          record.processed_commands[command.command_id] = { request_hash: requestHash, response }
+          await this.save(record)
+          return response
         }
         // 无候选 → 停止追问，进入下一轮生成
         record.events.push(event(record.session_id, "session_updated", "profile_gap", "B 置信度已达门槛，停止追问，进入下一轮生成", new Date().toISOString(), "profile-builder"))
+      } else if (!isConfidenceQuestion) {
+        await saveLearnerMemory(this.data_root, updatedMemory)
       }
       record.private.profile_gap_asked = true
       record.events.push(event(record.session_id, "command_received", "profile_gap", isConfidenceQuestion ? `B 置信度追问已记录：${questionId}` : `B 记录困难：${classifyLearningBarrier(answer)}`, new Date().toISOString(), "profile-builder"))

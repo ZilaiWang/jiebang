@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jiangdongouyang-lab/knowbalance/schemas/role-c-content/expression_context.schema.json",
+  "title": "B-owned Role C Expression Context",
+  "type": "object",
+  "required": [
+    "schema_version", "enabled", "source_profile", "discipline_family",
+    "audience_register", "explanation_frame", "terminology_bridge",
+    "comparison_style", "analogy_domains", "task_contexts",
+    "declared_prior_anchors", "hint_emphasis", "troubleshooting_focus",
+    "guardrails", "rationale"
+  ],
+  "properties": {
+    "schema_version": { "const": "expression-context.v1" },
+    "enabled": { "type": "boolean" },
+    "source_profile": {
+      "type": "object",
+      "required": ["profile_id", "profile_version", "revision"],
+      "properties": {
+        "profile_id": { "type": "string", "minLength": 1 },
+        "profile_version": { "type": "string", "minLength": 1 },
+        "revision": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "discipline_family": {
+      "enum": [
+        "humanities_social_sciences", "science_engineering", "business_management",
+        "arts_design", "health_life_sciences", "vocational_applied",
+        "interdisciplinary", "unspecified"
+      ]
+    },
+    "audience_register": {
+      "enum": ["secondary_school", "higher_education", "adult_professional", "neutral"]
+    },
+    "explanation_frame": {
+      "enum": ["narrative_semantic", "formal_structural", "workflow_applied", "visual_structural", "balanced"]
+    },
+    "terminology_bridge": {
+      "enum": ["plain_then_formal", "formal_with_plain_gloss", "example_then_term", "balanced"]
+    },
+    "comparison_style": {
+      "enum": ["story_sequence", "state_transition", "task_flow", "structure_map", "neutral"]
+    },
+    "analogy_domains": { "$ref": "#/$defs/safe_text_list" },
+    "task_contexts": { "$ref": "#/$defs/safe_text_list" },
+    "declared_prior_anchors": { "$ref": "#/$defs/safe_text_list" },
+    "hint_emphasis": { "$ref": "#/$defs/safe_text_list" },
+    "troubleshooting_focus": { "$ref": "#/$defs/safe_text_list" },
+    "guardrails": {
+      "type": "object",
+      "required": [
+        "preserve_facts", "preserve_objectives", "preserve_difficulty",
+        "preserve_answers", "preserve_scoring", "omit_raw_background",
+        "forbid_ability_inference", "require_evidence_for_technical_comparisons",
+        "hide_profile_labels_in_public_content", "explicit_preferences_take_priority"
+      ],
+      "properties": {
+        "preserve_facts": { "const": true },
+        "preserve_objectives": { "const": true },
+        "preserve_difficulty": { "const": true },
+        "preserve_answers": { "const": true },
+        "preserve_scoring": { "const": true },
+        "omit_raw_background": { "const": true },
+        "forbid_ability_inference": { "const": true },
+        "require_evidence_for_technical_comparisons": { "const": true },
+        "hide_profile_labels_in_public_content": { "const": true },
+        "explicit_preferences_take_priority": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "rationale": { "$ref": "#/$defs/safe_text_list" }
+  },
+  "$defs": {
+    "safe_text_list": {
+      "type": "array",
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 240 }
+    }
+  },
+  "additionalProperties": false
+}

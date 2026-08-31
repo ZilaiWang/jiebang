@@ -17,6 +17,7 @@ import type {
   LearningPathNode,
 } from "./profile-adapter"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import type { RoleCExpressionContext } from "../../role-b-profile/expression-context-contract"
 import { buildPersonalizationPolicy, type PersonalizationPolicy } from "../planning/personalization-policy"
 import { redactDirectIdentifiers, sanitizeFreeTextList } from "../../privacy/privacy-boundary"
 import { assessmentBlueprintCanMeasureCoreObjectives } from "./assessment-measurement"
@@ -50,6 +51,7 @@ export const GENERATION_SPEC_CONTRACT_KEYS = {
   learner_adaptation: [
     "level", "known_concepts", "weak_concepts", "preferred_contexts",
     "scaffold_level", "reading_density", "accommodations", "pedagogy_contract",
+    "expression_context",
   ],
   personalization_policy: [
     "policy_version", "path_id", "goal_profile", "learner_level",
@@ -115,6 +117,7 @@ export interface GenerationSpec {
     reading_density: "low" | "medium" | "high"
     accommodations: string[]
     pedagogy_contract?: RoleCPedagogyContract
+    expression_context?: RoleCExpressionContext
   }
   personalization_policy?: PersonalizationPolicy
   difficulty: DifficultyVector
@@ -243,6 +246,9 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     ...(input.profile_snapshot.pedagogy_contract
       ? { pedagogy_contract: structuredClone(input.profile_snapshot.pedagogy_contract) }
       : {}),
+    ...(input.profile_snapshot.expression_context
+      ? { expression_context: structuredClone(input.profile_snapshot.expression_context) }
+      : {}),
   }
   const difficulty = canonicalDifficulty(defaults.difficulty, input.difficulty)
   const pathNode = {
@@ -262,6 +268,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     progress_state: input.progress_state ?? inferredProgressState,
     known_objective_count: knownObjectiveCount,
     weak_objective_count: weakObjectiveCount,
+    learning_barriers: input.profile_snapshot.learning_barriers,
   })
   const assessmentBlueprint = {
     tier_1_count: input.path_node.assessment_blueprint.tier_1_count,
