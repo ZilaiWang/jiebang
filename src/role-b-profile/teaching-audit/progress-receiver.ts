@@ -105,7 +105,23 @@ export function applyProgressObservation(
   ) {
     const currentIdx = LEVEL_ORDER.indexOf(oldLevel)
     if (currentIdx < LEVEL_ORDER.length - 1) {
-      newLevel = LEVEL_ORDER[currentIdx + 1]
+      // 长期观察（欧阳）：升级需连续 N 轮达标，N 由温度决定（0=3轮/1=2轮/2=1轮）。
+      // 高温(2)=单轮即升级，不看历史；中温/低温需连续 N 轮达标（history 已由主 Agent 在 B 更新前追加本轮）。
+      const requiredRounds = input.temperature === 0 ? 3 : input.temperature === 1 ? 2 : 1
+      let passed = false
+      if (requiredRounds === 1) {
+        passed = true // 高温：单轮达标即升级（本轮已通过 advance+mastery+accuracy 检查）
+      } else {
+        const history = Array.isArray(input.objective_history) ? input.objective_history : []
+        const recentPassed = history
+          .slice(-requiredRounds)
+          .filter((entry) => entry.correct === entry.total && entry.total >= 1)
+        passed = recentPassed.length >= requiredRounds
+      }
+      if (passed) {
+        newLevel = LEVEL_ORDER[currentIdx + 1]
+      }
+      // 未达轮数则保持原级（长期观察中），降级不受温度限制（答错是强信号）。
     }
   }
 

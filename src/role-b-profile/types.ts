@@ -95,7 +95,7 @@ export interface ProfileConflict {
 export interface ProfileProvenance {
   level: {
     value: KnowledgeDifficulty
-    source: "objective_cap" | "objective_promotion" | "self_rating" | "default"
+    source: "objective_cap" | "objective_promotion" | "objective_observation" | "self_rating" | "default"
     rule: string
   }
   concepts: ConceptProvenance[]

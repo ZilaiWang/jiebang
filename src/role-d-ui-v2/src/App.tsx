@@ -41,6 +41,7 @@ import {
   Sparkles,
   TerminalSquare,
   Target,
+  Thermometer,
   Trash2,
   UserPlus,
   UserRound,
@@ -93,6 +94,7 @@ import {
   addPlan,
   addUser,
   deletePlan,
+  deleteUser,
   learnerBackground,
   loadWorkspace,
   markPlanConceptMastered,
@@ -288,7 +290,10 @@ export function App() {
         if (cancelled) return
         const merged = { ...restored, events: eventResult.events ?? [] } as PublicSessionFixture
         setLiveSession(merged)
-        if (requestedPlanId === currentPlan.id) {
+        // 追问卡（profile_gap_questions）必须直接进入诊断页展示，不依赖 plan 跳转。
+        if (merged.waiting_for?.type === "profile_gap_questions") {
+          setPage(pageForSession(merged, { feedbackDismissed }))
+        } else if (requestedPlanId === currentPlan.id) {
           setPage(pageForSession(merged, { feedbackDismissed }))
           setRequestedPlanId(null)
         }
@@ -297,6 +302,10 @@ export function App() {
           timer = window.setTimeout(() => void load(), 800)
         } else {
           setBusy("")
+          // 后台生成完成但页面还停在旧路由时，按最新会话状态纠正路由（如追问卡/反馈页）。
+          if (merged.waiting_for?.type === "profile_gap_questions") {
+            setPage(pageForSession(merged, { feedbackDismissed }))
+          }
         }
       } catch (reason) {
         if (!cancelled) {
@@ -419,6 +428,7 @@ export function App() {
           learningGoalSpec: custom
             ? { mode: "custom_goal", custom_goal: goal }
             : { mode: "curriculum_node", selected_node_ids: nodeId ? [nodeId] : [] },
+          objectiveTemperature: (Number(localStorage.getItem("kb-objective-temperature") ?? "1") === 0 || Number(localStorage.getItem("kb-objective-temperature") ?? "1") === 2) ? Number(localStorage.getItem("kb-objective-temperature")) as 0 | 2 : 1,
           profileIntake: currentUser.intakeVersion === 2
             ? {
                 learner_id: currentUser.id,
@@ -433,9 +443,7 @@ export function App() {
                 explanation_preference: currentUser.explanationPreference,
                 practice_preference: currentUser.practicePreference,
                 pace_preference: currentUser.pacePreference,
-                preferred_contexts: currentUser.preferredContexts,
-                tool_constraints: currentUser.toolConstraints,
-                accommodations: currentUser.accommodations,
+                discipline_background: currentUser.disciplineBackground,
                 privacy: {
                   personalization_enabled: true,
                   retention: currentUser.retention,
@@ -654,7 +662,7 @@ export function App() {
           {page === "history" && (liveSession ? <HistoryPage /> : <NoSessionState onStart={() => setPage("goal")} />)}
         </main>
         {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} onCreate={(profile) => { setWorkspace((value) => addUser(value, profile)); setProfileOpen(false); setPage("home") }} />}
-        {userOpen && createPortal(<UserSwitcher workspace={workspace} onClose={() => setUserOpen(false)} onAdd={() => { setUserOpen(false); setProfileOpen(true) }} onSelect={(id) => { setConfirmSwitchUserId(id); setUserOpen(false) }} onViewDetail={(id) => { setUserDetailUserId(id) }} />, document.body)}
+        {userOpen && createPortal(<UserSwitcher workspace={workspace} onClose={() => setUserOpen(false)} onAdd={() => { setUserOpen(false); setProfileOpen(true) }} onSelect={(id) => { setConfirmSwitchUserId(id); setUserOpen(false) }} onViewDetail={(id) => { setUserDetailUserId(id) }} onDeleteUser={(id) => { setWorkspace((value) => deleteUser(value, id)) }} />, document.body)}
         {userDetailUserId && createPortal(<UserDetailModal user={workspace.users.find(u => u.id === userDetailUserId)!} onClose={() => setUserDetailUserId(null)} />, document.body)}
         {confirmSwitchUserId && createPortal(<ConfirmSwitchUserModal targetUser={workspace.users.find(u => u.id === confirmSwitchUserId)} currentUser={currentUser} onCancel={() => setConfirmSwitchUserId(null)} onConfirm={() => { setWorkspace((value) => selectUser(value, confirmSwitchUserId)); setPage("home"); setConfirmSwitchUserId(null) }} />, document.body)}
         {providerOpen && <ApiConfigModal current={provider} dockerStatus={dockerStatus} onDockerSetup={() => { fetch("/orchestrator/docker-setup").then(r => r.json()).then(d => { if (d.ready) setDockerStatus({ ready: true }) }) }} onDockerReady={() => setDockerStatus({ ready: true })} onClose={() => { setProviderOpen(false); setOpenPlanAfterProvider(false) }} onSave={async (input) => { const saved = await saveProviderConfiguration(input); setProvider(saved); setProviderOpen(false); if (openPlanAfterProvider && currentUser) { const id = newClientId("plan"); setWorkspace((value) => addPlan(value, currentUser.id, { id, name: "待选择学习目标" })); setOpenPlanAfterProvider(false); setPage("goal") } }} />}
@@ -771,16 +779,16 @@ function MetricDetailModal({ metric, onClose }: { metric: "hallucination" | "ada
   </Modal>
 }
 
-function UserSwitcher({ workspace, onClose, onAdd, onSelect, onViewDetail }: { workspace: WorkspaceState; onClose: () => void; onAdd: () => void; onSelect: (id: string) => void; onViewDetail: (id: string) => void }) {
-  return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onClose}><section className="user-popover" role="dialog" aria-modal="true" aria-label="切换学习者" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>学习者空间</span><b>切换学习者</b></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><div className="user-options">{workspace.users.map((user) => <div className={workspace.activeUserId === user.id ? "user-option-row is-active" : "user-option-row"} key={user.id}><button className="user-option-main" type="button" onClick={() => onSelect(user.id)}><span>{user.name.slice(0,1)}</span><div><b>{user.name}</b><small>{user.plans.length} 个计划 · 每周 {user.weeklyHours} 小时</small></div>{workspace.activeUserId === user.id && <Check size={16} />}</button><button className="user-option-detail" type="button" title="查看填写内容" onClick={(event) => { event.stopPropagation(); onViewDetail(user.id) }}><Eye size={15} /> 查看详情</button></div>)}</div><button className="add-user-button" type="button" onClick={onAdd}><UserPlus size={16} /> 新建学习者</button></section></div>
+function UserSwitcher({ workspace, onClose, onAdd, onSelect, onViewDetail, onDeleteUser }: { workspace: WorkspaceState; onClose: () => void; onAdd: () => void; onSelect: (id: string) => void; onViewDetail: (id: string) => void; onDeleteUser: (id: string) => void }) {
+  return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onClose}><section className="user-popover" role="dialog" aria-modal="true" aria-label="切换学习者" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>学习者空间</span><b>切换学习者</b></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div><div className="user-options">{workspace.users.map((user) => <div className={workspace.activeUserId === user.id ? "user-option-row is-active" : "user-option-row"} key={user.id}><button className="user-option-main" type="button" onClick={() => onSelect(user.id)}><span>{user.name.slice(0,1)}</span><div><b>{user.name}</b><small>{user.plans.length} 个计划 · 每周 {user.weeklyHours} 小时</small></div>{workspace.activeUserId === user.id && <Check size={16} />}</button><div className="user-option-actions"><button className="user-option-detail" type="button" title="查看填写内容" onClick={(event) => { event.stopPropagation(); onViewDetail(user.id) }}><Eye size={15} /> 查看详情</button><button className="user-option-delete" type="button" title={`删除${user.name}及其全部计划`} onClick={(event) => { event.stopPropagation(); if (window.confirm(`确定删除学习者「${user.name}」吗？其全部学习计划会一并删除。`)) onDeleteUser(user.id) }}><Trash2 size={15} /></button></div></div>)}</div><button className="add-user-button" type="button" onClick={onAdd}><UserPlus size={16} /> 新建学习者</button></section></div>
 }
 
 function UserDetailModal({ user, onClose }: { user: WorkspaceUser; onClose: () => void }) {
   const v2 = user.intakeVersion === 2
   return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onClose}><section className="user-detail-modal" role="dialog" aria-modal="true" aria-label="学习者详情" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>学习者详情</span><b>{user.name}</b></div><button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button></div>
     <div className="user-detail-body">
-      <section className="user-detail-section"><h3>基础信息</h3><dl><div><dt>姓名</dt><dd>{user.name}</dd></div><div><dt>每周投入</dt><dd>{user.weeklyHours} 小时</dd></div><div><dt>Python 水平</dt><dd>{pythonLevelLabel(user.pythonLevel)}</dd></div><div><dt>学习风格</dt><dd>{learningStyleLabel(user.learningStyle)}</dd></div><div><dt>背景描述</dt><dd>{user.background || "未填写"}</dd></div>{user.priorLanguages?.length ? <div><dt>已学语言</dt><dd>{user.priorLanguages.join("、")}</dd></div> : null}</dl></section>
-      {v2 ? <section className="user-detail-section"><h3>画像补充 · 结构化采集</h3><dl><div><dt>学习用途</dt><dd>{goalUseCaseLabel(user.goalUseCase)}</dd></div><div><dt>预期成果</dt><dd>{user.desiredOutcome || "未填写"}</dd></div><div><dt>单次时长</dt><dd>{user.sessionMinutes ? `${user.sessionMinutes} 分钟` : "未填写"}</dd></div><div><dt>讲解偏好</dt><dd>{explanationPreferenceDetailLabel(user.explanationPreference)}</dd></div><div><dt>练习偏好</dt><dd>{practicePreferenceDetailLabel(user.practicePreference)}</dd></div><div><dt>学习节奏</dt><dd>{pacePreferenceDetailLabel(user.pacePreference)}</dd></div>{user.preferredContexts?.length ? <div><dt>熟悉场景</dt><dd>{user.preferredContexts.join("、")}</dd></div> : null}{user.toolConstraints?.length ? <div><dt>工具约束</dt><dd>{user.toolConstraints.join("、")}</dd></div> : null}{user.accommodations?.length ? <div><dt>无障碍需求</dt><dd>{user.accommodations.join("、")}</dd></div> : null}{user.retention ? <div><dt>数据留存</dt><dd>{user.retention === "cross_session" ? "跨会话保留" : "仅本次会话"}</dd></div> : null}</dl></section> : <p className="user-detail-note">该学习者未走结构化采集表单，仅保留基础字段。</p>}
+      <section className="user-detail-section"><h3>基础信息</h3><dl><div><dt>姓名</dt><dd>{user.name}</dd></div><div><dt>每周投入</dt><dd>{user.weeklyHours} 小时</dd></div><div><dt>Python 水平</dt><dd>{pythonLevelLabel(user.pythonLevel)}</dd></div><div><dt>学习风格</dt><dd>{learningStyleLabel(user.learningStyle)}</dd></div>{user.disciplineBackground?.length ? <div><dt>学科背景</dt><dd>{user.disciplineBackground.join("、")}</dd></div> : null}<div><dt>背景描述</dt><dd>{user.background || "未填写"}</dd></div>{user.priorLanguages?.length ? <div><dt>已学语言</dt><dd>{user.priorLanguages.join("、")}</dd></div> : null}</dl></section>
+      {v2 ? <section className="user-detail-section"><h3>画像补充 · 结构化采集</h3><dl><div><dt>学习用途</dt><dd>{goalUseCaseLabel(user.goalUseCase)}</dd></div><div><dt>预期成果</dt><dd>{user.desiredOutcome || "未填写"}</dd></div><div><dt>单次时长</dt><dd>{user.sessionMinutes ? `${user.sessionMinutes} 分钟` : "未填写"}</dd></div><div><dt>讲解偏好</dt><dd>{explanationPreferenceDetailLabel(user.explanationPreference)}</dd></div><div><dt>练习偏好</dt><dd>{practicePreferenceDetailLabel(user.practicePreference)}</dd></div><div><dt>学习节奏</dt><dd>{pacePreferenceDetailLabel(user.pacePreference)}</dd></div>{user.retention ? <div><dt>数据留存</dt><dd>{user.retention === "cross_session" ? "跨会话保留" : "仅本次会话"}</dd></div> : null}</dl></section> : <p className="user-detail-note">该学习者未走结构化采集表单，仅保留基础字段。</p>}
       <section className="user-detail-section"><h3>学习计划</h3>{user.plans.length ? <ul className="user-detail-plans">{user.plans.map((plan) => <li key={plan.id}><b>{plan.name}</b><small>{plan.sessionId ? `${stageLabelFromSaved(plan.stage)} · ${plan.status ?? "已保存"}` : "尚未建立主 Agent 会话"}</small></li>)}</ul> : <p className="user-detail-note">暂无学习计划。</p>}</section>
     </div>
     <div className="user-detail-actions"><button className="primary-action" type="button" onClick={onClose}>关闭</button></div>
@@ -804,9 +812,12 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
   const [sessionMinutes, setSessionMinutes] = useState(30)
   const [pacePreference, setPacePreference] = useState<NonNullable<LearnerProfileDraft["pacePreference"]>>("steady")
   const [preferredContexts, setPreferredContexts] = useState("")
-  const [toolConstraints, setToolConstraints] = useState("")
-  const [accommodations, setAccommodations] = useState("")
+  const [disciplineBackground, setDisciplineBackground] = useState<"文科生" | "理科生" | "">("")
   const [retention, setRetention] = useState<NonNullable<LearnerProfileDraft["retention"]>>("session_only")
+  const [objectiveTemp, setObjectiveTemp] = useState<0 | 1 | 2>(() => {
+    const saved = Number(localStorage.getItem("kb-objective-temperature") ?? "1")
+    return saved === 0 || saved === 2 ? (saved as 0 | 2) : 1
+  })
   const splitItems = (value: string) => value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
   const save = () => onCreate({
     id: newClientId("learner"),
@@ -824,15 +835,16 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
     practicePreference: practicePreferenceForStyle(learningStyle),
     pacePreference,
     preferredContexts: splitItems(preferredContexts),
-    toolConstraints: splitItems(toolConstraints),
-    accommodations: splitItems(accommodations),
     retention,
+    disciplineBackground: goalUseCase === "coursework" && disciplineBackground ? [disciplineBackground] : undefined,
   })
   return <Modal title="认识你，从更合适的第一步开始" subtitle="这些明确选择会由 B 转换成教学策略，能力仍以客观诊断为准。" onClose={onClose}>
     <div className="form-grid">
       <label><span>怎么称呼你？</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：林晓" /></label>
       <label><span>你和 Python 的熟悉程度</span><select value={pythonLevel} onChange={(event) => setPythonLevel(event.target.value as LearnerProfileDraft["pythonLevel"])}><option value="new">完全没接触过</option><option value="beginner">了解一点基础</option><option value="intermediate">能写简单程序</option><option value="advanced">有项目经验</option></select></label>
-      <label><span>这次学习主要用于</span><select value={goalUseCase} onChange={(event) => setGoalUseCase(event.target.value as typeof goalUseCase)}><option value="coursework">课程学习或作业</option><option value="competition">竞赛准备</option><option value="job">求职或岗位提升</option><option value="project">完成实际项目</option><option value="certification">考试或认证</option><option value="interest">个人兴趣</option><option value="other">其他</option></select></label>
+      <label className="temp-field"><span>客观影响温度</span><div className="onboard-temp-options">{([{ value: 0, label: "低温", desc: "需连续3轮达标才晋级（慢而稳）" }, { value: 1, label: "中温", desc: "需连续2轮达标才晋级（平衡）" }, { value: 2, label: "高温", desc: "单轮优秀即可晋级（快但波动）" }] as Array<{ value: 0 | 1 | 2; label: string; desc: string }>).map((option) => <button type="button" key={option.value} className={objectiveTemp === option.value ? "is-active" : ""} onClick={() => { setObjectiveTemp(option.value); localStorage.setItem("kb-objective-temperature", String(option.value)) }}><b>{option.label}</b><small>{option.desc}</small></button>)}</div></label>
+      <label><span>这次学习主要用于</span><select value={goalUseCase} onChange={(event) => { setGoalUseCase(event.target.value as typeof goalUseCase); if (event.target.value !== "coursework") setDisciplineBackground("") }}><option value="coursework">课程学习或作业</option><option value="competition">竞赛准备</option><option value="job">求职或岗位提升</option></select></label>
+      {goalUseCase === "coursework" ? <label className="temp-field"><span>你的学科背景</span><div className="onboard-temp-options">{([{ value: "文科生", desc: "偏人文社科，讲解更贴近生活（欧阳/王子莱定制）" }, { value: "理科生", desc: "偏理工科，讲解更硬核详细" }] as Array<{ value: "文科生" | "理科生"; desc: string }>).map((option) => <button type="button" key={option.value} className={disciplineBackground === option.value ? "is-active" : ""} onClick={() => setDisciplineBackground(option.value)}><b>{option.value}</b><small>{option.desc}</small></button>)}</div></label> : null}
       <label><span>你更喜欢怎样学？</span><select value={learningStyle} onChange={(event) => setLearningStyle(event.target.value as LearnerProfileDraft["learningStyle"])}><option value="balanced">讲解与练习平衡</option><option value="practice">先看例子、多动手</option><option value="concept">先理解原理</option><option value="project">按步骤完成项目</option></select></label>
       <label><span>每周预计学习时长</span><select value={weeklyHours} onChange={(event) => setWeeklyHours(Number(event.target.value))}>{[2,3,5,7,10,14].map((hours) => <option value={hours} key={hours}>{hours} 小时 / 周</option>)}</select></label>
       <label><span>单次学习时长</span><select value={sessionMinutes} onChange={(event) => setSessionMinutes(Number(event.target.value))}>{[15,20,30,45,60,90].map((minutes) => <option value={minutes} key={minutes}>{minutes} 分钟</option>)}</select></label>
@@ -840,10 +852,7 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
       <label><span>画像保留方式</span><select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="session_only">只用于当前会话</option><option value="cross_session">跨会话保留并更新</option></select></label>
       <label className="full-field"><span>目前的学习/工作背景</span><input value={background} onChange={(event) => setBackground(event.target.value)} placeholder="必填，例如：高中生、计算机专业大一、转行学习" /></label>
       <label className="full-field"><span>希望最终能够独立完成什么？</span><input value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="例如：能独立编写并调试一个成绩统计程序" /></label>
-      <label className="full-field"><span>熟悉的例子或应用场景</span><input value={preferredContexts} onChange={(event) => setPreferredContexts(event.target.value)} placeholder="选填，用顿号或逗号分隔" /></label>
       <label className="full-field"><span>接触过其他编程语言吗？</span><input value={languages} onChange={(event) => setLanguages(event.target.value)} placeholder="选填，用顿号或逗号分隔" /></label>
-      <label className="full-field"><span>设备、软件或网络限制</span><input value={toolConstraints} onChange={(event) => setToolConstraints(event.target.value)} placeholder="选填，例如：只能使用浏览器、网络不稳定" /></label>
-      <label className="full-field"><span>阅读或无障碍需求</span><input value={accommodations} onChange={(event) => setAccommodations(event.target.value)} placeholder="选填，例如：短段落、减少术语密度" /></label>
     </div>
     <div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>以后再说</button><button className="primary-action" disabled={!name.trim() || !background.trim()} type="button" onClick={save}>保存学习档案</button></div>
   </Modal>
@@ -1062,6 +1071,15 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const { retry, reset, busy } = useLive()
   const activeSession = useRequiredSession()
   const profile = activeSession.profile
+  // 客观影响温度（欧阳）：0=低(3轮)/1=中(2轮)/2=高(1轮)。localStorage 持久化。
+  const [objectiveTemp, setObjectiveTempState] = useState<0 | 1 | 2>(() => {
+    const saved = Number(localStorage.getItem("kb-objective-temperature") ?? "1")
+    return saved === 0 || saved === 2 ? (saved as 0 | 2) : 1
+  })
+  const setObjectiveTemp = (value: 0 | 1 | 2) => {
+    setObjectiveTempState(value)
+    localStorage.setItem("kb-objective-temperature", String(value))
+  }
   // 完整 LearnerProfileV2（背景/偏好/约束/进度）由 publicSessionView 附加到 profile_v2；无则回退 v1 字段。
   const profileDetail = (activeSession as any).profile_v2 ?? profile
   if (profileDetail && (activeSession as any).learning_barriers?.length) {
@@ -1118,12 +1136,13 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
             {profileDetail.background_context || profileDetail.goal_context || profileDetail.learning_preferences ? <div className="profile-detail-sections">
               {profileDetail.background_context ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-person"><UserRound size={13} /></span><b>背景信息</b></header><div className="pd-grid"><div><dt>教育阶段</dt><dd>{profileDetail.background_context.education_stage || "未公开"}</dd></div><div><dt>身份角色</dt><dd>{profileDetail.background_context.role_context || "未公开"}</dd></div><div><dt>学科背景</dt><dd>{profileDetail.background_context.discipline_background?.length ? profileDetail.background_context.discipline_background.join("、") : "未公开"}</dd></div><div><dt>先备知识</dt><dd>{profileDetail.background_context.prior_topics?.length ? profileDetail.background_context.prior_topics.join("、") : profileDetail.background_context.prior_languages?.length ? profileDetail.background_context.prior_languages.join("、") : "未公开"}</dd></div></div></section> : null}
               {profileDetail.goal_context ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-goal"><Target size={13} /></span><b>目标用途</b></header><div className="pd-goal"><span className="pd-use-case">{useCaseLabel(profileDetail.goal_context.use_case)}</span>{profileDetail.goal_context.desired_outcome ? <p>{profileDetail.goal_context.desired_outcome}</p> : null}{profileDetail.goal_context.deadline ? <small>目标期限：{profileDetail.goal_context.deadline}</small> : null}</div></section> : null}
-              {profileDetail.learning_preferences ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-pref"><SlidersHorizontal size={13} /></span><b>学习偏好</b></header><div className="pd-chips"><span title="讲解方式">{explanationPreferenceLabel(profileDetail.learning_preferences.explanation)}</span><span title="练习方式">{practicePreferenceLabel(profileDetail.learning_preferences.practice)}</span><span title="学习节奏">{pacePreferenceLabel(profileDetail.learning_preferences.pace)}</span>{profileDetail.learning_preferences.preferred_contexts?.length ? <span title="熟悉场景">{profileDetail.learning_preferences.preferred_contexts.join("、")}</span> : null}</div></section> : null}
-              {profileDetail.learning_constraints ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-time"><Clock size={13} /></span><b>时间与工具</b></header><div className="pd-grid"><div><dt>每周投入</dt><dd>{formatMinutes(profileDetail.learning_constraints.weekly_time_budget_minutes)}</dd></div><div><dt>单次时长</dt><dd>{profileDetail.learning_constraints.session_time_budget_minutes ? formatMinutes(profileDetail.learning_constraints.session_time_budget_minutes) : "未公开"}</dd></div>{profileDetail.learning_constraints.tool_constraints?.length ? <div><dt>工具约束</dt><dd>{profileDetail.learning_constraints.tool_constraints.join("、")}</dd></div> : null}{profileDetail.learning_constraints.accommodations?.length ? <div><dt>无障碍需求</dt><dd>{profileDetail.learning_constraints.accommodations.join("、")}</dd></div> : null}</div></section> : null}
+              {profileDetail.learning_preferences ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-pref"><SlidersHorizontal size={13} /></span><b>学习偏好</b></header><div className="pd-chips"><span title="讲解方式">{explanationPreferenceLabel(profileDetail.learning_preferences.explanation)}</span><span title="练习方式">{practicePreferenceLabel(profileDetail.learning_preferences.practice)}</span><span title="学习节奏">{pacePreferenceLabel(profileDetail.learning_preferences.pace)}</span></div></section> : null}
+              {profileDetail.learning_constraints ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-time"><Clock size={13} /></span><b>时间安排</b></header><div className="pd-grid"><div><dt>每周投入</dt><dd>{formatMinutes(profileDetail.learning_constraints.weekly_time_budget_minutes)}</dd></div><div><dt>单次时长</dt><dd>{profileDetail.learning_constraints.session_time_budget_minutes ? formatMinutes(profileDetail.learning_constraints.session_time_budget_minutes) : "未公开"}</dd></div></div></section> : null}
               {profileDetail.progress ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-progress"><TrendingUp size={13} /></span><b>知识点掌握进度</b></header>{(() => { const mastery = profileDetail.progress.mastery_by_source_id || {}; const keys = Object.keys(mastery); return keys.length ? <div className="pd-mastery">{keys.slice(0, 6).map((key) => <div className="pd-mastery-row" key={key}><span>{key}</span><i><em style={{ width: `${Math.round((mastery[key] ?? 0) * 100)}%` }} /></i><b>{Math.round((mastery[key] ?? 0) * 100)}%</b></div>)}</div> : <p className="pd-empty">尚未产生测评证据，掌握度将在后续轮次更新</p> })()}<div className="pd-progress-meta"><span>最近准确率：{profileDetail.progress.last_assessment_accuracy != null ? `${Math.round(profileDetail.progress.last_assessment_accuracy * 100)}%` : "暂无"}</span>{profileDetail.progress.recent_error_patterns?.length ? <span>高频错误：{profileDetail.progress.recent_error_patterns.slice(0, 3).join("、")}</span> : null}</div></section> : null}
               {profileDetail.self_assessment || profileDetail.ability_dimensions?.length ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-evidence"><Scale size={13} /></span><b>证据与判断</b></header>{profileDetail.self_assessment ? <div className="pd-evidence-row"><span className="pd-evidence-label">你的自评</span><em className="pd-self">{difficultyLabel(profileDetail.self_assessment.reported_level)}</em>{profileDetail.ability_dimensions?.length ? <span className="pd-evidence-label">客观诊断</span> : null}{profileDetail.ability_dimensions?.length ? <em className="pd-objective">{difficultyLabel((() => { const byValue = [...profileDetail.ability_dimensions].sort((a, b) => b.value - a.value)[0]; return byValue?.value >= 0.7 ? "integrated" : byValue?.value >= 0.45 ? "intermediate" : byValue?.value >= 0.2 ? "basic" : "beginner" })())}</em> : null}</div> : null}{profileDetail.ability_dimensions?.length ? <div className="pd-evidence-dims">{profileDetail.ability_dimensions.map((dim: { label: string; value: number }) => <div className="pd-dim-row" key={dim.label}><span>{dim.label}</span><i><em style={{ width: `${Math.round(dim.value * 100)}%` }} /></i><b>{Math.round(dim.value * 100)}%</b></div>)}</div> : null}<p className="pd-evidence-note">能力由客观诊断决定（客观答题结果为最高依据）；自评仅作参考，冲突时以客观为准。</p></section> : null}
               {profileDetail.learning_barriers?.length ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-barrier"><TriangleAlert size={13} /></span><b>学习障碍</b></header><div className="pd-barrier-chips">{[...new Map((profileDetail.learning_barriers as Array<{ barrier: string; source_id: string; count: number }>).map((entry) => [entry.barrier, entry])).values()].map((entry: { barrier: string; source_id: string; count: number }) => <span className={`pd-barrier-tag pd-barrier-${entry.barrier}`} key={entry.barrier} title={`${entry.source_id} · 出现 ${entry.count} 次`}>{barrierLabel(entry.barrier)}<em>{entry.count}</em></span>)}</div><p className="pd-evidence-note">由 B 在补救轮次主动追问"你主要卡在哪里"获得，用于精确调整下一轮讲解。</p></section> : null}
               {profileConfidence ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-confidence"><Gauge size={13} /></span><b>画像置信度</b></header><div className="pd-confidence-grid">{(Object.entries(profileConfidence.fields ?? {}) as Array<[string, { confidence: number; impact: number; evidence_count: number; status: string }]>).map(([dim, field]) => <div className="pd-confidence-row" key={dim}><span className={field.status === "sufficient" ? "is-sufficient" : ""} title={confidenceDimensionLabel(dim)}>{confidenceDimensionLabel(dim)}</span><i><em className={field.status === "sufficient" ? "is-sufficient" : ""} style={{ width: `${Math.round(field.confidence * 100)}%` }} /></i><b>{Math.round(field.confidence * 100)}%</b><small>{field.evidence_count} 条</small></div>)}</div><p className="pd-evidence-note">B 按"教学影响度 × 不确定性"决定追问优先级；达到 75% 置信度即停止追问。</p></section> : null}
+              <section className="profile-detail-section"><header><span className="pd-icon pd-icon-temp"><Thermometer size={13} /></span><b>客观影响温度</b></header><div className="pd-temp-current">{objectiveTemp === 0 ? <><b>低温</b><small>需连续 3 轮达标才晋级（慢而稳）</small></> : objectiveTemp === 2 ? <><b>高温</b><small>单轮优秀即可晋级（快但波动）</small></> : <><b>中温</b><small>需连续 2 轮达标才晋级（平衡）</small></>}</div><p className="pd-temp-note">在"新建学习"时选择；答错封顶不受温度影响。想调整请重新创建学习计划。</p></section>
             </div> : <p className="pd-empty">主 Agent尚未公开画像详情字段（背景 / 目标 / 偏好 / 约束 / 进度）。</p>}
             <div className="profile-detail-footer">
               <span><BadgeCheck size={12} /> 画像版本 {profileDetail.profile_version ?? "v1"}</span>

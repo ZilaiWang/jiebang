@@ -42,6 +42,17 @@ export interface SynthesizeProfileInput {
   objectiveDiagnosis: ObjectiveDiagnosisEvidence
   knowledgeBase: KnowledgeBase
   fallbackLearnerId?: string
+  /**
+   * 跨轮次客观表现历史（欧阳：画像完善是慢性过程，不能一轮优秀直接进阶）。
+   * 每项 = 一轮客观测试的 { round_no, correct, total }；用于答对晋级的长期观察。
+   */
+  objective_history?: Array<{ round_no: number; correct: number; total: number }>
+  /**
+   * 客观影响温度（欧阳建议）：决定答对晋级需要连续几轮达标。
+   * 0=低温(需连续3轮) / 1=中温(需连续2轮) / 2=高温(单轮即可)。
+   * 答错封顶始终单轮生效（强信号，不被温度稀释）。
+   */
+  temperature?: 0 | 1 | 2
 }
 
 export function synthesizeProfile(input: SynthesizeProfileInput): ProfileSynthesis {
@@ -137,8 +148,8 @@ export function synthesizeProfile(input: SynthesizeProfileInput): ProfileSynthes
     }
   }
 
-  // 第四步：level 判定级联（只降不升）
-  const levelResolution = resolveLevel(selfAssessment.self_rating, objectiveDiagnosis)
+  // 第四步：level 判定级联（只降不升；晋级需按温度连续多轮观察——欧阳）
+  const levelResolution = resolveLevel(selfAssessment.self_rating, objectiveDiagnosis, input.objective_history, input.temperature)
 
   // 第五步：按证据强度顺序输出概念数组（objective → self → background，稳定可复现）
   const ordered = [...resolved.values()].sort(
@@ -230,6 +241,8 @@ function clamp(value: number, min: number, max: number): number {
 function resolveLevel(
   selfRating: KnowledgeDifficulty | null,
   objectiveDiagnosis: ObjectiveDiagnosisEvidence,
+  objective_history?: Array<{ round_no: number; correct: number; total: number }>,
+  temperature?: 0 | 1 | 2,
 ): ProfileProvenance["level"] {
   const incorrectLevels = objectiveDiagnosis.items
     .filter((item) => item.verdict === "incorrect")
@@ -255,10 +268,24 @@ function resolveLevel(
     const baseline = selfIndex ?? 0
     const promoted = Math.min(baseline + 1, coveredLevel)
     if (promoted > baseline) {
+      // 长期观察（欧阳）：晋级需要连续 N 轮达标，N 由温度决定（0=3轮/1=2轮/2=1轮）。
+      const requiredRounds = temperature === 0 ? 3 : temperature === 1 ? 2 : 1
+      const history = objective_history ?? []
+      const thisRound = { round_no: (history.at(-1)?.round_no ?? 0) + 1, correct: answeredItems.length, total: answeredItems.length }
+      const recentPassed = [...history, thisRound]
+        .slice(-requiredRounds)
+        .filter((entry) => entry.total >= 3 && entry.correct === entry.total)
+      if (recentPassed.length < requiredRounds) {
+        return {
+          value: LEVEL_ORDER[baseline],
+          source: "objective_observation",
+          rule: `客观全对但需连续 ${requiredRounds} 轮达标才晋级（温度 ${temperature ?? 2}，长期观察中；当前已连续 ${recentPassed.length} 轮）`,
+        }
+      }
       return {
         value: LEVEL_ORDER[promoted],
         source: "objective_promotion",
-        rule: `至少 3 道客观题全部答对 → 在自评 ${selfRating ?? "无"} 基础上最多上调一档，且不超过已覆盖难度 ${LEVEL_ORDER[coveredLevel]}`,
+        rule: `连续 ${requiredRounds} 轮至少 3 道客观题全部答对（温度 ${temperature ?? 2}）→ 在自评 ${selfRating ?? "无"} 基础上最多上调一档，且不超过已覆盖难度 ${LEVEL_ORDER[coveredLevel]}`,
       }
     }
   }

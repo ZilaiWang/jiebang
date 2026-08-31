@@ -45,6 +45,10 @@ export interface RoleBLearnerProgressState {
 export interface RoleBLearningProgressAdapterOptions {
   knowledgeBase: KnowledgeBase
   learners: RoleBLearnerProgressRegistration[]
+  /** 跨轮客观表现历史（欧阳长期观察）：[{round_no, correct, total}] */
+  objective_history?: Array<{ round_no: number; correct: number; total: number }>
+  /** 客观影响温度（欧阳）：0=低(需3轮)/1=中(需2轮)/2=高(单轮) */
+  temperature?: 0 | 1 | 2
 }
 
 interface MutableLearnerProgressState extends RoleBLearnerProgressState {
@@ -63,12 +67,16 @@ export class RoleBLearningProgressAdapter implements RoleBLearningProgressPort {
   private readonly knowledgeItemsBySourceId: Map<string, KnowledgeBase["items"][number]>
   private readonly learnerStates = new Map<string, MutableLearnerProgressState>()
   private readonly committedDeliveryIds = new Set<string>()
+  private readonly objectiveHistory: Array<{ round_no: number; correct: number; total: number }>
+  private readonly temperature: 0 | 1 | 2
 
   constructor(options: RoleBLearningProgressAdapterOptions) {
     this.knowledgeBase = structuredClone(options.knowledgeBase)
     this.knowledgeItemsBySourceId = new Map(
       this.knowledgeBase.items.map((item) => [item.sourceId, item] as const),
     )
+    this.objectiveHistory = options.objective_history ?? []
+    this.temperature = options.temperature ?? 2
 
     for (const learner of options.learners) {
       assertRegistration(learner)
@@ -128,6 +136,9 @@ export class RoleBLearningProgressAdapter implements RoleBLearningProgressPort {
             observation,
             next_profile_version: nextProfileVersion,
             concept_matches: conceptMatches,
+            // 长期观察（欧阳）：透传跨轮历史与温度。
+            objective_history: this.objectiveHistory,
+            temperature: this.temperature,
           })
           return {
             profile: updated.profile,
@@ -140,6 +151,9 @@ export class RoleBLearningProgressAdapter implements RoleBLearningProgressPort {
           currentProfile: state.currentProfile,
           profileVersion: nextProfileVersion,
           conceptMatches,
+          // 长期观察（欧阳）：透传跨轮历史与温度。
+          objective_history: this.objectiveHistory,
+          temperature: this.temperature,
         })
 
     // 所有校验与画像计算成功后再一次性提交状态和幂等账本。

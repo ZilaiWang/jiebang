@@ -227,6 +227,10 @@ export interface UpdateLearnerProfileV2Input {
     profileConcept: string,
     observation: ProgressObservation["conceptEvidence"][number],
   ) => boolean
+  /** 跨轮客观表现历史（欧阳长期观察）：[{round_no, correct, total}] */
+  objective_history?: Array<{ round_no: number; correct: number; total: number }>
+  /** 客观影响温度（欧阳）：0=低(3轮)/1=中(2轮)/2=高(1轮) */
+  temperature?: 0 | 1 | 2
 }
 
 export interface UpdateLearnerProfileV2Result {
@@ -483,6 +487,9 @@ export function updateLearnerProfileV2(
     currentProfile: coreProfile(input.profile),
     profileVersion: input.next_profile_version,
     conceptMatches: input.concept_matches,
+    // 长期观察（欧阳）：透传跨轮历史与温度，晋级需连续多轮达标。
+    objective_history: input.objective_history,
+    temperature: input.temperature,
   })
   const mastery = { ...input.profile.progress.mastery_by_source_id }
   for (const evidence of input.observation.conceptEvidence) {

@@ -244,6 +244,10 @@ export interface InteractiveSessionRecord {
     profile_gap_asked?: boolean
     /** 画像置信度状态（7）：随画像实时计算，驱动多轮追问（9）与停止规则（10）。 */
     profile_confidence?: ProfileConfidenceState
+    /** 跨轮客观表现历史（欧阳长期观察）：[{round_no, correct, total}]，供答对晋级多轮观察。 */
+    objective_history?: Array<{ round_no: number; correct: number; total: number }>
+    /** 客观影响温度（欧阳）：0=低(需3轮)/1=中(需2轮)/2=高(单轮)。前端按钮可调。 */
+    objective_temperature?: 0 | 1 | 2
     /** 追问插入时的画像快照，答完追问后用于路径推进（progressAdapter 在追问路径不可用）。 */
     learner_profile_snapshot?: LearnerProfileSnapshot | null
     /** 当前节点内已发生的补救轮次计数（advance/reprofile 时清零）。 */
@@ -275,6 +279,8 @@ export interface CreateInteractiveSessionInput {
   mode: OrchestrationMode
   learner_request: LearnerRequest
   owner_id: string
+  /** 客观影响温度（欧阳）：0=低(3轮)/1=中(2轮)/2=高(1轮)。控制画像晋级需连续几轮达标。 */
+  objective_temperature?: 0 | 1 | 2
 }
 
 export interface InteractiveSessionStoreOptions {
@@ -519,6 +525,8 @@ export class InteractiveSessionStore {
         diagnosis_items: [],
         upstream_artifacts: {},
         next_round_context: null,
+        objective_temperature: input.objective_temperature ?? 2,
+        objective_history: [],
         assessment_history: structuredClone(learnerMemory.recent_assessment_items ?? []),
         role_c_generation_attempt: 0,
         role_c_failed_generations: 0,
@@ -839,15 +847,19 @@ export class InteractiveSessionStore {
       const sourceId = String(payload.source_id ?? "")
       const answer = String(payload.answer ?? "")
       const learnerMemory = await loadLearnerMemory(this.data_root, record.learner_request.learner_id ?? record.session_id)
-      const barrier = classifyLearningBarrier(answer)
-      const updatedMemory = appendLearningBarrier(learnerMemory, { source_id: sourceId, barrier })
-      await saveLearnerMemory(this.data_root, updatedMemory)
-      // 同步合并进会话画像，使 publicSessionView 能随 profile 暴露学习障碍。
-      const profile = record.profile as { learning_barriers?: Array<{ source_id: string; barrier: string; count: number }> } | null
-      if (profile) {
-        const existing = (profile.learning_barriers ?? []).find((entry) => entry.source_id === sourceId && entry.barrier === barrier)
-        if (existing) existing.count += 1
-        else profile.learning_barriers = [...(profile.learning_barriers ?? []), { source_id: sourceId, barrier, count: 1 }]
+      // 置信度追问（PROFILE-CONFIDENCE-*）无知识来源，只更新置信度，不写学习障碍。
+      const isConfidenceQuestion = questionId.startsWith("PROFILE-CONFIDENCE-")
+      if (!isConfidenceQuestion) {
+        const barrier = classifyLearningBarrier(answer)
+        const updatedMemory = appendLearningBarrier(learnerMemory, { source_id: sourceId, barrier })
+        await saveLearnerMemory(this.data_root, updatedMemory)
+        // 同步合并进会话画像，使 publicSessionView 能随 profile 暴露学习障碍。
+        const profile = record.profile as { learning_barriers?: Array<{ source_id: string; barrier: string; count: number }> } | null
+        if (profile) {
+          const existing = (profile.learning_barriers ?? []).find((entry) => entry.source_id === sourceId && entry.barrier === barrier)
+          if (existing) existing.count += 1
+          else profile.learning_barriers = [...(profile.learning_barriers ?? []), { source_id: sourceId, barrier, count: 1 }]
+        }
       }
       // 9/10 多轮追问：答完当前问题后按置信度更新，若还有低置信度维度则继续追问（停止规则：无候选即停）。
       const confidenceState = record.private.profile_confidence
@@ -884,7 +896,7 @@ export class InteractiveSessionStore {
         record.events.push(event(record.session_id, "session_updated", "profile_gap", "B 置信度已达门槛，停止追问，进入下一轮生成", new Date().toISOString(), "profile-builder"))
       }
       record.private.profile_gap_asked = true
-      record.events.push(event(record.session_id, "command_received", "profile_gap", `B 记录困难：${barrier}`, new Date().toISOString(), "profile-builder"))
+      record.events.push(event(record.session_id, "command_received", "profile_gap", isConfidenceQuestion ? `B 置信度追问已记录：${questionId}` : `B 记录困难：${classifyLearningBarrier(answer)}`, new Date().toISOString(), "profile-builder"))
       // 追问结束，继续测评后的下一轮资源生成（remediate 支持限制/路径推进/后台生成）。
       updated = await continueAfterProfileGapDecision(
         record,
@@ -1561,6 +1573,9 @@ async function continueAfterAssessment(
         ? currentProfile.revision
         : Math.max(0, record.round_no - 1),
     }],
+    // 长期观察（欧阳）：把跨轮客观历史与温度注入适配器，升级需连续多轮达标。
+    objective_history: record.private.objective_history,
+    temperature: record.private.objective_temperature,
   })
   let outcome: Awaited<ReturnType<typeof submitRoleCAssessment>>
   try {
@@ -1612,6 +1627,16 @@ async function continueAfterAssessment(
       text_response: answer.text_response ?? null,
       code_response: answer.code_response ?? null,
     })),
+  }
+  // 长期观察（欧阳）：先把本轮客观表现追加进跨轮历史（在 B 画像更新前，使本轮计入晋级观察）。
+  // 记录 {round_no, correct, total}；correct 按逐题 raw_score == max_score 计（完全答对才算达标轮）。
+  const gradePayload = (outcome.feedback as any)?.grade_result?.payload
+  const itemResults = Array.isArray(gradePayload?.item_results) ? gradePayload.item_results : []
+  if (itemResults.length > 0) {
+    const history = Array.isArray(record.private.objective_history) ? record.private.objective_history : []
+    const correct = itemResults.filter((item: any) => Number(item.raw_score) >= Number(item.max_score)).length
+    history.push({ round_no: record.round_no, correct, total: itemResults.length })
+    record.private.objective_history = history
   }
   // submitRoleCAssessment 已通过 C 的正式 LearningEvidenceEvent 端口把本轮
   // 题目级证据交给 B。这里持久化 B 返回的真实画像和快照；不再在主 Agent

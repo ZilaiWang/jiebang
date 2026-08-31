@@ -63,9 +63,21 @@ function validateCommandBody(value: Record<string, unknown>): OrchestratorApiSch
   }
   if (value.type === "submit_profile_gap_answer") {
     const payload = isRecord(value.payload) ? value.payload : null
-    if (!payload || typeof payload.question_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.question_id)) errors.push("profile gap question_id is required and must be safe")
-    if (!payload || typeof payload.source_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(payload.source_id)) errors.push("profile gap source_id is required and must be safe")
-    if (!payload || typeof payload.answer !== "string" || payload.answer.trim().length === 0 || payload.answer.length > 500) errors.push("profile gap answer is required and bounded")
+    // 兼容两种形态：单对象 {question_id, source_id, answer} 与数组 {answers: [...]}（多轮追问）
+    const gapEntries: Array<Record<string, unknown>> = Array.isArray(payload?.answers)
+      ? (payload.answers as Array<Record<string, unknown>>)
+      : (payload ? [payload] : [])
+    if (gapEntries.length === 0) {
+      errors.push("profile gap requires question_id/source_id/answer or non-empty answers array")
+    } else {
+      for (const entry of gapEntries) {
+        if (typeof entry?.question_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(entry.question_id)) errors.push("profile gap question_id is required and must be safe")
+        // 置信度追问（PROFILE-CONFIDENCE-*）无知识来源，source_id 允许缺省；知识题追问（卡在哪里）必填。
+        const isConfidenceQuestion = typeof entry?.question_id === "string" && entry.question_id.startsWith("PROFILE-CONFIDENCE-")
+        if (!isConfidenceQuestion && (typeof entry?.source_id !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(entry.source_id))) errors.push("profile gap source_id is required and must be safe")
+        if (typeof entry?.answer !== "string" || entry.answer.trim().length === 0 || entry.answer.length > 500) errors.push("profile gap answer is required and bounded")
+      }
+    }
   }
   if (value.type === "run_code_lab" || value.type === "submit_code_lab" || value.type === "debug_code_lab") {
     const payload = isRecord(value.payload) ? value.payload : null

@@ -894,3 +894,27 @@ html[data-theme="dark"] .hero-cat-illustration { filter: drop-shadow(0 20px 40px
 .lab-run-output.is-fail { max-height: 460px; overflow-y: auto; }
 .lab-run-placeholder { display: flex; align-items: center; gap: 8px; color: #7d93a8; font-size: 11.5px; }
 .lab-run-placeholder svg { color: #5d7a94; flex: none; }
+
+/* 客观影响温度（欧阳） */
+.pd-icon-temp { color: #b3541e; background: #ffeadd; }
+.pd-temp-note { margin: 2px 0 8px; color: #8a7fa8; font-size: 10.5px; line-height: 1.6; }
+.pd-temp-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pd-temp-options button { padding: 8px 6px; border: 1px solid #e0d6f2; border-radius: 10px; background: #fff; cursor: pointer; text-align: center; transition: border-color .15s, background .15s; }
+.pd-temp-options button b { display: block; color: #6d55b7; font-size: 12px; }
+.pd-temp-options button small { display: block; margin-top: 2px; color: #a095b8; font-size: 9.5px; }
+.pd-temp-options button.is-active { border-color: #7a55c9; background: #f1eaff; }
+.pd-temp-options button.is-active b { color: #5d3ea8; }
+
+/* 新建学习：温度选择（欧阳） */
+.temp-field { grid-column: 1 / -1; }
+.onboard-temp-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.onboard-temp-options button { padding: 10px 8px; border: 1px solid #d9e3ff; border-radius: 12px; background: #fff; cursor: pointer; text-align: center; transition: border-color .15s, background .15s; }
+.onboard-temp-options button b { display: block; color: #5d6f8a; font-size: 13px; }
+.onboard-temp-options button small { display: block; margin-top: 3px; color: #8a94a8; font-size: 10px; line-height: 1.4; }
+.onboard-temp-options button.is-active { border-color: #7a55c9; background: #f1eaff; }
+.onboard-temp-options button.is-active b { color: #5d3ea8; }
+
+/* 画像详情：温度只读显示 */
+.pd-temp-current { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px; border: 1px solid #e0d6f2; border-radius: 10px; background: #faf8ff; }
+.pd-temp-current b { color: #6d55b7; font-size: 13px; }
+.pd-temp-current small { color: #8a7fa8; font-size: 11px; }

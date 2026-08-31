@@ -333,6 +333,7 @@ export function createLearningOrchestratorApiHandler(
           mode: validation.value.mode!,
           learner_request: validation.value.learner_request!,
           owner_id: principal,
+          objective_temperature: (body as any).objective_temperature,
         })
         return jsonResponse(publicSessionView(record), 202)
       }

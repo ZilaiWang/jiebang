@@ -26,6 +26,8 @@ export interface LearnerProfileDraft {
   toolConstraints?: string[]
   accommodations?: string[]
   retention?: "session_only" | "cross_session"
+  /** 学科背景（欧阳：课程学习时追问文科/理科，驱动 C 生成差异）。 */
+  disciplineBackground?: string[]
 }
 
 export interface LearningPlanDraft {
@@ -156,6 +158,17 @@ export function deletePlan(workspace: WorkspaceState, userId: string, planId: st
       activePlanId: user.activePlanId === planId ? plans[0]?.id : user.activePlanId,
     }
   })
+}
+
+/** 删除整个学习者（连同其全部学习计划）。删除后自动切换到剩余第一个用户。 */
+export function deleteUser(workspace: WorkspaceState, userId: string): WorkspaceState {
+  const remaining = workspace.users.filter((user) => user.id !== userId)
+  if (remaining.length === workspace.users.length) return workspace
+  return {
+    ...workspace,
+    users: remaining,
+    activeUserId: workspace.activeUserId === userId ? (remaining[0]?.id ?? null) : workspace.activeUserId,
+  }
 }
 
 export function selectPlan(workspace: WorkspaceState, userId: string, planId: string): WorkspaceState {
