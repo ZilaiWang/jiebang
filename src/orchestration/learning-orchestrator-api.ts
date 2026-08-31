@@ -59,6 +59,12 @@ import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/mode
 import { deleteLearnerData } from "../privacy/learner-data-deletion"
 import { modelCallPolicy } from "../model-runtime"
 import { roleCSchemaRegistryMetadata } from "../role-c-content/validators/runtime-schema-validator"
+import { PathRegistryStore, type SessionPathSnapshot } from "./path-registry-store"
+import { validatePathChangeBody, validatePathResumeBody, validateResumeDiagnosisAnswers } from "./path-api-schema"
+import { evaluateResumeDiagnosis, type ResumeDiagnosisItem } from "./resume-diagnosis"
+import { publicPathRegistry, type GoalPathRegistry } from "./path-registry"
+import type { FormalLearningPath } from "../role-b-profile/teaching-audit/formal-path"
+import type { LearningPathNode } from "../role-c-content/contracts/profile-adapter"
 
 interface ErrorBody {
   error: {
@@ -99,6 +105,7 @@ export function createLearningOrchestratorApiHandler(
   const sessions = new InteractiveSessionStore(dataRoot, {
     model_environment: providerEnvironment,
   })
+  const paths = new PathRegistryStore(join(dataRoot, "paths"))
 
   return async function handle(request: Request): Promise<Response> {
     try {
@@ -124,7 +131,10 @@ export function createLearningOrchestratorApiHandler(
             "GET /orchestrator/sessions/:id",
             "POST /orchestrator/sessions/:id/repair",
             "POST /orchestrator/sessions/:id/commands",
-            "GET /orchestrator/sessions/:id/events",
+            "GET /orchestrator/sessions/:id/paths",
+            "POST /orchestrator/sessions/:id/path/change-goal",
+            "POST /orchestrator/sessions/:id/path/resume",
+            "POST /orchestrator/sessions/:id/path/resume/diagnosis",
             "GET /orchestrator/sessions/:id/events/stream",
           ],
         })
@@ -335,6 +345,65 @@ export function createLearningOrchestratorApiHandler(
         const record = await sessions.load(sessionMatch[1]!)
         assertOwner(record, requirePrincipal(request))
         return jsonResponse(publicSessionView(record))
+      }
+
+      const pathsMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/paths$/)
+      if (request.method === "GET" && pathsMatch) {
+        const record = await sessions.load(pathsMatch[1]!)
+        assertOwner(record, requirePrincipal(request))
+        const learnerId = record.learner_request.learner_id ?? record.session_id
+        await paths.ensureFromSession(learnerId, pathSnapshotFromSession(record))
+        return jsonResponse({ learner_id: learnerId, registry: publicPathRegistry(await paths.load(learnerId)) })
+      }
+
+      const changeGoalMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/path\/change-goal$/)
+      if (request.method === "POST" && changeGoalMatch) {
+        const record = await sessions.load(changeGoalMatch[1]!)
+        assertOwner(record, requirePrincipal(request))
+        const body = await parseJson<unknown>(request)
+        const validation = validatePathChangeBody(body)
+        if (!validation.ok) return errorResponse(400, "INVALID_PATH_CHANGE", "Invalid path goal change", validation.errors)
+        const learnerId = record.learner_request.learner_id ?? record.session_id
+        const registry = await paths.ensureFromSession(learnerId, pathSnapshotFromSession(record))
+        const changed = await paths.changeGoal(learnerId, validation.value)
+        return jsonResponse({ learner_id: learnerId, registry: publicPathRegistry(changed), previous_path_id: registry.active_path.path_id })
+      }
+
+      const resumePathMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/path\/resume$/)
+      if (request.method === "POST" && resumePathMatch) {
+        const record = await sessions.load(resumePathMatch[1]!)
+        assertOwner(record, requirePrincipal(request))
+        const body = await parseJson<unknown>(request)
+        const validation = validatePathResumeBody(body)
+        if (!validation.ok) return errorResponse(400, "INVALID_PATH_RESUME", "Invalid path resume request", validation.errors)
+        const learnerId = record.learner_request.learner_id ?? record.session_id
+        await paths.ensureFromSession(learnerId, pathSnapshotFromSession(record))
+        const pending = await paths.requestResume(learnerId, validation.value.path_id)
+        const withDiagnosis = pending.pending_resume?.items?.length
+          ? pending
+          : await generateResumeDiagnosis(paths, pending, validation.value.path_id)
+        return jsonResponse({ learner_id: learnerId, registry: publicPathRegistry(withDiagnosis), status: "short_diagnosis_required" }, 202)
+      }
+
+      const resumeDiagnosisAnswersMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/path\/resume\/diagnosis$/)
+      if (request.method === "POST" && resumeDiagnosisAnswersMatch) {
+        const record = await sessions.load(resumeDiagnosisAnswersMatch[1]!)
+        assertOwner(record, requirePrincipal(request))
+        const body = await parseJson<unknown>(request)
+        const validation = validateResumeDiagnosisAnswers(body)
+        if (!validation.ok) return errorResponse(400, "INVALID_RESUME_DIAGNOSIS", "Invalid resume diagnosis answers", validation.errors)
+        const learnerId = record.learner_request.learner_id ?? record.session_id
+        const registry = await paths.load(learnerId)
+        const pending = registry.pending_resume
+        if (!pending || pending.path_id !== validation.value.path_id || !pending.items || !pending.answer_key) {
+          return errorResponse(409, "RESUME_DIAGNOSIS_NOT_READY", "恢复诊断尚未准备好，请先请求恢复路径")
+        }
+        const evaluation = evaluateResumeDiagnosis(pending.items as ResumeDiagnosisItem[], validation.value.answers, pending.answer_key)
+        if (!evaluation.passed) {
+          return jsonResponse({ learner_id: learnerId, status: "diagnosis_failed", evaluation, registry: publicPathRegistry(registry) }, 200)
+        }
+        const resumed = await paths.completeResume(learnerId, pending.path_id, evaluation.level)
+        return jsonResponse({ learner_id: learnerId, status: "resumed", evaluation, registry: publicPathRegistry(resumed) })
       }
 
       const repairMatch = url.pathname.match(/^\/orchestrator\/sessions\/([A-Za-z0-9_-]+)\/repair$/)
@@ -714,4 +783,47 @@ function sessionEventStream(
 function errorResponse(status: number, code: string, message: string, details?: string[]): Response {
   const body: ErrorBody = { error: { code, message, details } }
   return jsonResponse(body, status)
+}
+
+function pathSnapshotFromSession(record: InteractiveSessionRecord): SessionPathSnapshot {
+  const path = record.formal_path as FormalLearningPath | null
+  const node = record.current_path_node as LearningPathNode | null
+  const profile = record.profile as { level?: SessionPathSnapshot["level"]; goal_profile?: SessionPathSnapshot["goal_profile"] } | null
+  if (!path || !node || !record.learner_request.goal) {
+    throw new InteractiveSessionError("PATH_NOT_READY", "Session has no executable learning path", 409)
+  }
+  return {
+    path_id: path.path_id,
+    goal_profile: profile?.goal_profile ?? record.learner_request.goal_profile ?? "general_learning",
+    goal: record.learner_request.goal,
+    level: profile?.level ?? "beginner",
+    current_node_id: node.node_id,
+    objective_source_ids: [...node.target_source_ids],
+  }
+}
+
+async function generateResumeDiagnosis(
+  paths: PathRegistryStore,
+  registry: GoalPathRegistry,
+  pathId: string,
+): Promise<GoalPathRegistry> {
+  const paused = registry.paths.find((path) => path.path_id === pathId)
+  if (!paused) throw new InteractiveSessionError("PATH_NOT_FOUND", "Path does not exist", 404)
+  const sourceIds = (paused.objective_source_ids ?? []).slice(0, 3)
+  const items: ResumeDiagnosisItem[] = sourceIds.map((sourceId, index) => ({
+    item_id: `RESUME-${pathId}-${index + 1}`,
+    objective_id: sourceId,
+    source_id: sourceId,
+    question: `恢复前短诊断：你还记得“${sourceId}”的基本用法吗？`,
+    options: ["记得", "不太确定"],
+    answer: "记得",
+  }))
+  const answerKey = Object.fromEntries(items.map((item) => [item.item_id, item.answer!]))
+  return paths.saveResumeDiagnosis(registry.learner_id, pathId, items.map((item) => ({
+    item_id: item.item_id,
+    objective_id: item.objective_id,
+    source_id: item.source_id ?? item.objective_id,
+    question: item.question,
+    options: [...item.options],
+  })), answerKey)
 }

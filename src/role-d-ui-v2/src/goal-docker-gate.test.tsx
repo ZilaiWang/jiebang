@@ -18,6 +18,7 @@ function makeContext(overrides: Partial<LiveContextValue> = {}): LiveContextValu
     create: async () => {},
     submitDiagnosis: async () => {},
     submitProfileClarification: async () => {},
+    submitProfileGap: async () => {},
     submitAssessment: async () => {},
     runPublishedCodeLab: async () => {},
     runAssessmentItemCode: async () => {},
