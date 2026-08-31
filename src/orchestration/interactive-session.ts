@@ -7,7 +7,9 @@ import {
   selectDiagnosticEvidenceTargets,
   type DiagnosticEvidenceTarget,
 } from "../knowledge/diagnostic-selector"
-import { loadLearnerMemory, saveLearnerMemory, appendPersistenceEvents, type PersistenceEvent } from "./learner-memory"
+import { loadLearnerMemory, saveLearnerMemory, appendPersistenceEvents, appendLearningBarrier, type PersistenceEvent } from "./learner-memory"
+import { buildProfileGapQuestions, shouldAskProfileQuestion, classifyLearningBarrier, type ProfileGapQuestion, type ProfileQuestionDimension } from "../role-b-profile/profile-gap-questions"
+import { profileConfidenceStateFromProfile, planNextProfileQuestion, applyProfileConfidenceAnswer, type ProfileConfidenceDimension, type ProfileConfidenceState } from "../role-b-profile/profile-confidence"
 import { sanitizeLearnerRequestForStorage } from "../privacy/privacy-boundary"
 import { createScaffoldWorkerInvocation, runWorkerAdapter } from "./worker-adapters"
 import { ORCHESTRATION_WORKER_SEQUENCE } from "./state-machine"
@@ -64,7 +66,7 @@ import {
 } from "../model-runtime"
 
 export type InteractiveSessionStatus = "waiting_for_user" | "running" | "completed" | "blocked" | "failed"
-export type InteractiveStage = "objective_diagnosis" | "assessment" | "completed" | "blocked" | "failed"
+export type InteractiveStage = "objective_diagnosis" | "assessment" | "profile_gap" | "completed" | "blocked" | "failed"
 
 /** 会话锁超过该时长（毫秒）视为陈旧：持有进程可能已崩溃，允许接管。 */
 const STALE_LOCK_MS = 60_000
@@ -187,7 +189,7 @@ export interface InteractiveSessionRecord {
   current_stage: InteractiveStage
   round_no: number
   waiting_for: null | {
-    type: "profile_answers" | "diagnosis_answers" | "assessment_answers" | "clarification_answer"
+    type: "profile_answers" | "diagnosis_answers" | "assessment_answers" | "clarification_answer" | "profile_gap_questions"
     items: unknown[]
   }
   worker_ledger: PublicWorkerLedgerEntry[]
@@ -198,6 +200,10 @@ export interface InteractiveSessionRecord {
   profile: unknown | null
   /** 完整 LearnerProfileV2（背景/目标用途/偏好/约束/进度/溯源），publicSessionView 附加，供前端画像详情展示。 */
   profile_v2?: Record<string, unknown>
+  /** 学习障碍（B 主动追问写回）：[{ source_id, barrier, count }]。 */
+  learning_barriers?: Array<{ source_id: string; barrier: string; count: number }>
+  /** 画像置信度（7）：8 维度 confidence/impact/evidence_count，随画像实时计算。 */
+  profile_confidence?: ProfileConfidenceState
   formal_path: unknown | null
   current_path_node: unknown | null
   rag_result: unknown | null
@@ -234,6 +240,12 @@ export interface InteractiveSessionRecord {
     /** 画像纪元：初始 0，reprofile 重建画像时 +1，作为 profile_version 的一部分，
      *  使新画像的 mastery 状态不与旧画像累积串扰（旧画像 evidence 不污染新画像）。 */
     profile_epoch: number
+    /** 本轮是否已向学习者追问过"卡在哪里"（remediate 画像缺口，每轮最多一次）。 */
+    profile_gap_asked?: boolean
+    /** 画像置信度状态（7）：随画像实时计算，驱动多轮追问（9）与停止规则（10）。 */
+    profile_confidence?: ProfileConfidenceState
+    /** 追问插入时的画像快照，答完追问后用于路径推进（progressAdapter 在追问路径不可用）。 */
+    learner_profile_snapshot?: LearnerProfileSnapshot | null
     /** 当前节点内已发生的补救轮次计数（advance/reprofile 时清零）。 */
     node_remediate_rounds: number
     /** 当前节点内已发生的巩固强化轮次计数（advance/reprofile 时清零）。 */
@@ -272,6 +284,7 @@ export interface InteractiveSessionStoreOptions {
 
 export const INTERACTIVE_SESSION_COMMAND_TYPES = [
   "submit_profile_answers",
+  "submit_profile_gap_answer",
   "submit_diagnosis_answers",
   "submit_assessment_answers",
   "debug_code_lab",
@@ -295,6 +308,9 @@ export interface InteractiveSessionCommand {
     gap_answers?: Record<string, string>
     public_case_id?: string
     custom_input?: unknown
+    question_id?: string
+    source_id?: string
+    answer?: string
   }
 }
 
@@ -813,6 +829,76 @@ export class InteractiveSessionStore {
       record.code_execution = result
       record.updated_at = new Date().toISOString()
       updated = record
+    } else if (command.type === "submit_profile_gap_answer") {
+      // 画像缺口追问作答：写回 learner-memory（困难反填），然后继续测评后的下一轮流程。
+      if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "profile_gap_questions") {
+        throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for profile gap questions", 409)
+      }
+      const payload = command.payload ?? {}
+      const questionId = String(payload.question_id ?? "")
+      const sourceId = String(payload.source_id ?? "")
+      const answer = String(payload.answer ?? "")
+      const learnerMemory = await loadLearnerMemory(this.data_root, record.learner_request.learner_id ?? record.session_id)
+      const barrier = classifyLearningBarrier(answer)
+      const updatedMemory = appendLearningBarrier(learnerMemory, { source_id: sourceId, barrier })
+      await saveLearnerMemory(this.data_root, updatedMemory)
+      // 同步合并进会话画像，使 publicSessionView 能随 profile 暴露学习障碍。
+      const profile = record.profile as { learning_barriers?: Array<{ source_id: string; barrier: string; count: number }> } | null
+      if (profile) {
+        const existing = (profile.learning_barriers ?? []).find((entry) => entry.source_id === sourceId && entry.barrier === barrier)
+        if (existing) existing.count += 1
+        else profile.learning_barriers = [...(profile.learning_barriers ?? []), { source_id: sourceId, barrier, count: 1 }]
+      }
+      // 9/10 多轮追问：答完当前问题后按置信度更新，若还有低置信度维度则继续追问（停止规则：无候选即停）。
+      const confidenceState = record.private.profile_confidence
+      const askedQuestion = (record.waiting_for?.items ?? []).find((item: any) => item.question_id === questionId) as { dimension?: string } | undefined
+      if (confidenceState && askedQuestion?.dimension) {
+        const updatedConfidence = applyProfileConfidenceAnswer(confidenceState, {
+          question_id: questionId,
+          dimension: askedQuestion.dimension as ProfileConfidenceDimension,
+          answer,
+        })
+        record.private.profile_confidence = updatedConfidence
+        const nextQuestion = planNextProfileQuestion(updatedConfidence)
+        if (nextQuestion) {
+          // 仍有低置信度维度 → 继续追问（多轮）
+          record.status = "waiting_for_user"
+          record.current_stage = "profile_gap"
+          record.waiting_for = {
+            type: "profile_gap_questions",
+            items: [{
+              question_id: nextQuestion.question_id,
+              dimension: nextQuestion.dimension,
+              question: nextQuestion.question,
+              answer_type: nextQuestion.answer_type,
+              options: nextQuestion.options,
+              reason: nextQuestion.reason,
+              priority_score: nextQuestion.priority_score,
+            }],
+          }
+          record.events.push(event(record.session_id, "session_updated", "profile_gap", `B 置信度追问：${nextQuestion.dimension}（影响度 ${nextQuestion.priority_score}）`, new Date().toISOString(), "profile-builder"))
+          record.updated_at = new Date().toISOString()
+          return publicSessionView(record)
+        }
+        // 无候选 → 停止追问，进入下一轮生成
+        record.events.push(event(record.session_id, "session_updated", "profile_gap", "B 置信度已达门槛，停止追问，进入下一轮生成", new Date().toISOString(), "profile-builder"))
+      }
+      record.private.profile_gap_asked = true
+      record.events.push(event(record.session_id, "command_received", "profile_gap", `B 记录困难：${barrier}`, new Date().toISOString(), "profile-builder"))
+      // 追问结束，继续测评后的下一轮资源生成（remediate 支持限制/路径推进/后台生成）。
+      updated = await continueAfterProfileGapDecision(
+        record,
+        this.data_root,
+        this.diagnosticQuestionAuthor(),
+      )
+      // 下一轮内容后台生成，完成后写回会话（前端轮询状态）。
+      if (updated.status === "running" && updated.private.next_round_context) {
+        const response = publicSessionView(updated)
+        updated.processed_commands[command.command_id] = { request_hash: requestHash, response }
+        await this.save(updated)
+        await this.enqueueContentJob("next_content_round", updated)
+        return response
+      }
     } else if (command.type === "submit_assessment_answers") {
       if (record.status !== "waiting_for_user" || record.waiting_for?.type !== "assessment_answers") {
         throw new InteractiveSessionError("COMMAND_NOT_ALLOWED", "This session is not waiting for assessment answers", 409)
@@ -1280,6 +1366,21 @@ export function publicSessionView(record: InteractiveSessionRecord): Interactive
   if (fullProfile && typeof fullProfile === "object") {
     view.profile_v2 = fullProfile as Record<string, unknown>
   }
+  // 学习障碍（B 主动追问写回）随 profile 暴露：优先 profile_v2，回退 profile。
+  const barriers = (view.profile_v2 as { learning_barriers?: unknown } | undefined)?.learning_barriers
+    ?? (view.profile as { learning_barriers?: unknown } | undefined)?.learning_barriers
+  if (barriers && Array.isArray(barriers) && barriers.length) {
+    view.learning_barriers = structuredClone(barriers)
+  }
+  // 画像置信度（7）：随会话实时计算并暴露，供前端"证据与判断/置信度"展示。
+  const profileForConfidence = (view.profile_v2 as Record<string, unknown> | undefined) ?? (view.profile as Record<string, unknown> | null | undefined)
+  if (profileForConfidence && typeof profileForConfidence === "object") {
+    try {
+      view.profile_confidence = profileConfidenceStateFromProfile(profileForConfidence as Parameters<typeof profileConfidenceStateFromProfile>[0])
+    } catch {
+      // 画像字段缺失时跳过，前端回退占位
+    }
+  }
   return view
 }
 
@@ -1426,10 +1527,15 @@ async function continueAfterAssessment(
   command: InteractiveSessionCommand,
   dataRoot: string,
   diagnosticQuestionAuthor: DiagnosticQuestionAuthorPort,
+  skipGrading = false,
 ): Promise<InteractiveSessionRecord> {
   const answers = command.payload?.answers
   if (!assertSubmissionAnswers(answers, "submit_assessment_answers")) {
     throw new InteractiveSessionError("INVALID_COMMAND", "submit_assessment_answers requires answers array", 400)
+  }
+  // 追问已答后复用本流程：评分已在首次提交完成（feedback/profile 已写回），直接继续后续决策。
+  if (skipGrading) {
+    return continueAfterProfileGapDecision(original, dataRoot, diagnosticQuestionAuthor)
   }
   const record = structuredClone(original)
   const roleC = record.private.role_c
@@ -1538,6 +1644,60 @@ async function continueAfterAssessment(
   // 同一教学变式反复无效时，交给 B 按最新画像重新规划。
   // 轮次限制只触发策略变化，永远不得改写 C 的掌握决策。
   const decisionAction = outcome.feedback.final_decision.action
+  // 画像缺口追问：remediate 时按置信度优先级问"卡在哪里"（欧阳：置信度驱动多轮追问）。
+  // 每答一问提高该维度置信度；planNextProfileQuestion 无候选时停止（置信度门槛 0.75）。
+  if (decisionAction === "remediate" && !record.private.profile_gap_asked) {
+    const learnerMemory = await loadLearnerMemory(dataRoot, roleC.learner_id)
+    const weakConcepts = (updatedBState.currentProfile as LearnerProfile | null)?.weak_concepts ?? []
+    const recentPatterns = (learnerMemory.recent_errors ?? []).map((entry) => entry.pattern).filter((pattern): pattern is string => Boolean(pattern))
+    const answeredDims = (learnerMemory.profile_observations ?? []).map((obs) => obs.dimension).filter((dim): dim is ProfileQuestionDimension => ["learning_barrier", "task_ability", "explanation_preference", "practice_preference"].includes(dim as string))
+    const gapContext = {
+      goal: (updatedBState.currentProfile as LearnerProfile | null)?.goal ?? "",
+      level: (updatedBState.currentProfile as LearnerProfile | null)?.level ?? "beginner",
+      known_concepts: (updatedBState.currentProfile as LearnerProfile | null)?.known_concepts ?? [],
+      weak_concepts: weakConcepts,
+      recent_error_patterns: recentPatterns,
+      answered_dimensions: answeredDims,
+      recent_action: "remediate" as const,
+    }
+    const gapQuestions = buildProfileGapQuestions(gapContext)
+    if (gapQuestions.length > 0 && shouldAskProfileQuestion(gapContext)) {
+      record.private.profile_gap_asked = true
+      record.private.learner_profile_snapshot = structuredClone(updatedBState.currentSnapshot)
+      // 计算置信度状态（7）：随画像实时计算，用于 9/10 多轮追问与停止。
+      const confidenceState = profileConfidenceStateFromProfile(updatedBState.currentProfile as LearnerProfile)
+      record.private.profile_confidence = confidenceState
+      // 先用欧阳的置信度排序选第一问（learning_barrier 通常优先），回退到 gap 问题。
+      const nextQuestion = planNextProfileQuestion(confidenceState)
+      const firstItems = nextQuestion
+        ? [{
+            question_id: nextQuestion.question_id,
+            dimension: nextQuestion.dimension,
+            question: nextQuestion.question,
+            answer_type: nextQuestion.answer_type,
+            options: nextQuestion.options,
+            reason: nextQuestion.reason,
+            priority_score: nextQuestion.priority_score,
+          }]
+        : gapQuestions
+      record.status = "waiting_for_user"
+      record.current_stage = "profile_gap"
+      record.waiting_for = { type: "profile_gap_questions", items: firstItems }
+      record.feedback = {
+        ...outcome.feedback,
+        assessment_items: (record.assessment as { payload?: unknown } | null)?.payload ?? null,
+        your_answers: answers.map((answer: any) => ({
+          item_id: answer.item_id,
+          selected_option_id: answer.selected_option_id ?? null,
+          text_response: answer.text_response ?? null,
+          code_response: answer.code_response ?? null,
+        })),
+      }
+      record.events.push(event(record.session_id, "session_updated", "profile_gap", `B 置信度追问：${nextQuestion ? `${nextQuestion.dimension}（影响度 ${nextQuestion.priority_score}）` : "困难识别"}`, new Date().toISOString(), "profile-builder"))
+      record.updated_at = new Date().toISOString()
+      return record
+    }
+  }
   let supportLimitReached = false
   if (decisionAction === "remediate") {
     record.private.node_remediate_rounds = (record.private.node_remediate_rounds ?? 0) + 1
@@ -1676,6 +1836,193 @@ async function continueAfterAssessment(
     record.round_no,
     advance.nextPathNode.node_id,
     outcome.feedback.feedback_id,
+  )
+  const backgroundStartedAt = new Date().toISOString()
+  record.updated_at = backgroundStartedAt
+  record.events.push(event(
+    record.session_id,
+    "session_updated",
+    "assessment",
+    `round ${record.round_no} generation started in background`,
+    backgroundStartedAt,
+    "tiered-evaluator",
+  ))
+  return record
+}
+
+/**
+ * 追问已答后继续测评后的决策流程：复用 continueAfterAssessment 的"支持限制/路径推进/后台生成"逻辑。
+ * 评分在首次提交时已完成（feedback/profile 已写回 record），这里只做后续决策。
+ */
+async function continueAfterProfileGapDecision(
+  original: InteractiveSessionRecord,
+  dataRoot: string,
+  diagnosticQuestionAuthor: DiagnosticQuestionAuthorPort,
+): Promise<InteractiveSessionRecord> {
+  const record = structuredClone(original)
+  const roleC = record.private.role_c
+  const path = record.formal_path as FormalLearningPath | null
+  const currentNode = record.current_path_node as LearningPathNode | null
+  if (!roleC || !path || !currentNode || !record.feedback) {
+    throw new InteractiveSessionError("SESSION_ARTIFACT_MISSING", "Profile gap session is missing trusted Role C identities", 409)
+  }
+  const feedback = record.feedback as DynamicFeedbackResult
+  const decisionAction = feedback.final_decision.action
+  const currentProfile = record.profile as LearnerProfile
+
+  // 画像漂移：不推进路径、不生成下一轮，回到诊断阶段重建学习者画像。
+  if (decisionAction === "reprofile") {
+    record.next_round_action = createDay4NextRoundActionState(
+      "reprofile",
+      record.round_no,
+      currentNode.node_id,
+      feedback.feedback_id,
+    )
+    try {
+      return await resetToDiagnosisPhase(record, dataRoot, diagnosticQuestionAuthor)
+    } catch (error) {
+      applyDiagnosticGenerationFailure(record, error)
+      return record
+    }
+  }
+
+  // 同一教学变式反复无效时，交给 B 按最新画像重新规划。
+  let supportLimitReached = false
+  if (decisionAction === "remediate") {
+    record.private.node_remediate_rounds = (record.private.node_remediate_rounds ?? 0) + 1
+    supportLimitReached = record.private.node_remediate_rounds >= MAX_REMEDIATE_ROUNDS_PER_NODE
+  } else if (decisionAction === "reinforce") {
+    record.private.node_reinforce_rounds = (record.private.node_reinforce_rounds ?? 0) + 1
+    supportLimitReached = record.private.node_reinforce_rounds >= MAX_REINFORCE_ROUNDS_PER_NODE
+  }
+  if (supportLimitReached) {
+    const recovery = await replanAfterLearningStall(
+      record,
+      currentNode,
+      currentProfile,
+      record.private.learner_profile_snapshot!,
+    )
+    if (!recovery.ok) {
+      record.status = "blocked"
+      record.current_stage = "blocked"
+      record.waiting_for = null
+      record.private.next_round_context = null
+      record.blocked_reason = `${LEARNING_SUPPORT_REQUIRED}: ${recovery.reason}`
+      record.terminal_outcome = {
+        kind: "learning_support_required",
+        code: "LEARNING_SUPPORT_REQUIRED",
+        message: recovery.reason,
+        recommended_actions: ["reprofile", "change_goal"],
+        evidence_refs: [feedback.feedback_id, currentNode.node_id],
+      }
+      record.events.push(event(
+        record.session_id,
+        "session_blocked",
+        "blocked",
+        record.blocked_reason,
+        new Date().toISOString(),
+        "path-planner",
+      ))
+      record.updated_at = new Date().toISOString()
+      return record
+    }
+    record.formal_path = recovery.path
+    record.current_path_node = recovery.nextPathNode
+    record.private.node_remediate_rounds = 0
+    record.private.node_reinforce_rounds = 0
+    record.private.role_c_generation_attempt = 0
+    record.round_no += 1
+    const replannedObjectiveIds = recovery.nextPathNode.objectives.map((objective) => objective.objective_id)
+    record.private.next_round_context = buildNextRoundContext(
+      feedback,
+      roleC.spec_id ?? roleC.run_id,
+      `NRC-${record.session_id}-R${record.round_no}`,
+      replannedObjectiveIds,
+      replannedObjectiveIds,
+    ) ?? null
+    record.status = "running"
+    record.current_stage = "assessment"
+    record.waiting_for = null
+    record.next_round_action = createDay4NextRoundActionState(
+      decisionAction,
+      record.round_no,
+      recovery.nextPathNode.node_id,
+      feedback.feedback_id,
+    )
+    record.events.push(event(
+      record.session_id,
+      "session_updated",
+      "assessment",
+      "B 已根据连续低掌握证据调整支持路径",
+      new Date().toISOString(),
+      "path-planner",
+    ))
+    record.updated_at = new Date().toISOString()
+    return record
+  }
+  const advance = advanceToNextNode({
+    path,
+    updatedProfileSnapshot: record.private.learner_profile_snapshot!,
+    decisionAction,
+  })
+  record.formal_path = advance.path
+  if (advance.pathCompleted && isFormalPathMastered(advance.path)) {
+    record.current_path_node = null
+    record.status = "completed"
+    record.current_stage = "completed"
+    record.waiting_for = null
+    record.terminal_outcome = {
+      kind: "completed_mastered",
+      code: "PATH_MASTERED",
+      message: "正式学习路径中的全部节点均已通过测评",
+      recommended_actions: ["return_home"],
+      evidence_refs: [feedback.feedback_id, ...advance.path.nodes.map((node) => node.node_id)],
+    }
+    record.events.push(event(record.session_id, "session_completed", "completed", "formal learning path completed", new Date().toISOString()))
+    record.updated_at = new Date().toISOString()
+    return record
+  }
+  if (!advance.nextPathNode) {
+    record.current_path_node = null
+    record.status = "blocked"
+    record.current_stage = "blocked"
+    record.waiting_for = null
+    record.blocked_reason = "PATH_PLANNING_FAILED: 路径没有下一节点，但尚未满足正式完成条件"
+    record.terminal_outcome = {
+      kind: "planning_failed",
+      code: "PATH_PLANNING_FAILED",
+      message: "路径没有下一节点，但尚未满足正式完成条件",
+      recommended_actions: ["retry_planning", "change_goal"],
+      evidence_refs: [feedback.feedback_id, advance.path.path_id],
+    }
+    record.events.push(event(record.session_id, "session_blocked", "blocked", record.blocked_reason, new Date().toISOString(), "path-planner"))
+    record.updated_at = new Date().toISOString()
+    return record
+  }
+
+  record.current_path_node = advance.nextPathNode
+  record.private.node_remediate_rounds = 0
+  record.private.node_reinforce_rounds = 0
+  record.private.role_c_generation_attempt = 0
+  record.round_no += 1
+  const nextNodeObjectives = ((record.current_path_node as LearningPathNode | null)?.objectives ?? [])
+    .map((objective) => objective.objective_id)
+    .filter((objectiveId): objectiveId is string => Boolean(objectiveId))
+  const nextRoundContext = buildNextRoundContext(
+    feedback,
+    roleC.spec_id ?? roleC.run_id,
+    `NRC-${record.session_id}-R${record.round_no}`,
+    nextNodeObjectives,
+  )
+  record.status = "running"
+  record.current_stage = "assessment"
+  record.waiting_for = null
+  record.private.next_round_context = nextRoundContext ?? null
+  record.next_round_action = createDay4NextRoundActionState(
+    decisionAction,
+    record.round_no,
+    advance.nextPathNode.node_id,
+    feedback.feedback_id,
   )
   const backgroundStartedAt = new Date().toISOString()
   record.updated_at = backgroundStartedAt
