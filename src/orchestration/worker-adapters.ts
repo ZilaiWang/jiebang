@@ -225,6 +225,9 @@ async function runDeterministicWorkerAdapter(
       selfAssessment: selfAssessment.value,
       objectiveDiagnosis: objectiveDiagnosis.value,
       knowledgeBase,
+      // 长期观察（欧阳）：跨轮客观历史 + 温度。history 由主 Agent 在每轮测评论证后维护。
+      objective_history: (invocation as any).objective_history,
+      temperature: (invocation as any).temperature,
     })
     const intake = invocation.learner_request.profile_intake
     if (intake) {

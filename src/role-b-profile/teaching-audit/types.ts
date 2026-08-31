@@ -201,6 +201,10 @@ export interface ApplyProgressObservationInput {
     profileConcept: string,
     observation: ProgressObservation["conceptEvidence"][number],
   ) => boolean
+  /** 跨轮客观表现历史（欧阳长期观察）：[{round_no, correct, total}] */
+  objective_history?: Array<{ round_no: number; correct: number; total: number }>
+  /** 客观影响温度（欧阳）：0=低(需3轮)/1=中(需2轮)/2=高(单轮)。缺省=1(中)。 */
+  temperature?: 0 | 1 | 2
 }
 
 // ── 仲裁机制 ──

@@ -54,6 +54,8 @@ export interface CreateSessionInput {
   selfRating?: string
   learningGoalSpec?: LearningGoalSpecInput
   profileIntake?: ProfileIntakeInput
+  /** 客观影响温度（欧阳）：0=低/1=中/2=高 */
+  objectiveTemperature?: 0 | 1 | 2
 }
 export interface GoalPathChangeInput {
   pathId: string
@@ -101,6 +103,8 @@ export async function createOrchestratorSession(
         learning_goal_spec: input.learningGoalSpec,
         profile_intake: input.profileIntake,
       },
+      // 客观影响温度（欧阳）：0=低/1=中/2=高，控制画像晋级需连续几轮达标。
+      objective_temperature: input.objectiveTemperature,
     }),
   })
   return created.status === "running"
