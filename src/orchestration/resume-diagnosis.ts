@@ -3,6 +3,7 @@ import type { PathLevel } from "./path-registry"
 export interface ResumeDiagnosisItem {
   item_id: string
   objective_id: string
+  source_id?: string
   question: string
   options: string[]
   answer?: string
