@@ -288,7 +288,10 @@ export function App() {
         if (cancelled) return
         const merged = { ...restored, events: eventResult.events ?? [] } as PublicSessionFixture
         setLiveSession(merged)
-        if (requestedPlanId === currentPlan.id) {
+        // 追问卡（profile_gap_questions）必须直接进入诊断页展示，不依赖 plan 跳转。
+        if (merged.waiting_for?.type === "profile_gap_questions") {
+          setPage(pageForSession(merged, { feedbackDismissed }))
+        } else if (requestedPlanId === currentPlan.id) {
           setPage(pageForSession(merged, { feedbackDismissed }))
           setRequestedPlanId(null)
         }
@@ -297,6 +300,10 @@ export function App() {
           timer = window.setTimeout(() => void load(), 800)
         } else {
           setBusy("")
+          // 后台生成完成但页面还停在旧路由时，按最新会话状态纠正路由（如追问卡/反馈页）。
+          if (merged.waiting_for?.type === "profile_gap_questions") {
+            setPage(pageForSession(merged, { feedbackDismissed }))
+          }
         }
       } catch (reason) {
         if (!cancelled) {

@@ -839,15 +839,19 @@ export class InteractiveSessionStore {
       const sourceId = String(payload.source_id ?? "")
       const answer = String(payload.answer ?? "")
       const learnerMemory = await loadLearnerMemory(this.data_root, record.learner_request.learner_id ?? record.session_id)
-      const barrier = classifyLearningBarrier(answer)
-      const updatedMemory = appendLearningBarrier(learnerMemory, { source_id: sourceId, barrier })
-      await saveLearnerMemory(this.data_root, updatedMemory)
-      // 同步合并进会话画像，使 publicSessionView 能随 profile 暴露学习障碍。
-      const profile = record.profile as { learning_barriers?: Array<{ source_id: string; barrier: string; count: number }> } | null
-      if (profile) {
-        const existing = (profile.learning_barriers ?? []).find((entry) => entry.source_id === sourceId && entry.barrier === barrier)
-        if (existing) existing.count += 1
-        else profile.learning_barriers = [...(profile.learning_barriers ?? []), { source_id: sourceId, barrier, count: 1 }]
+      // 置信度追问（PROFILE-CONFIDENCE-*）无知识来源，只更新置信度，不写学习障碍。
+      const isConfidenceQuestion = questionId.startsWith("PROFILE-CONFIDENCE-")
+      if (!isConfidenceQuestion) {
+        const barrier = classifyLearningBarrier(answer)
+        const updatedMemory = appendLearningBarrier(learnerMemory, { source_id: sourceId, barrier })
+        await saveLearnerMemory(this.data_root, updatedMemory)
+        // 同步合并进会话画像，使 publicSessionView 能随 profile 暴露学习障碍。
+        const profile = record.profile as { learning_barriers?: Array<{ source_id: string; barrier: string; count: number }> } | null
+        if (profile) {
+          const existing = (profile.learning_barriers ?? []).find((entry) => entry.source_id === sourceId && entry.barrier === barrier)
+          if (existing) existing.count += 1
+          else profile.learning_barriers = [...(profile.learning_barriers ?? []), { source_id: sourceId, barrier, count: 1 }]
+        }
       }
       // 9/10 多轮追问：答完当前问题后按置信度更新，若还有低置信度维度则继续追问（停止规则：无候选即停）。
       const confidenceState = record.private.profile_confidence
@@ -884,7 +888,7 @@ export class InteractiveSessionStore {
         record.events.push(event(record.session_id, "session_updated", "profile_gap", "B 置信度已达门槛，停止追问，进入下一轮生成", new Date().toISOString(), "profile-builder"))
       }
       record.private.profile_gap_asked = true
-      record.events.push(event(record.session_id, "command_received", "profile_gap", `B 记录困难：${barrier}`, new Date().toISOString(), "profile-builder"))
+      record.events.push(event(record.session_id, "command_received", "profile_gap", isConfidenceQuestion ? `B 置信度追问已记录：${questionId}` : `B 记录困难：${classifyLearningBarrier(answer)}`, new Date().toISOString(), "profile-builder"))
       // 追问结束，继续测评后的下一轮资源生成（remediate 支持限制/路径推进/后台生成）。
       updated = await continueAfterProfileGapDecision(
         record,

@@ -63,4 +63,5 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 16. code AnswerSpec 必须指向 secure code_test_suites；reference 必须实现同一执行合同并设计为通过全部隐藏测试；隐藏输入必须与公开题干、示例和 starter 中出现的输入值不同。
 17. 每个 core objective 至少由一道题覆盖；objective_coverage 和 used_evidence 必须与实际内容闭合。
 18. 学习者画像只影响题目语境、脚手架和难度表达，不得改变答案或评分标准。
-19. 输出只允许满足 assessment_draft.schema.json 的 JSON 对象。`
+19. 概括事实（如"通用编程语言"）只能直接考查识别、正误辨析或原意复述；题干和选项不得自行列举该概括事实之外的"具体用途/API/运行结果/领域场景"（例如把"通用语言"具体化为"数据处理脚本、自动化测试工具"），除非该具体用途已逐字出现在本题绑定 evidence 的局部内容中。干扰项如需列出具体用途，必须取自本题 evidence 已明确给出的内容。
+20. 输出只允许满足 assessment_draft.schema.json 的 JSON 对象。`
