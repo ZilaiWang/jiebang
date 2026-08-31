@@ -583,6 +583,8 @@ export function isFinalMasterySession(session: any, notice: { final: boolean } |
 }
 
 export function pageForSession(session: any, options?: { feedbackDismissed?: boolean }): OrchestratorPage {
+  // 画像缺口追问（"卡在哪里"）优先于反馈页：B 需要学习者先回答困难。
+  if (session?.waiting_for?.type === "profile_gap_questions") return "diagnosis"
   if (session?.feedback && !options?.feedbackDismissed) return "feedback"
   const hasPlanCheckpoint = Boolean(session?.profile && session?.formal_path && session?.current_path_node)
   if (session?.feedback && options?.feedbackDismissed && hasPlanCheckpoint) return "path"

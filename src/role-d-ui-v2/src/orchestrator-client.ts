@@ -216,6 +216,22 @@ export async function submitAssessmentAnswers(
   }, fetcher)
 }
 
+export async function submitProfileGapAnswer(
+  sessionId: string,
+  learnerId: string,
+  questionId: string,
+  sourceId: string,
+  answer: string,
+  fetcher: Fetcher = fetch,
+  commandId: string = newClientId("cmd"),
+): Promise<any> {
+  return command(sessionId, learnerId, {
+    command_id: commandId,
+    type: "submit_profile_gap_answer",
+    payload: { question_id: questionId, source_id: sourceId, answer },
+  }, fetcher)
+}
+
 export async function runAssessmentCode(
   sessionId: string,
   learnerId: string,
