@@ -788,3 +788,109 @@ html[data-theme="dark"] .hero-cat-illustration { filter: drop-shadow(0 20px 40px
 .lab-hint-ladder .hint-levels button { padding: 5px 13px; border: 1px solid #d9ccf0; border-radius: 999px; color: #7a55c9; background: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
 .lab-hint-ladder .hint-levels button.is-active { color: #fff; background: #7a55c9; border-color: #7a55c9; }
 .lab-hint-ladder .muted-copy { color: #8a7fa8; font-size: 11px; }
+
+/* 画像追问（卡在哪里） */
+.profile-gap-card { margin-bottom: 14px; padding: 16px 18px; border: 1px solid #e3d8f7; border-radius: 16px; background: linear-gradient(180deg,#faf7ff,#f4eeff); }
+.profile-gap-head { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+.profile-gap-head > span { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 11px; color: #7a55c9; background: #efe7ff; }
+.profile-gap-head b { display: block; color: #4a3f6b; font-size: 14px; }
+.profile-gap-head small { display: block; margin-top: 3px; color: #8a7fa8; font-size: 11px; line-height: 1.5; }
+.profile-gap-options { display: grid; gap: 7px; }
+.profile-gap-options button { display: flex; align-items: center; gap: 9px; padding: 10px 13px; border: 1px solid #e0d6f2; border-radius: 11px; color: #4a3f6b; background: #fff; font-size: 12.5px; text-align: left; cursor: pointer; }
+.profile-gap-options button.is-selected { border-color: #7a55c9; background: #f1eaff; box-shadow: 0 0 0 1px #7a55c9 inset; }
+.profile-gap-options button span { display: grid; place-items: center; width: 22px; height: 22px; flex: none; border-radius: 7px; color: #7a55c9; background: #efe7ff; font-size: 11px; font-weight: 800; }
+.profile-gap-options button.is-selected span { color: #fff; background: #7a55c9; }
+.profile-gap-error { color: #c62828; font-size: 12px; }
+
+/* 学习障碍标签 */
+.pd-icon-barrier { color: #b3541e; background: #ffeadd; }
+.pd-barrier-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pd-barrier-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 750; }
+.pd-barrier-tag em { font-style: normal; font-size: 10px; opacity: .75; }
+.pd-barrier-concept_recall { color: #7a55c9; background: #f1eaff; }
+.pd-barrier-code_translation { color: #1768d4; background: #e5f0fe; }
+.pd-barrier-debugging { color: #b3541e; background: #ffeadd; }
+.pd-barrier-boundary_condition { color: #0e7a5f; background: #e2f7f0; }
+.pd-barrier-problem_understanding { color: #c62828; background: #ffecec; }
+.pd-barrier-unknown { color: #8a8f99; background: #f0f1f4; }
+
+/* 画像置信度 */
+.pd-icon-confidence { color: #0e7a5f; background: #e2f7f0; }
+.pd-confidence-grid { display: grid; gap: 6px; }
+.pd-confidence-row { display: grid; grid-template-columns: 64px 1fr 38px 34px; align-items: center; gap: 7px; }
+.pd-confidence-row span { color: #5d6f8a; font-size: 10.5px; }
+.pd-confidence-row span.is-sufficient { color: #0e7a5f; font-weight: 800; }
+.pd-confidence-row i { height: 6px; overflow: hidden; border-radius: 99px; background: #eef1f5; }
+.pd-confidence-row i em { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg,#f0b65a,#e88f4a); }
+.pd-confidence-row i em.is-sufficient { background: linear-gradient(90deg,#4fc18f,#2e9e73); }
+.pd-confidence-row b { color: #4a5570; font-size: 10.5px; text-align: right; }
+.pd-confidence-row small { color: #a0a6b2; font-size: 9.5px; }
+
+/* 代码实验：锚点导航 + 折叠卡片（方案B） */
+.lab-anchors { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 2px; }
+.lab-anchors a { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border: 1px solid #d9e3ff; border-radius: 999px; color: #5d6f8a; background: #f8faff; font-size: 11px; font-weight: 700; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s, color .15s; }
+.lab-anchors a:hover { border-color: #7a55c9; color: #7a55c9; background: #f3eeff; }
+.lab-fold-card { margin-top: 14px; border: 1px solid #e0d6f2; border-radius: 14px; background: #fff; overflow: hidden; }
+.lab-fold-card.is-open { box-shadow: 0 2px 12px rgba(109,85,183,.07); }
+.lab-fold-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 13px 15px; border: 0; background: linear-gradient(180deg,#faf8ff,#f4eeff); cursor: pointer; text-align: left; }
+.lab-fold-head:hover { background: linear-gradient(180deg,#f6f2ff,#efe7ff); }
+.lab-fold-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 9px; color: #7a55c9; background: #efe7ff; }
+.lab-fold-title { flex: 1; min-width: 0; }
+.lab-fold-title b { display: block; color: #4a3f6b; font-size: 13px; }
+.lab-fold-title small { display: block; margin-top: 2px; color: #8a7fa8; font-size: 10.5px; }
+.lab-fold-chevron { flex: none; color: #8a7fa8; font-size: 10.5px; font-weight: 700; }
+.lab-fold-card .practical-guide, .lab-fold-card .lab-reflection { margin: 0; padding: 4px 16px 16px; }
+.lab-fold-card .lab-hint-ladder { margin: 0; padding: 4px 16px 16px; border: 0; border-radius: 0; }
+
+/* 代码实验 tab：去掉右侧卡片后主内容全宽 */
+.lesson-layout.lab-fullwidth { grid-template-columns: minmax(0, 1fr); max-width: 1280px; }
+
+/* 代码实验：长条进度指示器（当前阶段亮） */
+.lab-progress { display: flex; align-items: stretch; margin: 12px 0 2px; border: 1px solid #e0d6f2; border-radius: 12px; background: #faf8ff; overflow: hidden; }
+.lab-progress-seg { position: relative; display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 10px 14px; border: 0; background: transparent; color: #8a7fa8; cursor: pointer; text-align: left; transition: background .2s, color .2s; }
+.lab-progress-seg:hover { background: #f3eeff; }
+.lab-progress-seg.is-active { background: linear-gradient(180deg,#f1eaff,#e9dfff); color: #6d4fb3; }
+.lab-progress-seg.is-done { color: #4f9e7a; }
+.lab-progress-dot { display: grid; place-items: center; width: 22px; height: 22px; flex: none; border-radius: 50%; background: #e8e2f5; color: #8a7fa8; font-size: 11px; font-weight: 800; }
+.lab-progress-seg.is-active .lab-progress-dot { background: #7a55c9; color: #fff; }
+.lab-progress-seg.is-done .lab-progress-dot { background: #d8f0e4; color: #2e8b62; }
+.lab-progress-seg b { font-size: 12px; font-weight: 800; white-space: nowrap; }
+.lab-progress-line { position: absolute; right: -1px; top: 50%; width: 2px; height: 46%; transform: translateY(-50%); border-radius: 99px; background: #e0d6f2; }
+.lab-progress-seg.is-done .lab-progress-line { background: #b8e0cc; }
+
+/* 代码实验：右侧编辑器固定（sticky）+ 高度自适应 + 中上位置 */
+.lab-workspace { align-items: start; }
+.editor-panel { position: sticky; top: 110px; align-self: start; height: fit-content; max-height: calc(100vh - 130px); display: flex; flex-direction: column; margin-top: 28px; margin-right: 18px; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 8px 24px rgba(15,27,40,.28); }
+.editor-panel .python-editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.editor-panel .python-editor > div:first-child { flex: 1 1 auto; min-height: 0; }
+.editor-panel footer { flex: none; }
+.editor-panel .run-result { flex: none; }
+
+/* 代码实验 tab：lesson-main 不能 overflow:hidden，否则 sticky 编辑器失效 */
+.lesson-layout.lab-fullwidth + .lesson-main, .lesson-main:has(.lab-workspace) { overflow: visible; }
+
+/* 代码实验 tab：lesson-main 去掉 overflow:hidden（否则 sticky 编辑器失效） */
+.lesson-layout.lab-fullwidth .lesson-main { overflow: visible; }
+
+/* 代码实验左侧：清晰分块（全部展开，标题栏 + 分界线） */
+.lab-block { margin-top: 16px; border: 1px solid #e0d6f2; border-radius: 14px; background: #fff; overflow: hidden; }
+.lab-block-head { display: flex; align-items: center; gap: 9px; padding: 11px 15px; border-bottom: 1px solid #eee8f8; background: linear-gradient(180deg,#faf8ff,#f4eeff); }
+.lab-block-icon { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 8px; color: #7a55c9; background: #efe7ff; }
+.lab-block-head b { color: #4a3f6b; font-size: 13px; }
+.lab-block-head small { margin-left: auto; color: #8a7fa8; font-size: 10.5px; }
+.lab-block-guide .lab-block-icon { color: #b3541e; background: #ffeadd; }
+.lab-block-reflect .lab-block-icon { color: #1768d4; background: #e5f0fe; }
+.lab-block-hints .lab-block-icon { color: #93651d; background: #fff4d9; }
+.lab-block .practical-guide, .lab-block .lab-reflection, .lab-block .lab-hint-ladder { margin: 0; padding: 14px 16px; }
+.lab-block .lab-hint-ladder { border: 0; border-radius: 0; }
+/* 任务卡也统一成块样式 */
+.lab-block-task { margin-top: 16px; }
+.programming-task-card { margin-top: 16px; }
+/* 样例区加分隔 */
+.lab-samples-block { margin-top: 16px; padding: 14px 16px; border: 1px solid #d9e3ff; border-radius: 14px; background: linear-gradient(180deg,#f8faff,#f4f8ff); }
+
+/* 代码实验调试输出区（始终显示） */
+.lab-run-output { max-height: none !important; padding: 12px 14px !important; border-top: 1px solid rgba(255,255,255,.07); min-height: 64px; box-sizing: border-box; }
+.lab-run-output.is-fail { max-height: 460px; overflow-y: auto; }
+.lab-run-placeholder { display: flex; align-items: center; gap: 8px; color: #7d93a8; font-size: 11.5px; }
+.lab-run-placeholder svg { color: #5d7a94; flex: none; }

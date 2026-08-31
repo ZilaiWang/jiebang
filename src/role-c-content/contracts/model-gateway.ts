@@ -493,7 +493,7 @@ export function createRoleCModelGatewayFromEnv(
     thinking: thinkingFromEnv(resolvedEnv.ROLE_C_MODEL_THINKING),
     auth_header: resolvedEnv.ROLE_C_MODEL_AUTH_HEADER || "authorization",
     auth_scheme: resolvedEnv.ROLE_C_MODEL_AUTH_SCHEME ?? "Bearer",
-    timeout_ms: optionalPositiveInteger(resolvedEnv.ROLE_C_MODEL_TIMEOUT_MS, 120_000),
+    timeout_ms: optionalPositiveInteger(resolvedEnv.ROLE_C_MODEL_TIMEOUT_MS, 120_000, "ROLE_C_MODEL_TIMEOUT_MS"),
     max_transport_retries: optionalNonNegativeInteger(resolvedEnv.ROLE_C_MODEL_MAX_RETRIES, 1),
     force_fast: optionalBoolean(resolvedEnv.MODEL_RUNTIME_FORCE_FAST, false),
     scheduler: overrides.scheduler ?? sharedModelSchedulerFor({
@@ -505,10 +505,12 @@ export function createRoleCModelGatewayFromEnv(
       soft_deadline_ms: optionalPositiveInteger(
         resolvedEnv.MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS,
         ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS,
+        "MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS",
       ),
       hard_deadline_ms: optionalPositiveInteger(
         resolvedEnv.MODEL_RUNTIME_JOB_HARD_DEADLINE_MS,
         ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS,
+        "MODEL_RUNTIME_JOB_HARD_DEADLINE_MS",
       ),
       max_model_calls: optionalPositiveCount(
         resolvedEnv.MODEL_RUNTIME_MAX_MODEL_CALLS,
@@ -756,11 +758,11 @@ function delay(durationMs: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, durationMs))
 }
 
-function optionalPositiveInteger(value: string | undefined, fallback: number): number {
+function optionalPositiveInteger(value: string | undefined, fallback: number, label = "value"): number {
   if (value === undefined) return fallback
   const parsed = Number(value)
   if (!Number.isSafeInteger(parsed) || parsed < 100 || parsed > 600_000) {
-    throw new ModelProviderUnavailableError("ROLE_C_MODEL_TIMEOUT_MS 必须为 100..600000 的整数")
+    throw new ModelProviderUnavailableError(`${label} 必须为 100..600000 的整数`)
   }
   return parsed
 }

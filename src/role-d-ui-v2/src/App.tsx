@@ -35,7 +35,11 @@ import {
   BadgeCheck,
   Eye,
   MapPin,
+  Scale,
+  TriangleAlert,
+  Gauge,
   Sparkles,
+  TerminalSquare,
   Target,
   Trash2,
   UserPlus,
@@ -67,6 +71,7 @@ import {
   submitAssessmentAnswers,
   submitDiagnosisAnswers,
   submitProfileAnswers,
+  submitProfileGapAnswer,
 } from "./orchestrator-client"
 import { indentParagraphText, lessonPointParagraphs, normalizePythonDisplayIndentation, semanticLessonLines } from "./lesson-format"
 import {
@@ -170,6 +175,7 @@ export type LiveContextValue = {
   create: (input: { goal: string; nodeId?: string; custom?: boolean; planName: string }) => Promise<void>
   submitDiagnosis: () => Promise<void>
   submitProfileClarification: (answers: Array<{ question_id: string; value: string | string[] | number }>) => Promise<void>
+  submitProfileGap: (questionId: string, sourceId: string, answer: string) => Promise<void>
   submitAssessment: () => Promise<void>
   runAssessmentItemCode: (itemId: string, code: string) => Promise<void>
   runPublishedCodeLab: (labId: string, submission: string | { gap_answers: Record<string, string> }) => Promise<void>
@@ -465,6 +471,16 @@ export function App() {
         await applySession(await submitProfileAnswers(liveSession.session_id, learnerId, answers))
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "提交画像信息失败")
+      } finally { setBusy("") }
+    },
+    submitProfileGap: async (questionId, sourceId, answer) => {
+      if (!liveSession || liveSession.waiting_for?.type !== "profile_gap_questions") return
+      setBusy("正在记录你的困难并生成下一轮内容…")
+      setError("")
+      try {
+        await applySession(await submitProfileGapAnswer(liveSession.session_id, learnerId, questionId, sourceId, answer))
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "提交困难反馈失败")
       } finally { setBusy("") }
     },
     submitAssessment: async () => {
@@ -953,6 +969,9 @@ export function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => v
   if (activeSession.waiting_for?.type === "profile_answers") {
     return <ProfileClarificationForm questions={activeSession.waiting_for.items as ProfileQuestionView[]} />
   }
+  if (activeSession.waiting_for?.type === "profile_gap_questions") {
+    return <ProfileGapForm questions={activeSession.waiting_for.items as any[]} session={activeSession} />
+  }
   const items = activeSession.waiting_for?.type === "diagnosis_answers" ? activeSession.waiting_for.items as any[] : []
   const previewItems = items
   const answers = isLive ? liveAnswers : {}
@@ -963,6 +982,54 @@ export function DiagnosisPage({ onContinue: _onContinue }: { onContinue: () => v
       <details className="why-question"><summary><CircleHelp size={16} /> 为什么问我这道题？</summary><p>用于诊断：{item.concept}。题目来源：{item.source_id}{item.fact_id ? ` / ${item.fact_id}` : ""}。D 不在浏览器中保存答案键。</p></details></article>
       <div className="diagnosis-actions"><button className="secondary-action" disabled={index === 0} type="button" onClick={() => setIndex((value) => value - 1)}><ChevronLeft /> 上一题</button>{index < previewItems.length - 1 ? <button className="primary-action" disabled={!answers[item.item_id]} type="button" onClick={() => setIndex((value) => value + 1)}>下一题 <ChevronRight /></button> : <button className="primary-action" disabled={Boolean(busy) || !diagnosisComplete(activeSession, answers)} type="button" onClick={() => void submitDiagnosis()}>{busy ? "正在生成学习资源…" : "提交诊断并生成学习方案"} <ArrowRight /></button>}</div></section>
   </div>
+}
+
+function ProfileGapForm({ questions, session }: { questions: any[]; session: unknown }) {
+  const { submitProfileGap, busy } = useLive()
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const complete = questions.every((q) => answers[q.question_id]?.trim())
+  const submit = async () => {
+    if (!complete) return
+    setError(null)
+    try {
+      for (const q of questions) {
+        await submitProfileGap(q.question_id, q.source_id ?? "", answers[q.question_id])
+      }
+      setDone(true)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "提交失败，请重试")
+    }
+  }
+  if (done) return <EmptyState title="已记录你的困难" body="主 Agent正在根据你的反馈调整下一轮内容…" />
+  return <div className="page diagnosis-page"><PageHeading kicker="画像追问 · B主动提问" title="刚才的题目，你主要卡在哪里？" description="B 会在补救轮次主动询问具体困难，用于更精确地调整下一轮讲解；答案会写回你的学习记忆。" /><LearningLoopStepper session={session as never} />{questions.map((q) => <div className="profile-gap-card" key={q.question_id}><div className="profile-gap-head"><span><MessageCircleQuestion size={16} /></span><div><b>{q.question}</b>{q.reason ? <small>{q.reason}</small> : null}</div></div><div className="profile-gap-options">{q.options?.map((option: string) => <button className={answers[q.question_id] === option ? "is-selected" : ""} type="button" key={option} onClick={() => setAnswers((current) => ({ ...current, [q.question_id]: option }))}><span>{String.fromCharCode(65 + (q.options?.indexOf(option) ?? 0))}</span><b>{option}</b></button>)}</div></div>)}{error ? <p className="profile-gap-error" role="alert">{error}</p> : null}<div className="page-actions"><button className="primary-action" disabled={Boolean(busy) || !complete} type="button" onClick={() => void submit()}>{busy ? "正在提交…" : "提交我的困难"}</button></div></div>
+}
+
+function confidenceDimensionLabel(dim: string): string {
+  const labels: Record<string, string> = {
+    goal: "学习目标",
+    goal_profile: "目标用途",
+    level: "学习等级",
+    knowledge_state: "知识掌握",
+    learning_barrier: "学习障碍",
+    task_ability: "任务能力",
+    explanation_preference: "讲解偏好",
+    practice_preference: "练习偏好",
+  }
+  return labels[dim] ?? dim
+}
+
+function barrierLabel(barrier: string): string {
+  const labels: Record<string, string> = {
+    concept_recall: "概念忘记",
+    code_translation: "不会转代码",
+    debugging: "不会调试",
+    boundary_condition: "边界条件",
+    problem_understanding: "题目没看懂",
+    unknown: "不确定",
+  }
+  return labels[barrier] ?? barrier
 }
 
 interface ProfileQuestionView {
@@ -997,6 +1064,10 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
   const profile = activeSession.profile
   // 完整 LearnerProfileV2（背景/偏好/约束/进度）由 publicSessionView 附加到 profile_v2；无则回退 v1 字段。
   const profileDetail = (activeSession as any).profile_v2 ?? profile
+  if (profileDetail && (activeSession as any).learning_barriers?.length) {
+    profileDetail.learning_barriers = (activeSession as any).learning_barriers
+  }
+  const profileConfidence = (activeSession as any).profile_confidence ?? null
   const formalPath = activeSession.formal_path as any
   const ragResult = activeSession.rag_result as any
   const objectives = activeSession.current_path_node?.objectives ?? []
@@ -1050,6 +1121,9 @@ function PathPage({ planName, onContinue }: { planName?: string; onContinue: () 
               {profileDetail.learning_preferences ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-pref"><SlidersHorizontal size={13} /></span><b>学习偏好</b></header><div className="pd-chips"><span title="讲解方式">{explanationPreferenceLabel(profileDetail.learning_preferences.explanation)}</span><span title="练习方式">{practicePreferenceLabel(profileDetail.learning_preferences.practice)}</span><span title="学习节奏">{pacePreferenceLabel(profileDetail.learning_preferences.pace)}</span>{profileDetail.learning_preferences.preferred_contexts?.length ? <span title="熟悉场景">{profileDetail.learning_preferences.preferred_contexts.join("、")}</span> : null}</div></section> : null}
               {profileDetail.learning_constraints ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-time"><Clock size={13} /></span><b>时间与工具</b></header><div className="pd-grid"><div><dt>每周投入</dt><dd>{formatMinutes(profileDetail.learning_constraints.weekly_time_budget_minutes)}</dd></div><div><dt>单次时长</dt><dd>{profileDetail.learning_constraints.session_time_budget_minutes ? formatMinutes(profileDetail.learning_constraints.session_time_budget_minutes) : "未公开"}</dd></div>{profileDetail.learning_constraints.tool_constraints?.length ? <div><dt>工具约束</dt><dd>{profileDetail.learning_constraints.tool_constraints.join("、")}</dd></div> : null}{profileDetail.learning_constraints.accommodations?.length ? <div><dt>无障碍需求</dt><dd>{profileDetail.learning_constraints.accommodations.join("、")}</dd></div> : null}</div></section> : null}
               {profileDetail.progress ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-progress"><TrendingUp size={13} /></span><b>知识点掌握进度</b></header>{(() => { const mastery = profileDetail.progress.mastery_by_source_id || {}; const keys = Object.keys(mastery); return keys.length ? <div className="pd-mastery">{keys.slice(0, 6).map((key) => <div className="pd-mastery-row" key={key}><span>{key}</span><i><em style={{ width: `${Math.round((mastery[key] ?? 0) * 100)}%` }} /></i><b>{Math.round((mastery[key] ?? 0) * 100)}%</b></div>)}</div> : <p className="pd-empty">尚未产生测评证据，掌握度将在后续轮次更新</p> })()}<div className="pd-progress-meta"><span>最近准确率：{profileDetail.progress.last_assessment_accuracy != null ? `${Math.round(profileDetail.progress.last_assessment_accuracy * 100)}%` : "暂无"}</span>{profileDetail.progress.recent_error_patterns?.length ? <span>高频错误：{profileDetail.progress.recent_error_patterns.slice(0, 3).join("、")}</span> : null}</div></section> : null}
+              {profileDetail.self_assessment || profileDetail.ability_dimensions?.length ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-evidence"><Scale size={13} /></span><b>证据与判断</b></header>{profileDetail.self_assessment ? <div className="pd-evidence-row"><span className="pd-evidence-label">你的自评</span><em className="pd-self">{difficultyLabel(profileDetail.self_assessment.reported_level)}</em>{profileDetail.ability_dimensions?.length ? <span className="pd-evidence-label">客观诊断</span> : null}{profileDetail.ability_dimensions?.length ? <em className="pd-objective">{difficultyLabel((() => { const byValue = [...profileDetail.ability_dimensions].sort((a, b) => b.value - a.value)[0]; return byValue?.value >= 0.7 ? "integrated" : byValue?.value >= 0.45 ? "intermediate" : byValue?.value >= 0.2 ? "basic" : "beginner" })())}</em> : null}</div> : null}{profileDetail.ability_dimensions?.length ? <div className="pd-evidence-dims">{profileDetail.ability_dimensions.map((dim: { label: string; value: number }) => <div className="pd-dim-row" key={dim.label}><span>{dim.label}</span><i><em style={{ width: `${Math.round(dim.value * 100)}%` }} /></i><b>{Math.round(dim.value * 100)}%</b></div>)}</div> : null}<p className="pd-evidence-note">能力由客观诊断决定（客观答题结果为最高依据）；自评仅作参考，冲突时以客观为准。</p></section> : null}
+              {profileDetail.learning_barriers?.length ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-barrier"><TriangleAlert size={13} /></span><b>学习障碍</b></header><div className="pd-barrier-chips">{[...new Map(profileDetail.learning_barriers.map((entry) => [entry.barrier, entry])).values()].map((entry) => <span className={`pd-barrier-tag pd-barrier-${entry.barrier}`} key={entry.barrier} title={`${entry.source_id} · 出现 ${entry.count} 次`}>{barrierLabel(entry.barrier)}<em>{entry.count}</em></span>)}</div><p className="pd-evidence-note">由 B 在补救轮次主动追问"你主要卡在哪里"获得，用于精确调整下一轮讲解。</p></section> : null}
+              {profileConfidence ? <section className="profile-detail-section"><header><span className="pd-icon pd-icon-confidence"><Gauge size={13} /></span><b>画像置信度</b></header><div className="pd-confidence-grid">{(Object.entries(profileConfidence.fields ?? {}) as Array<[string, { confidence: number; impact: number; evidence_count: number; status: string }]>).map(([dim, field]) => <div className="pd-confidence-row" key={dim}><span className={field.status === "sufficient" ? "is-sufficient" : ""} title={confidenceDimensionLabel(dim)}>{confidenceDimensionLabel(dim)}</span><i><em className={field.status === "sufficient" ? "is-sufficient" : ""} style={{ width: `${Math.round(field.confidence * 100)}%` }} /></i><b>{Math.round(field.confidence * 100)}%</b><small>{field.evidence_count} 条</small></div>)}</div><p className="pd-evidence-note">B 按"教学影响度 × 不确定性"决定追问优先级；达到 75% 置信度即停止追问。</p></section> : null}
             </div> : <p className="pd-empty">主 Agent尚未公开画像详情字段（背景 / 目标 / 偏好 / 约束 / 进度）。</p>}
             <div className="profile-detail-footer">
               <span><BadgeCheck size={12} /> 画像版本 {profileDetail.profile_version ?? "v1"}</span>
@@ -1169,12 +1243,12 @@ function LessonPage({ user, onAssessment }: { user?: WorkspaceUser; onAssessment
   }
   return <div className="lesson-page"><LearningLoopStepper session={activeSession} /><header className="lesson-topline"><div><span className="eyebrow"><BookOpen size={15} /> 第 {activeSession.round_no} 轮学习</span>{adaptation ? <span className={`lesson-adaptation-badge is-${adaptation.adaptation_action}`}>{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</span> : null}{user?.goalUseCase ? <span className="lesson-goal-badge"><Target size={13} /> {goalUseCaseLabel(user.goalUseCase)}导向</span> : null}<h1>{lesson?.title ?? "当前没有可发布的 C 讲义"}<button className="resource-match-trigger" type="button" onClick={() => setMatchOpen(true)} aria-label="查看本轮结构适配指数"><Sparkles size={14} />结构适配指数</button></h1><p>{activeSession.current_path_node?.node_id} · {lesson?.objective_ids.join(" / ")}</p>{user?.goalUseCase ? <div className="lesson-goal-note">本讲义按你的目标定制：{goalUseCaseDetail(user.goalUseCase)}</div> : null}{profileV2?.learning_preferences || profileV2?.progress ? <div className="lesson-profile-note"><Sparkles size={14} /><b>画像驱动本轮生成</b><span>{profileV2.learning_preferences?.explanation ? `讲解方式：${explanationPreferenceDetailLabel(profileV2.learning_preferences.explanation)}` : ""}{profileV2.learning_preferences?.practice ? ` · 练习方式：${practicePreferenceDetailLabel(profileV2.learning_preferences.practice)}` : ""}{profileV2.learning_preferences?.pace ? ` · 节奏：${pacePreferenceDetailLabel(profileV2.learning_preferences.pace)}` : ""}{profileV2.progress?.last_assessment_accuracy != null ? ` · 上轮准确率 ${Math.round(profileV2.progress.last_assessment_accuracy * 100)}%` : ""}</span></div> : null}{adaptation ? <div className="lesson-adaptation-note"><TrendingUp size={14} /><b>本轮适配：{adaptation.adaptation_action === "remediate" ? "针对性补救" : adaptation.adaptation_action === "reinforce" ? "巩固强化" : "下一节点适配"}</b><span>{adaptation.adaptation_summary}</span>{adaptation.addressed_misconception_tags.length ? <em>针对误区：{adaptation.addressed_misconception_tags.join("、")}</em> : null}</div> : null}</div><div className="lesson-top-actions"><span><CheckCircle2 size={15} /> 主 Agent已发布公开学习资源</span><button type="button" onClick={onAssessment}>进入正式测评 <ArrowRight /></button></div></header>
     <div className="lesson-tabs lesson-tabs-standalone" role="tablist"><span className={`tab-glider glider-${tab}`} aria-hidden="true" /><button className={tab === "lesson" ? "is-active" : ""} type="button" onClick={() => switchTab("lesson")}><BookOpen size={17} /> 定制讲义</button><button className={tab === "lab" ? "is-active" : ""} type="button" onClick={() => switchTab("lab")}><Code2 size={17} /> 代码实验</button><button className={tab === "checks" ? "is-active" : ""} type="button" onClick={() => switchTab("checks")}><ListChecks size={17} /> 理解检查</button></div>
-    <div className={`lesson-layout${tab === "lesson" ? "" : " lesson-layout-no-outline"}`}>
+    <div className={`lesson-layout${tab === "lesson" ? "" : tab === "lab" ? " lab-fullwidth" : " lesson-layout-no-outline"}`}>
       {tab === "lesson" ? <aside className="lesson-outline"><div className="outline-head"><FolderTree size={18} /><b>本节目录</b></div>{sections.map((section, index) => <button className={activeSection === section.id ? "is-active" : ""} type="button" onClick={() => { handleSectionClick(section.id); document.getElementById(`section-${section.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }) }} key={section.id}><span>{String(index + 1).padStart(2, "0")}</span><b>{section.title}</b></button>)}<div className="outline-progress"><span>阅读进度</span><div><i style={{ width: `${readingProgress}%` }} /></div><small>已读 {visitedSections.size} / {visibleSectionCount} 节</small></div></aside> : null}
       <section className="lesson-main">
         {!lesson ? <EmptyState title="C 讲义尚未发布" body="D 不会生成占位知识。请等待主 Agent返回 learning_resources.concept_lesson。" /> : tab === "lesson" ? <LessonContent lesson={lesson} onActive={handleSectionScroll} onRunExample={runExampleCode} /> : tab === "lab" ? <LabContent lab={lab} code={code} setCode={setCode} gapAnswers={gapAnswers} setGapAnswers={setGapAnswers} busy={busy} execution={activeSession.code_execution?.labId === lab?.lab_id ? activeSession.code_execution : null} onDebug={async (publicCaseId) => { if (!lab || !debugPublishedCodeLab) return; const submission = lab.programming_task?.submission_mode === "gap_answers" ? { gap_answers: gapAnswers } : code; await debugPublishedCodeLab(lab.lab_id, submission, publicCaseId) }} onRun={async () => { if (!lab) return; const submission = lab.programming_task?.submission_mode === "gap_answers" ? { gap_answers: gapAnswers } : code; await runPublishedCodeLab(lab.lab_id, submission); setLastExecutedCode(typeof submission === "string" ? submission : JSON.stringify(submission)) }} /> : <ChecksContent lesson={lesson} />}
       </section>
-      <aside className="lesson-side">{tab === "checks" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button></div>{sideTab === "hint" ? <HintPanel resource={lesson} /> : null}</> : tab === "lab" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">实验提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel resource={lab} /> : sideTab === "evidence" ? <EvidencePanel resource={lab} /> : <AgentPanel />}</> : <><div className="side-tabs"><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "evidence" ? <EvidencePanel resource={lesson} /> : <AgentPanel />}</>}</aside>
+      {tab !== "lab" ? <aside className="lesson-side">{tab === "checks" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">学习提示</button></div>{sideTab === "hint" ? <HintPanel resource={lesson} /> : null}</> : tab === "lab" ? <><div className="side-tabs"><button className={sideTab === "hint" ? "is-active" : ""} onClick={() => setSideTab("hint")} type="button">实验提示</button><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "hint" ? <HintPanel resource={lab} /> : sideTab === "evidence" ? <EvidencePanel resource={lab} /> : <AgentPanel />}</> : <><div className="side-tabs"><button className={sideTab === "evidence" ? "is-active" : ""} onClick={() => setSideTab("evidence")} type="button">知识来源</button><button className={sideTab === "agents" ? "is-active" : ""} onClick={() => setSideTab("agents")} type="button">Agent过程</button></div>{sideTab === "evidence" ? <EvidencePanel resource={lesson} /> : <AgentPanel />}</>}</aside> : null}
           </div>
           {matchOpen ? <Modal title="本轮结构适配指数" subtitle="规则估计 · 尚未校准" onClose={() => setMatchOpen(false)}><ResourceMatchCard session={activeSession} resource={lesson} assessment={activeSession.assessment?.payload} /></Modal> : null}
   </div>
@@ -1218,7 +1292,40 @@ function ClaimEvidence(_props: { claims: Array<{ claim_id: string; text: string 
 
 /** 从段落文本中移除已作为 ClaimEvidence 独立展示的 claim 文本，避免重复。 */
 function stripClaimTextFromBody(bodyText: string, _claims: Array<{ text: string }>): string {
-  return bodyText
+  return stripDuplicateNumberedSteps(bodyText)
+}
+
+/**
+ * C 生成的段落有时同时包含"第一步：xxx。第二步：yyy。"文字版步骤
+ * 和"1. xxx 2. yyy"数字列表版（内容重复）。检测到这种重复时，
+ * 删除数字列表部分，只保留"第X步"文字版。
+ */
+function stripDuplicateNumberedSteps(text: string): string {
+  const cnSteps = [...text.matchAll(/第[一二三四五六七八九十]+步[：:]/g)]
+  if (cnSteps.length < 2) return text
+  // 数字列表部分：从 "1." 或 "1、" 开始到结尾
+  const numberedMatch = text.match(/(?:^|[。；;\n])\s*1[\.、]\s*[\s\S]*$/)
+  if (!numberedMatch || numberedMatch.index == null) return text
+  const head = text.slice(0, numberedMatch.index)
+  const numberedPart = numberedMatch[0].replace(/^[。；;\n]\s*/, "")
+  // 提取数字列表项（1. 2. 3. ...）逐条与"第X步"内容比对，确认重复才删除
+  const numberedItems = numberedPart.split(/(?=\d+[\.、]\s*)/).map((s) => s.replace(/^\d+[\.、]\s*/, "").trim()).filter(Boolean)
+  if (numberedItems.length === 0) return text
+  // 提取"第X步"内容（去掉前缀"第一步："）
+  const stepTexts = cnSteps.map((m, i) => {
+    const start = (m.index ?? 0) + m[0].length
+    const end = cnSteps[i + 1]?.index ?? text.length
+    return text.slice(start, end).replace(/[。；;\n].*$/, "").trim()
+  })
+  const stepNorm = stepTexts.map((s) => s.replace(/[\s，。,；;：:（）()]/g, ""))
+  const itemNorm = numberedItems.map((s) => s.replace(/[\s，。,；;：:（）()]/g, ""))
+  // 每条数字项都至少与某个步骤内容有 60% 相似（或包含关系）
+  const allDuplicate = numberedItems.every((item) => {
+    const iNorm = item.replace(/[\s，。,；;：:（）()]/g, "")
+    return stepNorm.some((s) => s.includes(iNorm) || iNorm.includes(s) || (iNorm.length > 4 && s.length > 4 && (s.includes(iNorm.slice(0, Math.max(4, Math.floor(iNorm.length * 0.6)))))))
+  })
+  if (!allDuplicate) return text
+  return head.trimEnd() + (head.endsWith("。") || head.endsWith("；") || head.endsWith(";") ? "" : "。")
 }
 
 function RenderLessonBlock({ block, onRunExample }: { block: LessonPayload["explanation_blocks"][number]; onRunExample?: (code: string) => Promise<any> }) {
@@ -1349,16 +1456,33 @@ function LabContent({ lab, code, setCode, gapAnswers, setGapAnswers, busy, execu
     ? publicTestChecklist(lab.public_tests)
     : []
   const firstPublicCaseId = task?.public_examples[0]?.case_id ?? lab.public_tests[0]?.test_id
+  const anchorIds = ["lab-task", ...(lab.practical_guide ? ["lab-guide-block"] : []), ...(lab.reflection_questions?.length ? ["lab-reflect"] : [])]
+  const [activeAnchorId, setActiveAnchorId] = useState(anchorIds[0] ?? "lab-task")
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && entry.boundingClientRect.top < window.innerHeight * 0.5) setActiveAnchorId(entry.target.id)
+      }
+    }, { threshold: 0.05 })
+    for (const id of anchorIds) {
+      const el = document.getElementById(id)
+      if (el) observer.observe(el)
+    }
+    return () => observer.disconnect()
+  }, [])
   return <div className="lab-workspace">
     <section className="lab-instructions">
       <span className="eyebrow"><FlaskConical size={15} /> {lab.lab_id}</span>
       <h2>{lab.title}</h2>
-      {task ? <article className="programming-task-card"><div className="programming-task-kind">{guidedOutput ? "引导式运行" : task.task_kind === "code_completion" ? "程序填空" : task.task_kind === "function_implementation" ? "函数实现" : task.task_kind === "debugging_repair" ? "调试修复" : "标准输入输出"}</div><h3>{guidedOutput ? "你要完成什么" : "编程任务"}</h3><p>{legacyGuidedOutput ? "这是一道入门运行练习：程序主体已经写好，你只需在右侧唯一的输入框中填写要输出的文字，并用英文引号包起来；不要输入变量名、等号或 print。" : task.statement}</p><dl><div><dt>{guidedOutput ? "你填写" : "输入"}</dt><dd>{task.input_description}</dd></div><div><dt>{guidedOutput ? "程序输出" : "输出"}</dt><dd>{task.output_description}</dd></div></dl><ul>{task.constraints.map((entry) => <li key={entry}>{entry}</li>)}</ul></article> : null}
-      {(() => { const guide = labGuideSections(lab.instructions); return guide ? <div className="lab-guide">{guide.map((section, index) => <section className={`lab-guide-section tone-${index % 4}`} key={section.title}><h3>{section.title}</h3><div>{section.blocks.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}</div></section>)}</div> : lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) })()}
-      {lab.practical_guide ? <div className="practical-guide"><h3><Target size={16} /> 实操指南 · {lab.practical_guide.estimated_minutes} 分钟</h3><section className="pg-goal"><small>实践目标</small><p>{lab.practical_guide.practice_goal}</p>{lab.practical_guide.deliverable ? <p className="pg-deliverable">交付物：{lab.practical_guide.deliverable}</p> : null}</section>{lab.practical_guide.steps?.length ? <section className="pg-steps"><small>操作步骤</small><ol>{lab.practical_guide.steps.map((step) => <li key={step.sequence}><b>第 {step.sequence} 步 · {step.title}</b><p>{step.action}</p>{step.input ? <p className="pg-input">输入：{step.input}</p> : null}{step.expected_result ? <p className="pg-expected">预期结果：{step.expected_result}</p> : null}</li>)}</ol></section> : null}{lab.practical_guide.readiness_checks?.length ? <section className="pg-readiness"><small>前置条件</small><ul>{lab.practical_guide.readiness_checks.map((check) => <li key={check.title}><b>{check.title}</b><p>{check.check}（就绪：{check.ready_when}）</p></li>)}</ul></section> : null}{lab.practical_guide.acceptance_criteria?.length ? <section className="pg-acceptance"><small>验收标准</small><ul>{lab.practical_guide.acceptance_criteria.map((criterion) => <li key={criterion.criterion_id}><CheckCircle2 size={14} /><span>{criterion.description}</span></li>)}</ul></section> : null}{lab.practical_guide.troubleshooting?.length ? <section className="pg-errors"><small>常见错误与解决</small><dl>{lab.practical_guide.troubleshooting.map((error, index) => <div key={index}><dt>{error.symptom}</dt><dd>原因：{error.likely_cause} · 解决：{error.recovery_steps?.join("；")}{error.verification ? ` · 验证：${error.verification}` : ""}</dd></div>)}</dl></section> : null}{lab.practical_guide.extension_task ? <section className="pg-extension"><small>拓展任务</small><ul><li><p>{lab.practical_guide.extension_task.task}</p><span>变化维度：{lab.practical_guide.extension_task.changed_dimension}{lab.practical_guide.extension_task.verification ? ` · 验证：${lab.practical_guide.extension_task.verification}` : ""}</span></li></ul></section> : null}</div> : null}
-      <div className="public-tests"><h3>公开样例</h3>{(task?.public_examples ?? lab.public_tests).map((test) => <article key={"case_id" in test ? test.case_id : test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div>
-      {lab.reflection_questions?.length ? <div className="lab-reflection"><h3><MessageCircleQuestion size={16} /> 完成实验后，想一想</h3><ol>{lab.reflection_questions.map((question, index) => <li key={index}><span>{String(index + 1).padStart(2, "0")}</span><p>{question}</p></li>)}</ol><small>反思问题来自 C 的公开 reflection_questions，用于检查你是否真正理解。</small></div> : null}
-      <LabHintPanel lab={lab} />
+      <nav className="lab-progress" aria-label="代码实验进度">
+        {anchorIds.map((id, index) => <button type="button" key={id} className={`lab-progress-seg ${activeAnchorId === id ? "is-active" : ""} ${index < anchorIds.indexOf(activeAnchorId) ? "is-done" : ""}`} onClick={() => setActiveAnchorId(id)}><span className="lab-progress-dot">{index + 1}</span><b>{id === "lab-task" ? "任务" : id === "lab-guide-block" ? "实操指南" : "提示与反思"}</b>{index < anchorIds.length - 1 ? <i className="lab-progress-line" /> : null}</button>)}
+      </nav>
+      {task && activeAnchorId === "lab-task" ? <article id="lab-task" className="lab-block lab-block-task"><div className="lab-block-head"><span className="lab-block-icon"><ListChecks size={15} /></span><b>编程任务</b><span className="programming-task-kind">{guidedOutput ? "引导式运行" : task.task_kind === "code_completion" ? "程序填空" : task.task_kind === "function_implementation" ? "函数实现" : task.task_kind === "debugging_repair" ? "调试修复" : "标准输入输出"}</span></div><h3>{guidedOutput ? "你要完成什么" : "编程任务"}</h3><p>{legacyGuidedOutput ? "这是一道入门运行练习：程序主体已经写好，你只需在右侧唯一的输入框中填写要输出的文字，并用英文引号包起来；不要输入变量名、等号或 print。" : task.statement}</p><dl><div><dt>{guidedOutput ? "你填写" : "输入"}</dt><dd>{task.input_description}</dd></div><div><dt>{guidedOutput ? "程序输出" : "输出"}</dt><dd>{task.output_description}</dd></div></dl><ul>{task.constraints.map((entry) => <li key={entry}>{entry}</li>)}</ul></article> : null}
+      {activeAnchorId === "lab-task" ? (() => { const guide = labGuideSections(lab.instructions); return guide ? <div className="lab-guide">{guide.map((section, index) => <section className={`lab-guide-section tone-${index % 4}`} key={section.title}><h3>{section.title}</h3><div>{section.blocks.map((block) => <RenderLessonBlock block={block} key={block.block_id} />)}</div></section>)}</div> : lab.instructions.map((block) => <RenderLessonBlock block={block} key={block.block_id} />) })() : null}
+      {lab.practical_guide && activeAnchorId === "lab-guide-block" ? <div id="lab-guide-block" className="lab-block lab-block-guide"><div className="lab-block-head"><span className="lab-block-icon"><Target size={15} /></span><b>实操指南</b><small>{lab.practical_guide.estimated_minutes} 分钟 · 含步骤/验收/常见错误/拓展</small></div><div className="practical-guide"><h3><Target size={16} /> 实操指南 · {lab.practical_guide.estimated_minutes} 分钟</h3><section className="pg-goal"><small>实践目标</small><p>{lab.practical_guide.practice_goal}</p>{lab.practical_guide.deliverable ? <p className="pg-deliverable">交付物：{lab.practical_guide.deliverable}</p> : null}</section>{lab.practical_guide.steps?.length ? <section className="pg-steps"><small>操作步骤</small><ol>{lab.practical_guide.steps.map((step) => <li key={step.sequence}><b>第 {step.sequence} 步 · {step.title}</b><p>{step.action}</p>{step.input ? <p className="pg-input">输入：{step.input}</p> : null}{step.expected_result ? <p className="pg-expected">预期结果：{step.expected_result}</p> : null}</li>)}</ol></section> : null}{lab.practical_guide.readiness_checks?.length ? <section className="pg-readiness"><small>前置条件</small><ul>{lab.practical_guide.readiness_checks.map((check) => <li key={check.title}><b>{check.title}</b><p>{check.check}（就绪：{check.ready_when}）</p></li>)}</ul></section> : null}{lab.practical_guide.acceptance_criteria?.length ? <section className="pg-acceptance"><small>验收标准</small><ul>{lab.practical_guide.acceptance_criteria.map((criterion) => <li key={criterion.criterion_id}><CheckCircle2 size={14} /><span>{criterion.description}</span></li>)}</ul></section> : null}{lab.practical_guide.troubleshooting?.length ? <section className="pg-errors"><small>常见错误与解决</small><dl>{lab.practical_guide.troubleshooting.map((error, index) => <div key={index}><dt>{error.symptom}</dt><dd>原因：{error.likely_cause} · 解决：{error.recovery_steps?.join("；")}{error.verification ? ` · 验证：${error.verification}` : ""}</dd></div>)}</dl></section> : null}{lab.practical_guide.extension_task ? <section className="pg-extension"><small>拓展任务</small><ul><li><p>{lab.practical_guide.extension_task.task}</p><span>变化维度：{lab.practical_guide.extension_task.changed_dimension}{lab.practical_guide.extension_task.verification ? ` · 验证：${lab.practical_guide.extension_task.verification}` : ""}</span></li></ul></section> : null}</div></div> : null}
+      {activeAnchorId === "lab-guide-block" ? <div id="lab-samples" className="lab-block lab-samples-block"><div className="lab-block-head"><span className="lab-block-icon"><CheckCircle2 size={15} /></span><b>公开样例</b><small>预期行为参考</small></div><div className="public-tests"><h3>公开样例</h3>{(task?.public_examples ?? lab.public_tests).map((test) => <article key={"case_id" in test ? test.case_id : test.test_id}><CheckCircle2 size={16} /><div><b>{test.description}</b><p>{test.expected_behavior}</p></div></article>)}</div></div> : null}
+      {activeAnchorId === "lab-reflect" ? <div id="lab-hints" className="lab-block lab-block-hints"><div className="lab-block-head"><span className="lab-block-icon"><Lightbulb size={15} /></span><b>三级提示</b><small>卡住时逐步展开，由浅到深</small></div><LabHintPanel lab={lab} /></div> : null}
+      {lab.reflection_questions?.length && activeAnchorId === "lab-reflect" ? <div id="lab-reflect" className="lab-block lab-block-reflect"><div className="lab-block-head"><span className="lab-block-icon"><MessageCircleQuestion size={15} /></span><b>完成实验后，想一想</b><small>反思问题 · 检查是否真正理解</small></div><div className="lab-reflection"><h3><MessageCircleQuestion size={16} /> 完成实验后，想一想</h3><ol>{lab.reflection_questions.map((question, index) => <li key={index}><span>{String(index + 1).padStart(2, "0")}</span><p>{question}</p></li>)}</ol><small>反思问题来自 C 的公开 reflection_questions，用于检查你是否真正理解。</small></div></div> : null}
     </section>
     <section className="editor-panel">
       <header><div><Braces size={17} /><b>{guidedOutput ? "填写并运行" : gapMode ? "程序填空" : "Python 编辑器"}</b></div><small>{lab.execution_contract.execution_mode} · {lab.execution_contract.resource_limits.timeout_ms}ms</small></header>
@@ -1370,14 +1494,14 @@ function LabContent({ lab, code, setCode, gapAnswers, setGapAnswers, busy, execu
           const issue = gapIssues[gap.gap_id]
           return <label key={gap.gap_id}><b>{gap.label}</b><small>{gapAnswerGuidance(gap)}</small>{gap.max_lines > 1 ? <textarea value={gapAnswers[gap.gap_id] ?? ""} placeholder={gap.placeholder ?? "填写代码"} onChange={(event) => setGapAnswers({ ...gapAnswers, [gap.gap_id]: event.target.value })} /> : <input value={gapAnswers[gap.gap_id] ?? ""} placeholder={gap.placeholder ?? "填写代码"} onChange={(event) => setGapAnswers({ ...gapAnswers, [gap.gap_id]: event.target.value })} />}{issue ? <span className="gap-answer-error" role="alert">{issue}</span> : null}</label>
         })}
-      </div> : <PythonCodeEditor value={code} onChange={setCode} minHeight={420} ariaLabel="代码实验 Python 编辑器" executionMode={lab.execution_contract.execution_mode} />}
+      </div> : <PythonCodeEditor value={code} onChange={setCode} minHeight={300} ariaLabel="代码实验 Python 编辑器" executionMode={lab.execution_contract.execution_mode} />}
       <footer><button type="button" onClick={() => gapMode ? setGapAnswers({}) : setCode(lab.starter_code)}><RotateCcw size={15} /> 重置</button><button className="secondary-action" disabled={Boolean(busy) || !firstPublicCaseId || (gapMode ? !gapReady : !code.trim())} type="button" onClick={() => firstPublicCaseId && void onDebug(firstPublicCaseId)}><Play size={15} /> 调试公开样例</button><button className="run-button" disabled={Boolean(busy) || (gapMode ? !gapReady : !code.trim())} type="button" onClick={() => void onRun()}><ShieldCheck size={15} /> {busy ? "评测中…" : "正式提交"}</button></footer>
-      {execution ? <div className={`run-result is-visible ${execution.status === "passed" ? "" : "is-fail"}`.trim()} role="status">
-        <b>{execution.status === "completed" ? "公开样例调试完成" : execution.verdict ? judgeVerdictLabel(execution.verdict) : execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b>
+      <div className="run-result is-visible lab-run-output" role="status">
+        {execution ? <><b>{execution.status === "completed" ? "公开样例调试完成" : execution.verdict ? judgeVerdictLabel(execution.verdict) : execution.status === "passed" ? "代码实验通过" : execution.status === "blocked" ? "代码实验暂时无法运行" : "代码实验尚未通过"}</b>
         <p>{execution.status === "completed" ? `实际结果：${typeof execution.actual === "string" ? execution.actual : JSON.stringify(execution.actual)}` : typeof execution.passedChecks === "number" && typeof execution.totalChecks === "number" ? `通过 ${execution.passedChecks} / ${execution.totalChecks} 项检查。` : execution.message ?? "服务端未返回公开检查摘要。"}</p>
         {feedback.length ? <div className="failure-reasons">{feedback.map((entry) => <p key={entry.code}><b>{entry.label}</b>{entry.message}</p>)}</div> : null}
-        {checklist.length ? <details className="public-test-checklist"><summary>按公开测试自查</summary>{checklist.map((item) => <article key={item.test_id}><b>{item.description}</b><p>{item.expected_behavior}</p></article>)}</details> : null}
-      </div> : null}
+        {checklist.length ? <details className="public-test-checklist"><summary>按公开测试自查</summary>{checklist.map((item) => <article key={item.test_id}><b>{item.description}</b><p>{item.expected_behavior}</p></article>)}</details> : null}</> : <div className="lab-run-placeholder"><TerminalSquare size={15} /><span>调试输出区——点击"调试公开样例"或"正式提交"后，这里显示运行结果</span></div>}
+      </div>
     </section>
   </div>
 }

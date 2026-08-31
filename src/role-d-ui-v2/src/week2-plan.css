@@ -88,3 +88,17 @@
 .current-objectives-card > header > span:last-child:not(.card-head-icon) { margin-left: auto; }
 .current-objectives-card > header > span.card-head-icon, .agent-collaboration-card > header > span.card-head-icon { width: 38px; height: 38px; display: grid; place-items: center; flex: none; margin-right: 12px; border-radius: 12px; color: #1768d4; background: #eaf3ff; }
 .current-objectives-card > header > span.card-head-icon svg, .agent-collaboration-card > header > span.card-head-icon svg { color: inherit; }
+
+/* 画像证据与判断 */
+.pd-icon-evidence { color: #93651d; background: #fff4d9; }
+.pd-evidence-row { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.pd-evidence-label { color: #8a8f99; font-size: 10px; font-weight: 700; }
+.pd-self { padding: 4px 11px; border-radius: 999px; color: #6d55b7; background: #f0edff; font-size: 11px; font-style: normal; font-weight: 800; }
+.pd-objective { padding: 4px 11px; border-radius: 999px; color: #1768d4; background: #e5f0fe; font-size: 11px; font-style: normal; font-weight: 800; }
+.pd-evidence-dims { display: grid; gap: 7px; margin-bottom: 9px; }
+.pd-dim-row { display: grid; grid-template-columns: 64px 1fr 34px; align-items: center; gap: 8px; }
+.pd-dim-row span { color: #5d6f8a; font-size: 10.5px; }
+.pd-dim-row i { height: 6px; overflow: hidden; border-radius: 99px; background: #eef1f5; }
+.pd-dim-row i em { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg,#5da3e9,#8a70d3); }
+.pd-dim-row b { color: #4a5570; font-size: 10.5px; text-align: right; }
+.pd-evidence-note { margin: 0; color: #9aa0ab; font-size: 10px; line-height: 1.55; }
