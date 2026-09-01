@@ -15,6 +15,7 @@ import {
 } from "./harness"
 import type { CodeLabAgent, CodeLabDraftVerifier, CodeLabRequest, RoleCContentProvider } from "./types"
 import { validateCodeLabDraftStructure, classifyCodeLabVerificationFailure, isTrustedExpectedDerivationIssue } from "../validators/code-lab-validator"
+import { expressionAdaptationBlockingIssues } from "../quality/expression-adaptation"
 
 export function generateCodeLab(
   request: CodeLabRequest,
@@ -52,6 +53,17 @@ export function createCodeLabAgent(
             common,
             "code-lab Draft 未通过结构、引用、public/secure 或目标覆盖门禁",
             structural.issues.map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
+          )
+        }
+        const expressionIssues = expressionAdaptationBlockingIssues(
+          draft.public_draft.payload,
+          request.generation_spec.learner_adaptation.expression_context,
+        )
+        if (expressionIssues.length > 0) {
+          return invalidPair(
+            common,
+            "code-lab Draft 未通过背景表达隐私与反刻板印象门禁",
+            expressionIssues,
           )
         }
         let verification = verifier
@@ -116,6 +128,17 @@ export function createCodeLabAgent(
             draft = structuredClone(verification.materialized_draft)
             structural = validateCodeLabDraftStructure(request, draft)
           }
+        }
+        const finalExpressionIssues = expressionAdaptationBlockingIssues(
+          draft.public_draft.payload,
+          request.generation_spec.learner_adaptation.expression_context,
+        )
+        if (finalExpressionIssues.length > 0) {
+          return invalidPair(
+            common,
+            "code-lab 最终 Draft 未通过背景表达隐私与反刻板印象门禁",
+            finalExpressionIssues,
+          )
         }
         const objectiveCoverage = verification.objective_coverage ?? structural.objective_coverage
         return {

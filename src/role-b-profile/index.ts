@@ -119,4 +119,15 @@ export type {
 } from "./learner-profile-v2"
 
 export { buildRoleCPedagogyContract } from "./pedagogy-contract"
-export type { RoleCPedagogyContract } from "./pedagogy-contract"
+export type { RoleCPedagogyContract, LearningTimeHorizon } from "./pedagogy-contract"
+export { buildRoleCExpressionContext, classifyDisciplineFamily, classifyAudienceRegister } from "./expression-context-contract"
+export type {
+  RoleCExpressionContext,
+  DisciplineFamily,
+  AudienceRegister,
+  ExplanationFrame,
+  TerminologyBridge,
+  ComparisonStyle,
+} from "./expression-context-contract"
+export { PROFILE_V2_FIELD_CONSUMPTION, PROFILE_V2_CONSUMABLE_FIELDS, PROFILE_V2_AUDITED_FIELDS, unownedProfileV2Fields } from "./profile-field-consumption"
+export type { ProfileFieldDisposition } from "./profile-field-consumption"

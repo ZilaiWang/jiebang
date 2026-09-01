@@ -438,6 +438,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           payload,
           learning_design: learningDesign,
           concept_section_plans: sectionPlans,
+          expression_context: segment.generation_spec.learner_adaptation.expression_context,
           minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.07,
         }),
         review: (entries) => reviewPublicCandidatesWithModel({
@@ -577,6 +578,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         artifact_kind: "code_lab",
         payload,
         learning_design: learningDesign,
+        expression_context: request.generation_spec.learner_adaptation.expression_context,
         minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.05,
       }),
       review: (entries) => reviewPublicCandidatesWithModel({
@@ -1143,6 +1145,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               assessment_plan: [itemPlan],
             },
             assessment_plan: [itemPlan],
+            expression_context: request.generation_spec.learner_adaptation.expression_context,
             minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.08,
           }),
           review: (entries) => reviewPublicCandidatesWithModel({

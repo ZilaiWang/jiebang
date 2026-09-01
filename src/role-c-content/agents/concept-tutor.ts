@@ -2,6 +2,7 @@ import { ModelOutputValidationError, ModelProviderUnavailableError } from "../co
 import { validateConceptLesson } from "../validators/concept-validator"
 import { finalizeDraft, invalidOutputEnvelope, providerBlockedEnvelope } from "./harness"
 import type { ConceptTutorAgent, ConceptTutorRequest, RoleCContentProvider } from "./types"
+import { expressionAdaptationBlockingIssues } from "../quality/expression-adaptation"
 
 export function generateConceptLesson(request: ConceptTutorRequest, provider: RoleCContentProvider) {
   return createConceptTutorAgent(provider).generate(request)
@@ -33,6 +34,21 @@ export function createConceptTutorAgent(provider: RoleCContentProvider): Concept
             input_refs: [request.generation_spec.spec_id, request.evidence_pack.retrieval_id],
             message: `concept-tutor Draft 未通过结构、引用或目标覆盖门禁：${issueLocations}`,
             details,
+          })
+        }
+        const expressionIssues = expressionAdaptationBlockingIssues(
+          draft.payload,
+          request.generation_spec.learner_adaptation.expression_context,
+        )
+        if (expressionIssues.length > 0) {
+          return invalidOutputEnvelope({
+            spec: request.generation_spec,
+            evidence: request.evidence_pack,
+            agent: "concept-tutor",
+            artifact_type: "concept_lesson",
+            input_refs: [request.generation_spec.spec_id, request.evidence_pack.retrieval_id],
+            message: "concept-tutor Draft 未通过背景表达隐私与反刻板印象门禁",
+            details: expressionIssues,
           })
         }
         return finalizeDraft({

@@ -1,5 +1,6 @@
 import type { LearnerProfile } from "../../role-b-profile/types"
 import type { RoleCPedagogyContract } from "../../role-b-profile/pedagogy-contract"
+import type { RoleCExpressionContext } from "../../role-b-profile/expression-context-contract"
 import type { ProfileConfidenceState } from "../../role-b-profile/profile-confidence"
 import type { LearningBarrier } from "../../role-b-profile/profile-gap-questions"
 import { redactDirectIdentifiers, sanitizeFreeTextList } from "../../privacy/privacy-boundary"
@@ -8,6 +9,16 @@ import type { LearnerLevel, SchemaVersion } from "./common"
 import { C_SCHEMA_VERSION, stableId } from "./canonical"
 
 export type ObservableBehavior = "recognize" | "explain" | "trace" | "apply" | "debug" | "create"
+
+export const LEARNER_PROFILE_SNAPSHOT_CONTRACT_VERSION = "learner-profile-snapshot.v1.1" as const
+export const LEARNER_PROFILE_SNAPSHOT_CONTRACT_KEYS = {
+  root: [
+    "schema_version", "profile_id", "profile_version", "learner_id", "level",
+    "known_concepts", "weak_concepts", "goal", "goal_profile",
+    "learning_barriers", "confidence_state", "preferred_contexts",
+    "accommodations", "provenance_ref", "pedagogy_contract", "expression_context",
+  ],
+} as const
 
 export interface AssessmentBlueprint {
   tier_1_count: number
@@ -33,6 +44,8 @@ export interface LearnerProfileSnapshot {
   provenance_ref?: string
   /** Deterministic B-owned teaching policy. Facts, objectives and answers stay locked. */
   pedagogy_contract?: RoleCPedagogyContract
+  /** B-owned, privacy-safe policy for examples, terminology and hints. */
+  expression_context?: RoleCExpressionContext
 }
 
 export interface LearningObjective {
@@ -71,6 +84,7 @@ export interface ProfileSnapshotOptions {
   confidence_state?: ProfileConfidenceState
   provenance_ref?: string
   pedagogy_contract?: RoleCPedagogyContract
+  expression_context?: RoleCExpressionContext
 }
 
 export function adaptLearnerProfile(
@@ -91,11 +105,18 @@ export function adaptLearnerProfile(
       : {}),
     preferred_contexts: sanitizeFreeTextList(options.preferred_contexts ?? []),
     accommodations: sanitizeFreeTextList(options.accommodations ?? []),
-    provenance_ref: options.provenance_ref,
-    learning_barriers: structuredClone(options.learning_barriers ?? profile.learning_barriers ?? []),
-    confidence_state: structuredClone(options.confidence_state ?? profile.confidence_state),
+    ...(options.provenance_ref ? { provenance_ref: options.provenance_ref } : {}),
+    ...((options.learning_barriers ?? profile.learning_barriers)
+      ? { learning_barriers: structuredClone(options.learning_barriers ?? profile.learning_barriers ?? []) }
+      : {}),
+    ...((options.confidence_state ?? profile.confidence_state)
+      ? { confidence_state: structuredClone(options.confidence_state ?? profile.confidence_state) }
+      : {}),
     ...(options.pedagogy_contract
       ? { pedagogy_contract: structuredClone(options.pedagogy_contract) }
+      : {}),
+    ...(options.expression_context
+      ? { expression_context: structuredClone(options.expression_context) }
       : {}),
   }
 }

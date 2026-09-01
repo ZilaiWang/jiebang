@@ -7,6 +7,8 @@ import type {
   PublicCandidateEvaluation,
   QualityDimensionScore,
 } from "./contracts"
+import type { RoleCExpressionContext } from "../../role-b-profile/expression-context-contract"
+import { evaluateExpressionAdaptation } from "./expression-adaptation"
 
 const META_LANGUAGE = /(?:source[_ ]?id|fact[_ ]?id|\bRAG\b|evidence(?:_pack)?|知识库编号|内部审核|隐藏测试|正确答案|\bsource\s*:\s*K\d+|\bfact\s*:\s*F\d+)/iu
 const VACUOUS_DISTRACTOR = /(?:不需要任何.{0,8}(?:依据|规则)|随机生成|只适用于界面|与题目无关|以上都[对错]|永远不会|什么都不做)/u
@@ -20,20 +22,37 @@ export function evaluatePublicAuthorCandidate(input: {
   concept_section_plans?: ConceptSectionPlan[]
   hard_gate_issues?: string[]
   minimum_score?: number
+  expression_context?: RoleCExpressionContext
 }): PublicCandidateEvaluation {
   const hardIssues = input.hard_gate_issues ?? []
   const text = collectText(input.payload)
   const metaLeak = META_LANGUAGE.test(text)
-  const dimensions = input.artifact_kind === "concept_lesson"
+  const baseDimensions = input.artifact_kind === "concept_lesson"
     ? conceptDimensions(input.payload, input.learning_design, input.concept_section_plans ?? [])
     : input.artifact_kind === "code_lab"
       ? codeLabDimensions(input.payload, input.learning_design)
       : assessmentDimensions(input.payload, input.assessment_plan ?? [], input.learning_design)
+  const expressionAudit = evaluateExpressionAdaptation(input.payload, input.expression_context)
+  const dimensions = [
+    ...baseDimensions,
+    ...(expressionAudit.applicable
+      ? [dimension(
+          "background_expression_alignment",
+          expressionAudit.score,
+          0.75,
+          false,
+          "表达框架、术语桥接和任务语境遵循 B 的受控背景合同",
+          true,
+          expressionAudit.evidence_refs,
+        )]
+      : []),
+  ]
   const overall = weightedMean(dimensions)
   const coreFailure = dimensions.some((dimension) =>
     dimension.applicable !== false && dimension.core && dimension.score < 0.48)
   const criticalFindings = [
     ...(metaLeak ? ["PUBLIC_INTERNAL_METADATA"] : []),
+    ...expressionAudit.issue_codes,
     ...hardIssues.map((issue) => `HARD_GATE:${issue}`),
     ...(coreFailure ? ["CORE_QUALITY_DIMENSION_LOW"] : []),
   ]
@@ -44,10 +63,11 @@ export function evaluatePublicAuthorCandidate(input: {
     hard_gates: [
       { gate: "existing_contract_validators", passed: hardIssues.length === 0, issue_codes: hardIssues },
       { gate: "public_internal_metadata", passed: !metaLeak, issue_codes: metaLeak ? ["PUBLIC_INTERNAL_METADATA"] : [] },
+      { gate: "expression_safety", passed: expressionAudit.issue_codes.length === 0, issue_codes: expressionAudit.issue_codes },
     ],
     dimensions,
     overall_score: round(overall),
-    release_eligible: hardIssues.length === 0 && !metaLeak && !coreFailure && overall >= minimum,
+    release_eligible: hardIssues.length === 0 && !metaLeak && expressionAudit.issue_codes.length === 0 && !coreFailure && overall >= minimum,
     critical_findings: criticalFindings,
   }
 }
@@ -177,6 +197,7 @@ function dimension(
   core: boolean,
   rationale: string,
   applicable = true,
+  evidenceRefs: string[] = [name],
 ): QualityDimensionScore {
   return {
     dimension: name,
@@ -184,7 +205,7 @@ function dimension(
     score: round(clamp(score)),
     weight,
     confidence: 0.72,
-    evidence_refs: [name],
+    evidence_refs: evidenceRefs,
     rationale,
     core,
   }

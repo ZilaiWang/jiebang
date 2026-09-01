@@ -20,6 +20,7 @@ import type {
   TieredEvaluatorRequest,
 } from "./types"
 import { validateAssessmentDraftStructure } from "../validators/assessment-validator"
+import { expressionAdaptationBlockingIssues } from "../quality/expression-adaptation"
 
 export function generateAssessment(
   request: TieredEvaluatorRequest,
@@ -54,6 +55,17 @@ export function createTieredEvaluatorAgent(
             common,
             "tiered-evaluator Draft 未通过结构、答案合同、public/secure 或蓝图门禁",
             structural.issues.map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
+          )
+        }
+        const expressionIssues = expressionAdaptationBlockingIssues(
+          draft.public_draft.payload,
+          request.generation_spec.learner_adaptation.expression_context,
+        )
+        if (expressionIssues.length > 0) {
+          return invalidPair(
+            common,
+            "tiered-evaluator Draft 未通过背景表达隐私与反刻板印象门禁",
+            expressionIssues,
           )
         }
         let verification: Awaited<ReturnType<AssessmentDraftVerifier["verifyAssessment"]>> = verifier
@@ -93,6 +105,17 @@ export function createTieredEvaluatorAgent(
           verification = await activeVerifier.verifyAssessment(
             request,
             structuredClone(draft),
+          )
+        }
+        const finalExpressionIssues = expressionAdaptationBlockingIssues(
+          draft.public_draft.payload,
+          request.generation_spec.learner_adaptation.expression_context,
+        )
+        if (finalExpressionIssues.length > 0) {
+          return invalidPair(
+            common,
+            "tiered-evaluator 最终 Draft 未通过背景表达隐私与反刻板印象门禁",
+            finalExpressionIssues,
           )
         }
         const citations = structural.citations

@@ -7,6 +7,8 @@ import type {
 } from "./teaching-audit/types"
 import type { AbilityDimension, LearnerProfile } from "./types"
 import { buildRoleCPedagogyContract } from "./pedagogy-contract"
+import { buildRoleCExpressionContext } from "./expression-context-contract"
+import type { GoalProfile } from "../role-c-content/planning/personalization-policy"
 
 export type LearningGoalUseCase =
   | "coursework"
@@ -422,6 +424,13 @@ export function createLearnerProfileV2(input: CreateLearnerProfileV2Input): Lear
     known_concepts: unique(input.core_profile.known_concepts),
     weak_concepts: unique(input.core_profile.weak_concepts),
     goal,
+    ...(input.core_profile.goal_profile ? { goal_profile: input.core_profile.goal_profile } : {}),
+    ...(input.core_profile.learning_barriers
+      ? { learning_barriers: structuredClone(input.core_profile.learning_barriers) }
+      : {}),
+    ...(input.core_profile.confidence_state
+      ? { confidence_state: structuredClone(input.core_profile.confidence_state) }
+      : {}),
     ...(input.core_profile.ability_dimensions
       ? { ability_dimensions: structuredClone(input.core_profile.ability_dimensions) as AbilityDimension[] }
       : {}),
@@ -661,20 +670,37 @@ export function buildRoleCProfileSnapshotOptions(profile: LearnerProfileV2): Pro
   return {
     profile_id: profile.profile_id,
     profile_version: profile.profile_version,
+    goal_profile: profile.goal_profile ?? goalProfileForUseCase(profile.goal_context.use_case),
     preferred_contexts: profile.privacy.personalization_enabled
       ? [...profile.learning_preferences.preferred_contexts]
       : [],
     accommodations: profile.privacy.personalization_enabled
       ? [...pedagogyContract.constraints.accommodations]
       : [],
+    learning_barriers: profile.privacy.personalization_enabled
+      ? structuredClone(profile.learning_barriers ?? [])
+      : [],
     pedagogy_contract: pedagogyContract,
+    expression_context: buildRoleCExpressionContext(profile),
     provenance_ref: `role-b:profile-v2:${profile.profile_id}:${profile.profile_version}`,
   }
 }
 
+function goalProfileForUseCase(useCase: LearningGoalUseCase): GoalProfile {
+  if (useCase === "competition") return "algorithm_competition"
+  if (useCase === "job") return "job_interview"
+  if (useCase === "coursework" || useCase === "certification") return "coursework"
+  return "general_learning"
+}
+
 /** Narrow structural guard used at legacy-compatible orchestration boundaries. */
-export function isLearnerProfileV2(profile: LearnerProfile): profile is LearnerProfileV2 {
-  return (profile as Partial<LearnerProfileV2>).schema_version === "2.0"
+export function isLearnerProfileV2(profile: unknown): profile is LearnerProfileV2 {
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return false
+  const candidate = profile as Partial<LearnerProfileV2>
+  return candidate.schema_version === "2.0"
+    && typeof candidate.learner_id === "string"
+    && typeof candidate.profile_id === "string"
+    && typeof candidate.profile_version === "string"
 }
 
 /** 面向路径、讲义、代码实验和测评负责人的稳定只读交接视图。 */

@@ -121,7 +121,8 @@
             "constraints": { "type": "object" },
             "rationale": { "type": "array", "items": { "type": "string" } }
           }
-        }
+        },
+        "expression_context": { "$ref": "expression_context.schema.json" }
       },
       "additionalProperties": false
     },

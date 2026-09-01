@@ -1,6 +1,17 @@
 import type { LearnerProfile } from "./types"
+import type { LearnerProfileV2, LearningGoalUseCase } from "./learner-profile-v2"
+import type { LearningBarrier } from "./profile-gap-questions"
+import type { GoalProfile } from "../role-c-content/planning/personalization-policy"
 
-export function profileConfidenceEvidenceFromProfile(profile: Pick<LearnerProfile, "learner_id" | "goal" | "goal_profile" | "level" | "known_concepts" | "weak_concepts" | "learning_barriers">): ProfileConfidenceEvidence {
+type ConfidenceProfileView = Pick<LearnerProfile, "learner_id" | "goal" | "goal_profile" | "level" | "known_concepts" | "weak_concepts" | "learning_barriers">
+  & Partial<Pick<LearnerProfileV2, "learning_preferences" | "provenance">>
+
+export function profileConfidenceEvidenceFromProfile(profile: ConfidenceProfileView): ProfileConfidenceEvidence {
+  const learnerFields = new Set(
+    profile.provenance?.field_sources
+      .filter((entry) => entry.source === "learner")
+      .map((entry) => entry.field) ?? [],
+  )
   return {
     has_explicit_goal: profile.goal.trim().length > 0,
     has_goal_profile: profile.goal_profile !== undefined,
@@ -11,12 +22,12 @@ export function profileConfidenceEvidenceFromProfile(profile: Pick<LearnerProfil
     weak_concept_count: profile.weak_concepts.length,
     barrier_observation_count: profile.learning_barriers?.reduce((sum, item) => sum + item.count, 0) ?? 0,
     task_ability_observation_count: 0,
-    explanation_preference_confirmed: false,
-    practice_preference_confirmed: false,
+    explanation_preference_confirmed: learnerFields.has("learning_preferences.explanation"),
+    practice_preference_confirmed: learnerFields.has("learning_preferences.practice"),
   }
 }
 
-export function profileConfidenceStateFromProfile(profile: Pick<LearnerProfile, "learner_id" | "goal" | "goal_profile" | "level" | "known_concepts" | "weak_concepts" | "learning_barriers">): ProfileConfidenceState {
+export function profileConfidenceStateFromProfile(profile: ConfidenceProfileView): ProfileConfidenceState {
   return buildProfileConfidenceState(profileConfidenceEvidenceFromProfile(profile))
 }
 
@@ -120,6 +131,152 @@ export function applyProfileConfidenceAnswer(
   if (!next.answered_question_ids.includes(input.question_id)) next.answered_question_ids.push(input.question_id)
   next.round_no += 1
   return next
+}
+
+export interface ProfileConfidenceWritebackResult {
+  confidence_state: ProfileConfidenceState
+  profile: LearnerProfileV2
+  observation_value: string
+  changed_fields: string[]
+  learning_barrier?: LearningBarrier
+}
+
+/**
+ * Applies the meaning of an explicit confidence answer to the structured B
+ * profile. Objective level remains evidence-owned: a level answer updates only
+ * self assessment and never promotes/demotes profile.level.
+ */
+export function applyProfileConfidenceAnswerWithWriteback(input: {
+  profile: LearnerProfileV2
+  state: ProfileConfidenceState
+  question_id: string
+  dimension: ProfileConfidenceDimension
+  answer: string
+  next_profile_version: string
+  source_id?: string
+  observed_at?: string
+}): ProfileConfidenceWritebackResult {
+  if (!input.next_profile_version.trim()) throw new Error("PROFILE_VERSION_EMPTY")
+  const normalized = normalizeProfileConfidenceAnswer(input.dimension, input.answer)
+  const confidenceState = applyProfileConfidenceAnswer(input.state, input)
+  const profile = structuredClone(input.profile)
+  const changedFields: string[] = []
+
+  if (input.dimension === "goal_profile") {
+    const goalProfile = normalized.value as GoalProfile
+    profile.goal_profile = goalProfile
+    profile.goal_context.use_case = useCaseForGoalProfile(goalProfile)
+    changedFields.push("goal_profile", "goal_context.use_case")
+  } else if (input.dimension === "explanation_preference") {
+    profile.learning_preferences.explanation = normalized.value as LearnerProfileV2["learning_preferences"]["explanation"]
+    changedFields.push("learning_preferences.explanation")
+  } else if (input.dimension === "practice_preference") {
+    profile.learning_preferences.practice = normalized.value as LearnerProfileV2["learning_preferences"]["practice"]
+    changedFields.push("learning_preferences.practice")
+  } else if (input.dimension === "level") {
+    profile.self_assessment.reported_level = normalized.value as LearnerProfileV2["self_assessment"]["reported_level"]
+    changedFields.push("self_assessment.reported_level")
+  } else if (input.dimension === "learning_barrier" && normalized.learning_barrier) {
+    const sourceId = input.source_id?.trim() || "PROFILE-GENERAL"
+    const existing = (profile.learning_barriers ?? []).find((entry) =>
+      entry.source_id === sourceId && entry.barrier === normalized.learning_barrier)
+    if (existing) existing.count += 1
+    else profile.learning_barriers = [
+      ...(profile.learning_barriers ?? []),
+      { source_id: sourceId, barrier: normalized.learning_barrier, count: 1 },
+    ]
+    changedFields.push("learning_barriers")
+  }
+
+  const observedAt = input.observed_at ?? new Date().toISOString()
+  profile.profile_version = input.next_profile_version
+  profile.revision += 1
+  profile.updated_at = observedAt
+  profile.confidence_state = structuredClone(confidenceState)
+  profile.provenance.field_sources = dedupeFieldSources([
+    ...profile.provenance.field_sources,
+    ...changedFields.map((field) => ({ field, source: "learner" as const, observed_at: observedAt })),
+  ])
+  return {
+    confidence_state: confidenceState,
+    profile,
+    observation_value: normalized.value,
+    changed_fields: changedFields,
+    ...(normalized.learning_barrier ? { learning_barrier: normalized.learning_barrier } : {}),
+  }
+}
+
+export function normalizeProfileConfidenceAnswer(
+  dimension: ProfileConfidenceDimension,
+  answer: string,
+): { value: string; learning_barrier?: LearningBarrier } {
+  const value = answer.trim()
+  if (!value) throw new Error("PROFILE_CONFIDENCE_ANSWER_EMPTY")
+  if (dimension === "goal_profile") {
+    if (/竞赛/u.test(value)) return { value: "algorithm_competition" }
+    if (/求职|面试|岗位/u.test(value)) return { value: "job_interview" }
+    if (/课程|考试|认证/u.test(value)) return { value: "coursework" }
+    return { value: "general_learning" }
+  }
+  if (dimension === "explanation_preference") {
+    if (/原理|推导/u.test(value)) return { value: "principle_first" }
+    if (/例子|示例/u.test(value)) return { value: "example_first" }
+    if (/图|类比|生活/u.test(value)) return { value: "analogy_first" }
+    if (/做题|步骤/u.test(value)) return { value: "step_by_step" }
+    return { value: "balanced" }
+  }
+  if (dimension === "practice_preference") {
+    if (/编程|写代码/u.test(value)) return { value: "coding" }
+    if (/综合|项目|案例/u.test(value)) return { value: "project" }
+    if (/选择|填空|短答/u.test(value)) return { value: "quiz" }
+    return { value: "mixed" }
+  }
+  if (dimension === "learning_barrier") {
+    const barrier = classifyBarrier(value)
+    return { value: barrier, learning_barrier: barrier }
+  }
+  if (dimension === "level") {
+    if (/综合项目|综合题/u.test(value)) return { value: "integrated" }
+    if (/变式|独立.*简单/u.test(value)) return { value: "intermediate" }
+    if (/基础题/u.test(value)) return { value: "basic" }
+    return { value: "beginner" }
+  }
+  if (dimension === "task_ability") {
+    if (/综合/u.test(value)) return { value: "integrated_tasks" }
+    if (/调试/u.test(value)) return { value: "debug_tasks" }
+    if (/基础/u.test(value)) return { value: "basic_tasks" }
+    if (/看懂|阅读/u.test(value)) return { value: "read_code" }
+    return { value: "not_stable" }
+  }
+  if (dimension === "knowledge_state") {
+    if (/综合/u.test(value)) return { value: "integrated_application" }
+    if (/典型|方法/u.test(value)) return { value: "typical_methods" }
+    if (/基础|概念/u.test(value)) return { value: "basic_concepts" }
+    return { value: "uncertain" }
+  }
+  return { value: value.slice(0, 120) }
+}
+
+function useCaseForGoalProfile(value: GoalProfile): LearningGoalUseCase {
+  if (value === "algorithm_competition") return "competition"
+  if (value === "job_interview") return "job"
+  if (value === "coursework") return "coursework"
+  return "interest"
+}
+
+function classifyBarrier(value: string): LearningBarrier {
+  if (/概念.*忘|忘.*概念|记不住|概念理解/u.test(value)) return "concept_recall"
+  if (/写成代码|转成代码|不会.*代码|题目转代码/u.test(value)) return "code_translation"
+  if (/调试|报错|debug/iu.test(value)) return "debugging"
+  if (/边界|特殊情况/u.test(value)) return "boundary_condition"
+  if (/题目.*懂|看不懂|读题|题目理解/u.test(value)) return "problem_understanding"
+  return "unknown"
+}
+
+function dedupeFieldSources(entries: LearnerProfileV2["provenance"]["field_sources"]): LearnerProfileV2["provenance"]["field_sources"] {
+  const values = new Map<string, LearnerProfileV2["provenance"]["field_sources"][number]>()
+  for (const entry of entries) values.set(`${entry.field}\u0000${entry.source}\u0000${entry.source_ref ?? ""}`, entry)
+  return [...values.values()]
 }
 
 function field(confidence: number, evidenceCount: number, dimension: ProfileConfidenceDimension): ProfileConfidenceField {

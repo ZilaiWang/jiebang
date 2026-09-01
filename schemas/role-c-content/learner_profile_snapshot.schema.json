@@ -13,6 +13,31 @@
     "known_concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "weak_concepts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "goal": { "type": "string", "minLength": 1 },
+    "goal_profile": { "enum": ["coursework", "algorithm_competition", "job_interview", "general_learning"] },
+    "learning_barriers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_id", "barrier", "count"],
+        "properties": {
+          "source_id": { "type": "string", "minLength": 1 },
+          "barrier": { "enum": ["concept_recall", "code_translation", "debugging", "boundary_condition", "problem_understanding", "unknown"] },
+          "count": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "confidence_state": {
+      "type": "object",
+      "required": ["version", "fields", "answered_question_ids", "round_no"],
+      "properties": {
+        "version": { "const": "profile-confidence.v1" },
+        "fields": { "type": "object" },
+        "answered_question_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "round_no": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "preferred_contexts": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "accommodations": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "provenance_ref": { "type": "string" },
@@ -31,7 +56,8 @@
         "constraints": { "type": "object" },
         "rationale": { "type": "array", "items": { "type": "string" } }
       }
-    }
+    },
+    "expression_context": { "$ref": "expression_context.schema.json" }
   },
   "additionalProperties": false
 }
