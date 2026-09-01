@@ -24,9 +24,9 @@ export interface RoleCContentBudgetWorkload {
  * semantic review form one quality workflow. The durable job deliberately
  * outlives its model budget so the accepted release can still be persisted.
  */
-export const ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS = 360_000
-export const ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS = 480_000
-export const ROLE_C_DURABLE_JOB_DEADLINE_MS = 600_000
+export const ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS = 600_000
+export const ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS = 900_000
+export const ROLE_C_DURABLE_JOB_DEADLINE_MS = 1_200_000
 
 /**
  * Derive the hard call ceiling from the actual Role C authoring workload.
