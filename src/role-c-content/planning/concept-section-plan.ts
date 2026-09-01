@@ -198,6 +198,27 @@ export function buildConceptSectionPlan(input: {
   const requestedExamples = input.pedagogy_contract?.lesson.worked_example_count ?? 1
   const modeSlots: ConceptSectionSlot[] = Array.from({ length: requestedExamples }, (_, index) => {
     const base = primaryModeSlots[index === 0 ? 0 : primaryModeSlots.length - 1]!
+    // definition/guided objectives may have only one grounded executable
+    // example. Cloning the same code slot three times produced three identical
+    // print snippets with different captions. Keep the first executable
+    // demonstration, then use separate fact-focused paragraph examples.
+    if (index > 0 && base.kind === "guided_example" && base.requires_executable_code) {
+      const supportingFactId = fact_ids[index % Math.max(1, fact_ids.length)]
+      return {
+        ...base,
+        slot_id: stableId("CONCEPT-SLOT", {
+          objective_id: input.objective_id,
+          kind: base.kind,
+          fact_id: supportingFactId,
+          example_index: index,
+        }),
+        fact_ids: supportingFactId ? [supportingFactId] : [...base.fact_ids],
+        allowed_moves: ["direct_instance", "recognition_check"],
+        allowed_block_types: ["paragraph"],
+        requires_executable_code: undefined,
+        min_sentences: Math.max(1, base.min_sentences - 1),
+      }
+    }
     return {
       ...base,
       slot_id: stableId("CONCEPT-SLOT", {
@@ -545,10 +566,18 @@ export function anchorConceptFactsInVisibleText(input: {
   payload.title = normalizeLearnerVisibleAuditLanguage(payload.title)
   for (const objective of payload.objectives) {
     for (const section of objective.sections) {
-      section.heading = normalizeLearnerVisibleAuditLanguage(section.heading)
-      section.body = normalizeLearnerVisibleAuditLanguage(section.body)
-      section.steps = section.steps.map(normalizeLearnerVisibleAuditLanguage)
-      if (section.code) section.code = normalizeLearnerVisibleAuditLanguage(section.code)
+      section.heading = normalizeLearnerVisibleAuditLanguage(section.heading ?? "")
+      section.body = normalizeLearnerVisibleAuditLanguage(section.body ?? "")
+      // Some OpenAI-compatible providers can omit an empty array even when the
+      // response schema requires it.  An omitted optional teaching-step list is
+      // semantically identical to []; normalize it before schema validation so
+      // the candidate can be judged/repaired instead of crashing the stage.
+      section.steps = Array.isArray(section.steps)
+        ? section.steps.map(normalizeLearnerVisibleAuditLanguage)
+        : []
+      section.code = typeof section.code === "string" && section.code.trim()
+        ? normalizeLearnerVisibleAuditLanguage(section.code)
+        : null
     }
     objective.micro_check.prompt = normalizeLearnerVisibleAuditLanguage(objective.micro_check.prompt)
     objective.micro_check.options = objective.micro_check.options.map(normalizeLearnerVisibleAuditLanguage)
@@ -566,9 +595,11 @@ export function anchorConceptFactsInVisibleText(input: {
     const plan = input.plans.find((entry) => entry.objective_id === objective.objective_id)
     if (!target || !plan) continue
     const sectionBySlot = new Map(objective.sections.map((section) => [section.slot_id, section]))
-    for (const slot of plan.slots.filter((entry) => entry.kind === "fact_explanation")) {
+    for (const slot of plan.slots) {
       const section = sectionBySlot.get(slot.slot_id)
       if (!section) continue
+      section.body = ensureTeachingSentenceDensity(section.body, slot.min_sentences)
+      if (slot.kind !== "fact_explanation") continue
       const anchors = slot.fact_ids.flatMap((factId) => {
         const fact = factsByKey.get(`${target.source_id}:${factId}`)?.trim()
         if (!fact || visibleTeachingTextExpressesFact(section.body, fact)) return []
@@ -576,8 +607,78 @@ export function anchorConceptFactsInVisibleText(input: {
       })
       if (anchors.length > 0) section.body = `${anchors.join("。")}。${section.body}`
     }
+
+    const microFacts = plan.micro_check.fact_ids
+      .map((factId) => factsByKey.get(`${target.source_id}:${factId}`)?.trim() ?? "")
+      .filter(Boolean)
+    if (microFacts.length > 0 && conceptMicroCheckNeedsFactProjection(objective.micro_check, microFacts)) {
+      const answer = microFacts[0]!
+      const focusHeading = plan.slots
+        .map((slot) => sectionBySlot.get(slot.slot_id)?.heading?.trim())
+        .find(Boolean) ?? "本节核心关系"
+      objective.micro_check = {
+        prompt: `关于“${focusHeading}”，以下哪项符合本节讲解？`,
+        options: [answer, plausibleConceptFactNegation(answer)],
+        answer,
+        explanation: `本题检验的是“${focusHeading}”中的核心关系：${answer}`,
+      }
+    }
   }
   return payload
+}
+
+function plausibleConceptFactNegation(fact: string): string {
+  if (/新值会覆盖旧绑定/u.test(fact)) return "重新赋值后，旧绑定不会被新值覆盖。"
+  const replacements: Array<[RegExp, string]> = [
+    [/按书写顺序依次执行/u, "不会按书写顺序依次执行"],
+    [/可以被/u, "不能被"],
+    [/可以/u, "不可以"],
+    [/通常由/u, "并非通常由"],
+    [/常用于/u, "不常用于"],
+    [/用于/u, "不用于"],
+    [/使用/u, "不使用"],
+    [/会/u, "不会"],
+    [/属于/u, "不属于"],
+    [/表示/u, "不表示"],
+    [/是/u, "不是"],
+  ]
+  for (const [pattern, replacement] of replacements) {
+    if (pattern.test(fact)) return fact.replace(pattern, replacement)
+  }
+  return `以下说法不成立：${fact}`
+}
+
+/**
+ * Providers sometimes express a dense teaching unit as one long comma-separated
+ * sentence even when the plan requests two short sentences.  Split the authored
+ * semantics at a natural boundary; if no safe boundary exists, append a neutral
+ * reading action rather than asking the model to regenerate otherwise valid facts.
+ */
+function ensureTeachingSentenceDensity(body: string, minimum: number): string {
+  let normalized = body.trim()
+  while (splitTeachingSentences(normalized).length < minimum) {
+    const boundary = [...normalized.matchAll(/[，：]/gu)]
+      .map((match) => match.index ?? -1)
+      .find((index) => index >= 6 && normalized.length - index >= 7)
+    if (boundary !== undefined) {
+      normalized = `${normalized.slice(0, boundary)}。${normalized.slice(boundary + 1).trim()}`
+      continue
+    }
+    normalized = `${normalized}${/[。！？]$/u.test(normalized) ? "" : "。"}请在本节示例中核对这一关系。`
+  }
+  return normalized
+}
+
+function conceptMicroCheckNeedsFactProjection(
+  microCheck: ConceptSegmentAuthorPayloadV2["objectives"][number]["micro_check"],
+  facts: string[],
+): boolean {
+  if (!conceptSurfaceIsDirectlyGrounded(microCheck.answer, facts)) return true
+  if (!microCheck.options.some((option) => option.trim() === microCheck.answer.trim())) return true
+  return microCheck.options.some((option) =>
+    option !== microCheck.answer
+      && !CONCEPT_DIRECT_NEGATION.test(option)
+      && !conceptSurfaceIsDirectlyGrounded(option, facts))
 }
 
 function normalizeLearnerVisibleAuditLanguage(value: string): string {
@@ -627,7 +728,145 @@ export function validateConceptSegmentV2AgainstPlans(
       issues.push(`objective ${plan.objective_id} 的 micro_check.answer 必须与某个选项完全一致`)
     }
   }
+  const authoredCode = payload.objectives.flatMap((objective) =>
+    objective.sections.flatMap((section) => section.code?.trim()
+      ? [{ slot_id: section.slot_id, code: normalizeCodeExample(section.code) }]
+      : []))
+  const firstSlotByCode = new Map<string, string>()
+  for (const entry of authoredCode) {
+    const firstSlot = firstSlotByCode.get(entry.code)
+    if (firstSlot) {
+      issues.push(`section ${entry.slot_id} 与 ${firstSlot} 不得重复同一段代码示例`)
+    } else {
+      firstSlotByCode.set(entry.code, entry.slot_id)
+    }
+  }
   return issues
+}
+
+function normalizeCodeExample(code: string): string {
+  return code.replace(/\r\n?/gu, "\n").split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim()
+}
+
+const CONCEPT_ABSOLUTE_SCOPE = /(?:仅仅|只能|仅能|仅限|唯一|完全|一律|必然|绝不|从不|总是|只用于|仅用于|只会|仅会)/gu
+const CONCEPT_DIRECT_NEGATION = /(?:不|未|没有|并非|不是|无法|不能)/u
+const CONCEPT_UNSUPPORTED_NEGATIVE_ASSERTION = /(?:而不是|并非|不会)/gu
+const CONCEPT_ASSERTION_CUE = /(?:[“"]([^”"\n]{4,160})[”"]|(?:认为|声称|误以为|说法是|说法为)[：:]?\s*([^。！？；\n]{4,160}))/gu
+
+/**
+ * Micro-check 的错误选项同样是学习者可见内容。它可以直接否定已引事实，
+ * 但不能靠证据没有出现的绝对范围制造“看起来合理”的具体用途。
+ */
+export function validateConceptMicroCheckEvidenceDiscipline(
+  payload: ConceptSegmentAuthorPayloadV2,
+  plans: ConceptSectionPlan[],
+  factTextByObjective: ReadonlyMap<string, string[]>,
+): string[] {
+  const issues: string[] = []
+  for (const objective of payload.objectives) {
+    const plan = plans.find((entry) => entry.objective_id === objective.objective_id)
+    if (!plan) continue
+    const facts = factTextByObjective.get(objective.objective_id) ?? []
+    const authorized = new Set(facts
+      .flatMap(conceptScopeTokens))
+    const surfaces = [objective.micro_check.prompt, ...objective.micro_check.options]
+    surfaces.forEach((surface, index) => {
+      const unauthorized = conceptScopeTokens(surface).filter((token) => !authorized.has(token))
+      if (unauthorized.length > 0) {
+        issues.push(`objective ${objective.objective_id} 的 micro_check.${index === 0 ? "prompt" : `options[${index - 1}]`} 引入当前事实未授权的绝对限定：${[...new Set(unauthorized)].join("、")}`)
+      }
+    })
+    if (!conceptSurfaceIsDirectlyGrounded(objective.micro_check.answer, facts)) {
+      issues.push(`objective ${objective.objective_id} 的 micro_check.answer 未直接得到当前事实支持`)
+    }
+    objective.micro_check.options.forEach((option, index) => {
+      if (option === objective.micro_check.answer
+        || CONCEPT_DIRECT_NEGATION.test(option)
+        || conceptSurfaceIsDirectlyGrounded(option, facts)) return
+      issues.push(`objective ${objective.objective_id} 的 micro_check.options[${index}] 不是事实复述或直接否定，不能引入未引用的具体机制、用途或类别`)
+    })
+    const slotById = new Map(plan.slots.map((slot) => [slot.slot_id, slot]))
+    objective.sections.forEach((section) => {
+      const slot = slotById.get(section.slot_id)
+      if (!slot) return
+      const authoredText = [section.heading, section.body, ...section.steps].join("\n")
+      if (slot.kind !== "misconception") {
+        const unauthorized = conceptNegativeAssertionTokens(authoredText)
+          .filter((token) => !facts.some((fact) => conceptNegativeAssertionTokens(fact).includes(token)))
+        if (unauthorized.length > 0) {
+          issues.push(`objective ${objective.objective_id} 的 section ${section.slot_id} 引入事实未授权的否定性机制说明：${[...new Set(unauthorized)].join("、")}`)
+        }
+      }
+      const unsupportedAssertions = conceptAlternativeAssertions(authoredText).filter((assertion) =>
+        conceptSharesFactSubject(assertion, facts)
+        && !conceptSurfaceIsDirectlyGrounded(assertion, facts)
+        && !conceptIsDirectNegation(assertion, facts)
+        && !conceptIsEvidenceBoundDirectInstance(assertion, facts))
+      if (unsupportedAssertions.length > 0) {
+        issues.push(`objective ${objective.objective_id} 的 section ${section.slot_id} 使用了事实未提供的具体替代说法：${unsupportedAssertions.join("、")}；反例只能直接否定已引用事实`)
+      }
+      if (slot.kind === "misconception") {
+        const unauthorizedScopes = conceptScopeTokens(authoredText)
+          .filter((token) => !facts.some((fact) => conceptScopeTokens(fact).includes(token)))
+        if (unauthorizedScopes.length > 0) {
+          issues.push(`objective ${objective.objective_id} 的 misconception ${section.slot_id} 引入事实未授权的绝对限定：${[...new Set(unauthorizedScopes)].join("、")}`)
+        }
+      }
+    })
+  }
+  return issues
+}
+
+function conceptScopeTokens(text: string): string[] {
+  return [...text.matchAll(CONCEPT_ABSOLUTE_SCOPE)].map((match) => match[0]!)
+}
+
+function conceptNegativeAssertionTokens(text: string): string[] {
+  return [...text.matchAll(CONCEPT_UNSUPPORTED_NEGATIVE_ASSERTION)].map((match) => match[0]!)
+}
+
+function conceptAlternativeAssertions(text: string): string[] {
+  return [...text.matchAll(CONCEPT_ASSERTION_CUE)]
+    .map((match) => (match[1] ?? match[2] ?? "").trim())
+    .filter(Boolean)
+}
+
+function conceptIsDirectNegation(value: string, facts: string[]): boolean {
+  if (!CONCEPT_DIRECT_NEGATION.test(value)) return false
+  const affirmative = value.replace(/(?:没有|并非|不是|无法|不能|不|未)/gu, "")
+  return conceptSurfaceIsDirectlyGrounded(affirmative, facts)
+}
+
+/** A concrete variable/value substitution is an instance of an assignment fact,
+ * not a competing technical mechanism.  This keeps examples such as city = "北京"
+ * teachable while API names and unrelated runtime claims remain outside the rule. */
+function conceptIsEvidenceBoundDirectInstance(value: string, facts: string[]): boolean {
+  const hasAssignmentSurface = /\b[A-Za-z_]\w*\s*=\s*(?:["'][^"'\n]*["']|-?\d+(?:\.\d+)?|\b[A-Za-z_]\w*)/u.test(value)
+  if (!hasAssignmentSurface) return false
+  return facts.some((fact) => /(?:使用\s*=\s*进行变量赋值|重新赋值|新值会覆盖旧绑定)/u.test(fact))
+}
+
+function conceptSharesFactSubject(value: string, facts: string[]): boolean {
+  const normalizedValue = normalizeGroundedClaimText(value)
+  return facts.some((fact) => {
+    const subject = fact.split(/(?:是|属于|通常|常用于|适合|表示|用|负责)/u, 1)[0]?.trim() ?? ""
+    const normalizedSubject = normalizeGroundedClaimText(subject)
+    return normalizedSubject.length >= 2 && normalizedValue.includes(normalizedSubject)
+  })
+}
+
+function conceptSurfaceIsDirectlyGrounded(value: string, facts: string[]): boolean {
+  const surface = normalizeGroundedClaimText(value)
+  if (surface.length < 2) return false
+  return facts.some((fact) => {
+    const normalizedFact = normalizeGroundedClaimText(fact)
+    return normalizedFact === surface
+      || normalizedFact.includes(surface)
+      || surface.includes(normalizedFact)
+  })
 }
 
 /**

@@ -1,7 +1,8 @@
 /**
  * 循环/列表遍历交互可视化（Day6 方案 C，加分项）。
  *
- * 轻量实现：用正则识别 `for <var> in [<list 字面量>]:` 形式的遍历代码，
+ * 轻量实现：识别 `for <var> in [<list 字面量>]:`，以及先把安全列表
+ * 字面量赋给变量、再用 `for <var> in <list_var>:` 遍历的常见写法，
  * 逐步展示「循环变量值、当前元素、已遍历/未遍历元素、循环次数」。
  * 不做完整 AST 解析（保持零依赖、对任意代码安全），仅匹配可直接
  * 取值的列表字面量；匹配不上返回 null（组件不渲染）。
@@ -52,12 +53,21 @@ function splitListItems(body: string): string[] | null {
   return items
 }
 
-/** 从 `for x in [...]` 代码提取循环变量与列表元素；非遍历代码返回 null。 */
+/** 从安全的列表遍历代码提取循环变量与元素；非遍历代码返回 null。 */
 export function parseLoopVisualization(code: string): LoopParsed | null {
-  const match = /for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+\[([^\]]*)\]\s*:/u.exec(code)
+  const match = /for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(?:\[([^\]]*)\]|([A-Za-z_][A-Za-z0-9_]*))\s*:/u.exec(code)
   if (!match) return null
   const variable = match[1]!
-  const body = match[2] ?? ""
+  const collectionName = match[3]
+  let body = match[2] ?? ""
+  if (collectionName) {
+    const escaped = collectionName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")
+    const assignments = [...code.slice(0, match.index).matchAll(
+      new RegExp(`(?:^|\\n)\\s*${escaped}\\s*=\\s*\\[([^\\]\\n]*)\\]\\s*(?:#.*)?(?=\\n|$)`, "gu"),
+    )]
+    body = assignments.at(-1)?.[1] ?? ""
+    if (!body) return null
+  }
   const elements: string[] = []
   const rawItems = splitListItems(body)
   if (!rawItems) return null

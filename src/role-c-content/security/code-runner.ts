@@ -11,6 +11,11 @@ const IMAGE_ID_PATTERN = /^sha256:[a-f0-9]{64}$/
 const MAX_RUNNER_PAYLOAD_BYTES = 512_000
 const MAX_HIDDEN_TESTS = 64
 const DOCKER_CLEANUP_RETRY_DELAYS_MS = [0, 50, 100, 200, 400] as const
+// The learner's execution budget is enforced inside the container through the
+// harness and CPU ulimit.  Docker Desktop/daemon startup is infrastructure
+// overhead and must not consume that teaching-task budget, otherwise a cold
+// container can be reported as a learner time-limit failure.
+export const DOCKER_CLI_STARTUP_GRACE_MS = 5_000
 
 export interface RunnerTestSuite {
   test_suite_id: string
@@ -273,7 +278,7 @@ export class DockerPythonCodeRunner implements CodeRunner {
       command: this.dockerBinary,
       args,
       stdin: payload,
-      timeout_ms: timeoutMs + 1_000,
+      timeout_ms: timeoutMs + DOCKER_CLI_STARTUP_GRACE_MS,
       max_output_bytes: Math.min(
         MAX_RUNNER_PAYLOAD_BYTES,
         Math.max(64_000, maxOutputBytes + 16_000),

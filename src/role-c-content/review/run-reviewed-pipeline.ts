@@ -1,7 +1,7 @@
 import type { RoleCAgents } from "../agents/types"
 import { isValidSourceId } from "../../knowledge/identifiers"
 import type { CPipelineInput, CPipelineOptions, CPipelineResult } from "../orchestrator/content-pipeline"
-import { runCPipeline } from "../orchestrator/content-pipeline"
+import { pipelineCheckpointHash, runCPipeline } from "../orchestrator/content-pipeline"
 import { contentHash } from "../contracts/common"
 import { projectPublicRagEvidencePack } from "../contracts/evidence-pack"
 import {
@@ -225,6 +225,11 @@ export async function runReviewedCPipeline(
           temporaryStore,
           secureStore,
         )
+        // 分阶段检查点必须跨外审修订轮保留；只有发布原子提交成功后才清理。
+        // 这样 assessment 局部修订不会重新生成已经通过的讲义与代码实验。
+        try {
+          await options.checkpoint_store?.delete(pipelineCheckpointHash(frozenInput))
+        } catch { /* 发布结果权威，遗留检查点下次会按身份校验 */ }
         return {
           ...candidate,
           secure_refs: actualRefs,
@@ -944,6 +949,7 @@ function basePipelineOptions(
     ...(options.checkpoint_store ? { checkpoint_store: options.checkpoint_store } : {}),
     ...(options.semantic_planner ? { semantic_planner: options.semantic_planner } : {}),
     review_revision_context: revisionContext,
+    preserve_ready_checkpoint: true,
     // READY cache is intentionally absent: reviewed candidates cannot consume a
     // historical release produced without the current review policy. A private
     // partial checkpoint only reuses stage-valid drafts; the completed candidate

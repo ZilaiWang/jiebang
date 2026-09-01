@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView } from "./orchestrator-view"
+import { abilityRadarView, activeAdaptationView, agentTimelineView, answersToSubmission, assessmentEntryBlockedByPriorFeedback, assessmentFeedbackView, blockedSessionAction, initialGoalSelection, knowledgeCandidateCards, mainFlowStatusView, microCheckFeedbackView, pageForSession, pathChainView, pathNodeTitle, pathNodeWhyView, publishedResourceRound } from "./orchestrator-view"
 
 describe("orchestrator UI state mapping", () => {
   test("builds one card for every formal path node and names the node that needs each prerequisite", () => {
@@ -56,9 +56,9 @@ describe("orchestrator UI state mapping", () => {
 
   test("does not steer a content-generation failure into changing the learning goal", () => {
     const action = blockedSessionAction({
-      terminal_outcome: { kind: "content_generation_failed", generation_failure: { nextAction: "change_goal", canRetry: false } },
+      terminal_outcome: { kind: "content_generation_failed", generation_failure: { nextAction: "change_goal", canRetry: false, repairScope: "artifact", stage: "assessment" } },
     })
-    expect(action).toEqual({ canRetry: false, label: "内容生成暂时失败，请稍后重试" })
+    expect(action).toEqual({ canRetry: true, label: "重新生成正式测评" })
   })
 
   test("keeps retry labels for retryable generation failures", () => {
@@ -216,6 +216,21 @@ describe("orchestrator UI state mapping", () => {
       round_no: 2,
       adaptation: { adaptation_action: "remediate", round_no: 2, adaptation_summary: "current", target_objective_ids: [], addressed_misconception_tags: [] },
     })?.adaptation_summary).toBe("current")
+  })
+
+  test("labels retained reviewed resources with their producing round after next-round failure", () => {
+    expect(publishedResourceRound({
+      round_no: 3,
+      learning_resources: {
+        concept_lesson: { run_id: "RUN-root-R2-C1" },
+        code_lab: { run_id: "RUN-root-R2-C1" },
+      },
+      assessment: { run_id: "RUN-root-R2-C1" },
+    })).toBe(2)
+    expect(publishedResourceRound({
+      learning_resources: { concept_lesson: { run_id: "RUN-root-R2-C1" } },
+      assessment: { run_id: "RUN-root-R3-C1" },
+    })).toBeNull()
   })
 
   test("routes diagnosis completion and plan re-entry to the learning plan before C content", () => {

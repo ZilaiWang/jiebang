@@ -163,6 +163,10 @@ mode=comparative：
 1. preferred_contexts 只用于组织虚构名称、数据或叙述顺序；场景本身不得引入新的领域知识。
 2. 不要为每一个 objective 都套购物、成绩、公司或学生姓名故事。
 3. 定义类目标优先直接解释；过程类目标再使用简短情境。
+3.1 expression_context.enabled=true 且指定了 discipline_family 时，至少一个 overview、fact_explanation 或 guided_example 必须真正采用 expression_context 的 explanation_frame/comparison_style/analogy_domains 来组织同一组事实。例如 formal_structural 可把已给事实整理成“属性—关系—结构”的观察框架，narrative_semantic 可按“概念角色—语义关系—文本层次”组织；这只是表达脚手架，不能新增 Python 事实。不得只写所有学习者都会看到的“关系、结构、步骤”等泛词来冒充个性化。
+3.2 micro_check 的正确选项必须直接复述当前事实；错误选项必须用“不、未、并非、不是”等方式直接反转当前事实，不得引入编译器、大括号、网页用途、异常类型等当前 facts 未提供的具体替代机制。
+3.3 普通讲解和示例不得把“通常由解释器执行”扩写成“不会先转换、代码本身不会改变”等未引用的否定性机制判断；只有 misconception slot 可以展示并纠正明确的错误说法。
+3.4 所有学习者可见的反例（包括引号内说法、误区和变式辨析）只能直接否定当前 cited fact；不得另造编译器、硬件指令、大括号、具体行业用途等 facts 没有提供的替代机制。misconception 也不能用“仅用于某领域”这类未授权绝对限定缩小事实范围。
 4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释；给出完整步骤和充分提示。
 5. basic：在 evidence 明确提供可应用的规则、过程、API 或实例时，guided_example 至少组织一次两到三步的简单应用，只保留部分脚手架，让学习者完成一次判断或操作；不得把整份讲义退化成定义照抄和直接识别。
    若 observable_behavior=apply/trace，guided_example 与 micro_check 至少有一个要求学习者依次使用两条已引用事实完成判断，提示只给方向与事实线索，不直接复述答案。
@@ -183,6 +187,7 @@ misconception section 必须包含：错误理解；它与哪一条当前事实�
 
 1. 每个 objective 恰好生成一个 micro_check；2 至 4 个选项；正确答案必须能仅由当前 facts 判断。
 2. 错误选项只能：直接否定事实、交换主客体、扩大或缩小事实范围。
+2.1 定义事实的错误选项不得用 evidence 未出现的网页、数据、人工智能、数值计算等具体领域来缩小范围；优先直接否定原命题。选项若写“只/仅/只能用于某领域”，该领域必须逐字出现在当前 micro_check facts 中。
 3. 不得使用 evidence 未说明的后果、代码输出、异常或 API 作为干扰项。
 4. answer 必须与 options 中一项完全一致；explanation 用 1 至 3 句解释正确项为什么符合事实。
 5. micro_check 只使用 section_plan.micro_check.fact_ids 对应的事实；题干、选项和解析不得使用该范围之外的事实。编排器会把同一组事实绑定为本题引用。

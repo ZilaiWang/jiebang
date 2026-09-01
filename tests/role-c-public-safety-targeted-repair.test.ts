@@ -117,6 +117,15 @@ describe("Role C targeted public-safety repair", () => {
           { level: 2, text: "message = '你好，' + name" },
           { level: 3, text: "return message" },
         ],
+        gap_template: {
+          schema_version: "code-gap-template.v1",
+          template_code: "def greet(name):\n    {{gap:body}}\n",
+          gaps: [{
+            gap_id: "body", kind: "block", max_chars: 200, max_lines: 2,
+            label: "填写 message = '你好，' + name",
+            placeholder: "return message",
+          }],
+        },
       },
       objective_coverage: [{ objective_id: "O1", instruction_block_ids: ["B1"], public_test_ids: ["P1"] }],
       used_evidence: [],
@@ -126,6 +135,8 @@ describe("Role C targeted public-safety repair", () => {
     expect(repaired.programming_task?.starter_code).toEqual(prior.starter_code)
     expect(JSON.stringify(repaired.programming_task?.hint_ladders)).not.toContain("return message")
     expect(JSON.stringify(repaired.programming_task)).not.toContain("message = '你好，' + name")
+    expect(repaired.programming_task?.gap_template?.gaps[0]?.label).toBe("待填写代码片段 1")
+    expect(repaired.programming_task?.gap_template?.gaps[0]?.placeholder).toBe("# 按题目要求填写")
   })
 
   test("compresses assessment code public fields when secure reference leaks", () => {

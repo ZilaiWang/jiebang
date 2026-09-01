@@ -135,6 +135,17 @@ describe("B to C expression context closure", () => {
     expect(audit.issue_codes).toContain("EXPRESSION_DIRECT_IDENTIFIER_LEAK")
   })
 
+  test("shared learning-goal words cannot substitute for discipline-specific expression", () => {
+    const context = buildRoleCExpressionContext(profile())
+    const generic = evaluateExpressionAdaptation({
+      text: "学习 Python 循环。这里先看定义，也就是重复执行操作。",
+    }, context)
+    const adapted = evaluateExpressionAdaptation({
+      text: "学习 Python 循环。这里先看定义，也就是把文本条目按事件顺序逐项处理。",
+    }, context)
+    expect(adapted.score).toBeGreaterThan(generic.score)
+  })
+
   test("every registered V2 field has an explicit consumer or private disposition", () => {
     expect(PROFILE_V2_CONSUMABLE_FIELDS.length).toBeGreaterThan(20)
     expect(unownedProfileV2Fields()).toEqual([])

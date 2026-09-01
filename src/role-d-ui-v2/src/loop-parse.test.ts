@@ -12,7 +12,12 @@ describe("loop-visualizer：循环遍历可视化解析", () => {
     expect(parsed).toEqual({ variable: "fruit", elements: ["苹果", "香蕉"] })
   })
 
-  test("非列表字面量（range/变量）→ null，不渲染可视化", () => {
+  test("识别先定义列表变量再遍历的真实讲义写法", () => {
+    const parsed = parseLoopVisualization("scores = [80, 90, 75]\nfor score in scores:\n    print(score)")
+    expect(parsed).toEqual({ variable: "score", elements: ["80", "90", "75"] })
+  })
+
+  test("无法静态确定内容的 range/变量 → null，不渲染可视化", () => {
     expect(parseLoopVisualization("for i in range(5):")).toBeNull()
     expect(parseLoopVisualization("for item in items:")).toBeNull()
     expect(parseLoopVisualization("total = 0")).toBeNull()
@@ -42,6 +47,7 @@ describe("loop-visualizer：循环遍历可视化解析", () => {
 
   test("canVisualizeLoop 判断入口是否显示", () => {
     expect(canVisualizeLoop("for x in [1, 2]:\n    pass")).toBe(true)
+    expect(canVisualizeLoop("items = ['a', 'b']\nfor x in items:\n    pass")).toBe(true)
     expect(canVisualizeLoop("def f():\n    return 1")).toBe(false)
   })
 

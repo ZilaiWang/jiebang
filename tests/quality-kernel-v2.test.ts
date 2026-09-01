@@ -15,8 +15,97 @@ import { evaluateQualityBenchmark } from "../src/evaluation/quality-benchmark"
 import { buildCodeLabSecurePlan, materializeCodeLabSecureAuthorPayload } from "../src/role-c-content/providers/staged-generation"
 import { reviewPublicCandidatesWithModel } from "../src/role-c-content/quality/model-candidate-critic"
 import { publicQualityBlockedReason } from "../src/role-c-content/orchestrator/content-pipeline"
+import { normalizeEvidenceBoundedAssessmentChoices } from "../src/role-c-content/providers/model-backed-provider"
 
 describe("quality kernel v2", () => {
+  test("直接识别题保留 AI 编写的有区分度选项，不再覆盖成事实原句和直接否定", () => {
+    const authored = normalizeEvidenceBoundedAssessmentChoices({
+      title: "变量",
+      items: [{
+        prompt: "执行赋值后，以下哪项符合事实？",
+        options: ["= 用来建立变量与数据的对应关系", "变量名本身就是它引用的数据"],
+        starter_code: null,
+        structure_meta: {
+          operation: "recognize_fact", reasoning_pattern: "identify_supported_relation",
+          representation: "minimal_context_sentence", context_family: "direct", answer_form: "single_choice",
+        },
+      }],
+    } as any, [{
+      item_id: "ITEM-2", modality: "mcq", cognitive_operation: "recognize_fact",
+      citations: [{ source_id: "K002", fact_id: "F001", relation: "derived_from" }],
+    }] as any, [{ source_id: "K002", fact_id: "F001", content: "Python 使用 = 进行变量赋值。" }])
+    expect(authored.items[0]!.prompt).toBe("执行赋值后，以下哪项符合事实？")
+    expect(authored.items[0]!.options).toEqual([
+      "= 用来建立变量与数据的对应关系",
+      "变量名本身就是它引用的数据",
+    ])
+  })
+
+  test("解释型选择题保留与题干相配的模型选项", () => {
+    const authored = normalizeEvidenceBoundedAssessmentChoices({
+      title: "变量",
+      items: [{
+        prompt: "为什么第二次赋值后应关注新的绑定？",
+        options: ["旧内容仍保留", "变量换到了别的硬件"],
+        starter_code: null,
+        structure_meta: {
+          operation: "explain", reasoning_pattern: "explain_relation",
+          representation: "short_scenario", context_family: "direct", answer_form: "single_choice",
+        },
+      }],
+    } as any, [{
+      item_id: "ITEM-4", modality: "mcq", cognitive_operation: "explain_reasoning",
+      citations: [{ source_id: "K002", fact_id: "F003", relation: "derived_from" }],
+    }] as any, [{ source_id: "K002", fact_id: "F003", content: "变量可以被重新赋值，新值会覆盖旧绑定。" }])
+    expect(authored.items[0]!.prompt).toContain("第二次赋值")
+    expect(authored.items[0]!.options).toEqual(["旧内容仍保留", "变量换到了别的硬件"])
+  })
+
+  test("追踪和应用型选择题不被事实文本覆盖", () => {
+    const authored = normalizeEvidenceBoundedAssessmentChoices({
+      title: "变量状态追踪",
+      items: [{
+        prompt: "依次执行两次赋值后，哪一项准确描述变量状态？",
+        options: ["程序会保留两套输出", "编译器自动选择结果"],
+        starter_code: null,
+        structure_meta: {
+          operation: "trace", reasoning_pattern: "trace_state",
+          representation: "code_trace", context_family: "direct", answer_form: "single_choice",
+        },
+      }],
+    } as any, [{
+      item_id: "ITEM-A", modality: "mcq", cognitive_operation: "trace_execution",
+      citations: [{ source_id: "K002", fact_id: "F003", relation: "derived_from" }],
+    }] as any, [{ source_id: "K002", fact_id: "F003", content: "变量可以被重新赋值，新值会覆盖旧绑定。" }])
+    expect(authored.items[0]!.prompt).toContain("两次赋值")
+    expect(authored.items[0]!.options).toEqual(["程序会保留两套输出", "编译器自动选择结果"])
+  })
+
+  test("多事实选择题保留模型基于全部引用关系设计的选项", () => {
+    const authored = normalizeEvidenceBoundedAssessmentChoices({
+      title: "顺序追踪",
+      items: [{
+        prompt: "从上到下执行两次赋值后，哪项描述正确？",
+        options: ["模型原始选项一", "模型原始选项二"],
+        starter_code: null,
+        structure_meta: {
+          operation: "trace", reasoning_pattern: "trace_state",
+          representation: "code_trace", context_family: "direct", answer_form: "single_choice",
+        },
+      }],
+    } as any, [{
+      item_id: "ITEM-C", modality: "mcq", cognitive_operation: "trace_execution",
+      citations: [
+        { source_id: "K002", fact_id: "F003", relation: "derived_from" },
+        { source_id: "K002", fact_id: "F013", relation: "derived_from" },
+      ],
+    }] as any, [
+      { source_id: "K002", fact_id: "F003", content: "变量可以被重新赋值，新值会覆盖旧绑定。" },
+      { source_id: "K002", fact_id: "F013", content: "顺序结构中的语句按书写顺序依次执行。" },
+    ])
+    expect(authored.items[0]!.options).toEqual(["模型原始选项一", "模型原始选项二"])
+  })
+
   test("公开候选质量拒绝属于内容 blocked，不伪装成 provider 故障", () => {
     const error = new PublicQualityGateError([{
       candidate_id: "C-BLOCK", artifact_kind: "assessment", hard_gates: [], dimensions: [],
@@ -361,10 +450,9 @@ describe("quality kernel v2", () => {
       content: "for 循环常用于遍历序列中的元素。",
     }]
     const issues = validateAssessmentAuthorEvidenceDiscipline(payload, plan, facts)
-    expect(issues.map((entry) => entry.code)).toEqual([
+    expect(issues.map((entry) => entry.code)).toEqual(expect.arrayContaining([
       "ASSESSMENT_UNSUPPORTED_ABSOLUTE_DISTRACTOR",
-      "ASSESSMENT_UNSUPPORTED_ABSOLUTE_DISTRACTOR",
-    ])
+    ]))
     payload.items[0].options = ["遍历序列中的元素", "不常用于遍历序列中的元素"]
     expect(validateAssessmentAuthorEvidenceDiscipline(payload, plan, facts)).toEqual([])
   })
@@ -390,6 +478,128 @@ describe("quality kernel v2", () => {
     expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_UNSUPPORTED_ABSOLUTE_PROMPT")
   })
 
+  test("‘仅限某领域’属于证据外绝对范围，不能绕过选择题作者校验", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "Python 定位",
+      items: [{
+        prompt: "以下哪项正确？",
+        options: ["Python 是一种通用编程语言", "Python 仅限网页设计"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any, [{
+      tier: 1,
+      modality: "mcq",
+      citations: [{ source_id: "K001", fact_id: "F001", relation: "derived_from" }],
+    }] as any, [{
+      source_id: "K001",
+      fact_id: "F001",
+      content: "Python 是一种通用编程语言。",
+    }])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_UNSUPPORTED_ABSOLUTE_DISTRACTOR")
+  })
+
+  test("选择题不能引入未被本题引用支持的编译器或代码块机制", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "Python 基础事实",
+      items: [{
+        prompt: "以下哪项正确？",
+        options: ["Python 程序通常由解释器执行", "Python 程序通常由编译器执行", "Python 用大括号表示代码块"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any, [{
+      tier: 1,
+      modality: "mcq",
+      citations: [{ source_id: "K001", fact_id: "F002", relation: "derived_from" }],
+    }] as any, [{
+      source_id: "K001",
+      fact_id: "F002",
+      content: "Python 程序通常由解释器执行。",
+    }])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_OUT_OF_EVIDENCE_MECHANISM")
+  })
+
+  test("两条引用事实允许设计对象与类别的有效匹配题", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "基本数据类型",
+      items: [{
+        prompt: "哪组数据类型与含义的对应关系正确？",
+        options: ["int—整数；str—字符串文本", "int—字符串文本；str—整数"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any, [{
+      tier: 1,
+      modality: "mcq",
+      citations: [
+        { source_id: "K003", fact_id: "F001", relation: "derived_from" },
+        { source_id: "K003", fact_id: "F002", relation: "derived_from" },
+      ],
+    }] as any, [
+      { source_id: "K003", fact_id: "F001", content: "int 表示整数。" },
+      { source_id: "K003", fact_id: "F002", content: "str 表示字符串文本。" },
+    ])
+    expect(issues).toEqual([])
+  })
+
+  test("事实原句加否定词的伪选择题会被质量门禁拒绝", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "基本数据类型",
+      items: [{
+        prompt: "以下哪项符合事实？",
+        options: ["int 表示整数。", "int 不表示整数。"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any, [{
+      tier: 1,
+      modality: "mcq",
+      citations: [{ source_id: "K003", fact_id: "F001", relation: "derived_from" }],
+    }] as any, [{ source_id: "K003", fact_id: "F001", content: "int 表示整数。" }])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_DEGENERATE_FACT_NEGATION_PAIR")
+  })
+
+  test("整卷修订不能把同知识点未引用的重新赋值机制偷渡进单事实题", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "变量与赋值",
+      items: [{
+        prompt: "对变量名 m 连续两次赋值后，它与数据的绑定关系是什么？",
+        options: ["引用第二个数据", "引用第一个数据"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any, [{
+      tier: 2,
+      modality: "mcq",
+      citations: [{ source_id: "K002", fact_id: "F002", relation: "derived_from" }],
+    }] as any, [
+      { source_id: "K002", fact_id: "F002", content: "变量名用于引用程序中的数据。" },
+      { source_id: "K002", fact_id: "F003", content: "变量可以被重新赋值，新值会覆盖旧绑定。" },
+    ])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_UNCITED_MECHANISM")
+  })
+
+  test("选择题拒绝选否定项的双重反转题干", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "Python 语法",
+      items: [{
+        prompt: "哪一项是对缩进事实的直接否定？",
+        options: ["Python 用缩进表示代码块", "Python 不用缩进表示代码块"],
+        starter_code: null,
+        structure_meta: { operation: "recognize" },
+      }],
+    } as any, [{
+      tier: 1,
+      modality: "mcq",
+      citations: [{ source_id: "K001", fact_id: "F004", relation: "derived_from" }],
+    }] as any, [{
+      source_id: "K001", fact_id: "F004",
+      content: "Python 语法简洁，用缩进表示代码块，强调代码可读性。",
+    }])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_AMBIGUOUS_NEGATIVE_STEM")
+  })
+
   test("assessment scorecard excludes distractor dimensions for non-choice items", () => {
     const design = buildLearningDesignSpecV2({
       spec: {
@@ -412,6 +622,32 @@ describe("quality kernel v2", () => {
       minimum_score: 0.5,
     })
     expect(evaluation.dimensions.find((entry) => entry.dimension === "distractor_quality")?.applicable).toBe(false)
+    expect(evaluation.critical_findings).not.toContain("CORE_QUALITY_DIMENSION_LOW")
+  })
+
+  test("Tier 3 的 recognize 题未冻结迁移构念时不被质量核反向逼成高阶题", () => {
+    const design = buildLearningDesignSpecV2({
+      spec: {
+        spec_id: "S-RECOGNIZE-T3",
+        profile_ref: { profile_id: "P", profile_version: "1" },
+        learner_adaptation: { level: "beginner", known_concepts: [], weak_concepts: [], scaffold_level: 3 },
+        targets: [{ objective_id: "O", source_id: "K001", required_fact_ids: ["F001"], observable_behavior: "recognize" }],
+      } as any,
+      evidence: { results: [{ source_id: "K001", title: "Python 是什么" }] } as any,
+      assessment_plan: [],
+    })
+    const evaluation = evaluatePublicAuthorCandidate({
+      candidate_id: "RECOGNIZE-T3",
+      artifact_kind: "assessment",
+      payload: { title: "识别题", items: [{ prompt: "Python 是哪一类事物？", options: ["一种通用编程语言", "不是一种通用编程语言"], starter_code: null }] },
+      learning_design: design,
+      assessment_plan: [{
+        modality: "mcq", tier: 3, construct: "recognize:recognize_fact",
+        evidence_of_mastery: "直接识别", cognitive_demand: "understand",
+      }] as any,
+      minimum_score: 0.5,
+    })
+    expect(evaluation.dimensions.find((entry) => entry.dimension === "transfer_validity")?.applicable).toBe(false)
     expect(evaluation.critical_findings).not.toContain("CORE_QUALITY_DIMENSION_LOW")
   })
 

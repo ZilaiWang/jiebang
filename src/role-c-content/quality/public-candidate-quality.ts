@@ -170,9 +170,11 @@ function assessmentDimensions(
         misconceptionEligiblePlans.length,
       )
   const tier3 = plan.filter((entry) => entry.tier === 3)
-  const genuineTransfer = tier3.length === 0
+  const transferPlanned = tier3.filter((entry) =>
+    entry.cognitive_demand === "transfer" || entry.cognitive_demand === "analyze")
+  const genuineTransfer = transferPlanned.length === 0
     ? 0.85
-    : ratio(tier3.filter((entry) => entry.cognitive_demand === "transfer" || entry.cognitive_demand === "analyze").length, tier3.length)
+    : ratio(transferPlanned.length, tier3.length)
   return [
     dimension("construct_validity", average([constructCoverage, bool(items.length === plan.length)]), 1.4, true, "每题对应明确构念与掌握证据"),
     dimension("distractor_quality", choicePlans.length === 0 ? 1 : clamp(average([1 - vacuousRate, lengthBalance, bool(allOptions.length > 0)])), 1.3, true, "干扰项可信且没有明显荒谬线索", choicePlans.length > 0),
@@ -184,7 +186,14 @@ function assessmentDimensions(
       "存在当前引用可支撑的知识库误区时，选择题必须显式绑定",
       misconceptionEligiblePlans.length > 0,
     ),
-    dimension("transfer_validity", tier3.length === 0 ? 1 : genuineTransfer, 1, true, "高阶题改变认知操作或任务结构", tier3.length > 0),
+    dimension(
+      "transfer_validity",
+      transferPlanned.length === 0 ? 1 : genuineTransfer,
+      1,
+      true,
+      "冻结为高阶测量的题目改变认知操作或任务结构",
+      transferPlanned.length > 0,
+    ),
     dimension("item_independence", promptUniqueness, 0.9, false, "同卷题目不重复同一骨架"),
     dimension("reading_load", readability(items.map((item) => String(item.prompt ?? "")).join("。")), 0.7, false, "题干没有无关故事和过长阅读负担"),
   ]

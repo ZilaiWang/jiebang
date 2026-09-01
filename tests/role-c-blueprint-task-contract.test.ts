@@ -55,6 +55,7 @@ const K018 = { source_id: "K018", title: "成绩统计器综合项目", fact: "�
 const K013 = { source_id: "K013", title: "函数定义与调用", fact: "def 用于定义函数。" }
 const K014 = { source_id: "K014", title: "函数参数与返回值", fact: "return 用于返回函数结果。" }
 const K009 = { source_id: "K009", title: "列表", fact: "列表可用于保存多个有序元素。" }
+const K002 = { source_id: "K002", title: "变量与赋值", fact: "Python 使用 = 进行变量赋值。" }
 
 describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据关键词猜）", () => {
   test("识别型代码实验只投影完成练习所需的一条事实，不重复整章内容", () => {
@@ -133,6 +134,53 @@ describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据
     const { spec, evidence } = makeSpec([K009])
     const bp = buildResourceBlueprint(spec, evidence)
     expect(bp.code_lab.task_contract.task_kind).toBe("stdin_stdout_program")
+  })
+
+  test("识别型目标只要证据支持真实操作，就生成代码任务而非事实复述", () => {
+    const { spec, evidence } = makeSpec([K002], "beginner")
+    spec.targets[0]!.observable_behavior = "recognize"
+    const bp = buildResourceBlueprint(spec, evidence)
+    expect(bp.code_lab.task_contract.learner_action).toBe("implement_program")
+    expect(bp.code_lab.task_contract.learner_owned_region).toBe("program_logic")
+  })
+
+  test("真实代码任务同时携带支撑状态变化的操作事实", () => {
+    const { spec, evidence } = makeSpec([K002], "beginner")
+    spec.targets[0]!.observable_behavior = "recognize"
+    spec.targets[0]!.required_fact_ids = ["F001", "F002", "F003"]
+    evidence.results[0]!.facts = [
+      { source_id: "K002", fact_id: "F001", content: "Python 使用 = 进行变量赋值。" },
+      { source_id: "K002", fact_id: "F002", content: "变量名用于引用程序中的数据。" },
+      { source_id: "K002", fact_id: "F003", content: "变量可以被重新赋值，新值会覆盖旧绑定。" },
+    ]
+    spec.evidence_content_hash = contentHash(evidence)
+    const bp = buildResourceBlueprint(spec, evidence)
+    expect(bp.code_lab.objective_plan[0]!.citations.map((citation) => citation.fact_id))
+      .toEqual(expect.arrayContaining(["F001", "F003"]))
+  })
+
+  test("真实代码任务携带目标内全部获准类别事实，避免实验使用 str 却只引用 int", () => {
+    const { spec, evidence } = makeSpec([K002], "beginner")
+    spec.targets[0]!.observable_behavior = "recognize"
+    spec.targets[0]!.source_id = "K003"
+    spec.targets[0]!.objective_id = "OBJ-K003"
+    spec.targets[0]!.required_fact_ids = ["F001", "F002", "F003", "F004"]
+    spec.path_node.target_source_ids = ["K003"]
+    evidence.results[0] = {
+      source_id: "K003",
+      title: "基本数据类型",
+      facts: [
+        { source_id: "K003", fact_id: "F001", content: "int 表示整数，float 表示小数。", capabilities: ["definition"] },
+        { source_id: "K003", fact_id: "F002", content: "str 表示字符串文本。", capabilities: ["definition"] },
+        { source_id: "K003", fact_id: "F003", content: "bool 表示 True 或 False 两种逻辑值。", capabilities: ["definition"] },
+        { source_id: "K003", fact_id: "F004", content: "type(x) 返回 x 的类型对象。", capabilities: ["procedure"] },
+      ],
+    }
+    spec.evidence_content_hash = contentHash(evidence)
+    const bp = buildResourceBlueprint(spec, evidence)
+    expect(bp.code_lab.task_contract.learner_action).toBe("implement_program")
+    expect(bp.code_lab.objective_plan[0]!.citations.map((citation) => citation.fact_id))
+      .toEqual(["F004", "F001", "F002", "F003"])
   })
 
   test("相同目标组合换顺序不再改变契约：primary 由显式 is_primary 标记决定，不依赖数组位置", () => {

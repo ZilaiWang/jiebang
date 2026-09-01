@@ -65,6 +65,22 @@ describe("AI assessment novelty", () => {
     expect(issues).toEqual([])
   })
 
+  test("同一权威事实可作为不同任务的选项，近重复只比较学习者要完成的题干", () => {
+    const first = assessmentItem(
+      "请选择完整描述变量赋值规则的一项。",
+      ["Python 使用 = 进行变量赋值。", "Python 不使用 = 进行变量赋值。"],
+    )
+    const second = {
+      ...assessmentItem(
+        "阅读一段程序设计说明，判断其中关于赋值符号与变量关系的表述是否符合本节规则。",
+        ["Python 使用 = 进行变量赋值。", "Python 不使用 = 进行变量赋值。"],
+      ),
+      item_id: "ITEM-SECOND",
+      display_no: 2,
+    }
+    expect(validateAssessmentNovelty({ items: [first, second] }, [])).toEqual([])
+  })
+
   test("does not allow an objective-id change to disguise the same question", () => {
     const item = assessmentItem(" for 循环会按什么顺序遍历列表?", ["按索引顺序", "随机顺序"])
     item.objective_id = "O-REPLANNED"

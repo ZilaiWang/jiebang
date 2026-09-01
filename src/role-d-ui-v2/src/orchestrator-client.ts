@@ -324,7 +324,11 @@ export async function waitForOrchestratorSession(
   fetcher: Fetcher = fetch,
   options: { timeoutMs?: number; intervalMs?: number; onRunning?: (session: any) => void } = {},
 ): Promise<any> {
-  const timeoutMs = options.timeoutMs ?? 600_000
+  // The reviewed Role C workflow may use one evidence-driven revision after
+  // candidate authoring. Keep the browser wait aligned with the durable job
+  // lease so a healthy long-running generation is not presented as a client
+  // timeout just before the accepted release is persisted.
+  const timeoutMs = options.timeoutMs ?? 900_000
   const deadline = Date.now() + timeoutMs
   let latest = await getOrchestratorSession(sessionId, learnerId, fetcher)
   while (latest.status === "running" && Date.now() < deadline) {

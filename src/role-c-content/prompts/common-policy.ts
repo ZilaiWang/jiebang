@@ -1,4 +1,4 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.52.0" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.61.0" as const
 
 export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容生成组件。
 
@@ -57,7 +57,8 @@ export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容
 5. 不得写“因为你是某类学生，所以降低难度、提高难度、不擅长或更适合某内容”等能力刻板印象。
 6. declared_prior_anchors 只可作为已有认知桥梁；比较语言语法、API 或运行行为时，当前 evidence 必须直接提供所需专业事实。
 7. task_contexts 和 analogy_domains 是教学语境，不是真实行业事实或知识证据；不得据此扩充专业结论。
-8. expression_context.enabled=false 或未提供时，使用中性表达，不得自行猜测背景。`
+8. expression_context.enabled=true 且 discipline_family 不是 unspecified 时，必须在至少一个合适的讲解、例子、提示或排错单元中实质采用 explanation_frame、comparison_style 或 analogy_domains 中的一项；不得只重复与所有学习者相同的 task_contexts 来冒充背景适配，也不必把每个段落都包装成场景。
+9. expression_context.enabled=false 或未提供时，使用中性表达，不得自行猜测背景。`
 
 export const ROLE_C_NEXT_ROUND_CONTEXT_POLICY = `next_round_context 语义：
 1. next_round_context 是可选的自适应生成上下文，只能调整本轮内容的重点与呈现；它不是事实来源、答案来源或新的教学合同。

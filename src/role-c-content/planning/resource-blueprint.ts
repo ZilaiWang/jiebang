@@ -200,7 +200,8 @@ export function buildResourceBlueprint(
     throw new Error("RESOURCE_BLUEPRINT_EVIDENCE_IDENTITY_MISMATCH")
   }
   const identity = buildLabIdentity(spec)
-  const codeObjectivePlan = buildCodeLabObjectivePlan(spec, evidence)
+  const taskContract = decideCodeLabTaskContract(spec, evidence)
+  const codeObjectivePlan = buildCodeLabObjectivePlan(spec, evidence, taskContract)
   const misconceptionIdsByObjective = Object.fromEntries(spec.targets.map((target) => {
     const evidenceItem = evidence.results.find((item) => item.source_id === target.source_id)
     const misconception = evidenceItem?.misconceptions?.find((entry) =>
@@ -226,7 +227,6 @@ export function buildResourceBlueprint(
         feasible_items: baseAssessmentPlan.length,
         limiting_factors: [],
       }
-  const taskContract = decideCodeLabTaskContract(spec, evidence)
   const crossArtifactContract = buildCrossArtifactContract()
   const qualityRequirement = decideQualityRequirement(assessmentSpec, codeObjectivePlan.length)
   // 容量缩减后，目标难度必须来自实际执行的 assessment blueprint。
@@ -779,12 +779,12 @@ function decideCodeLabTaskContract(
   const implementationFactSignal = /(?:输入|输出|返回值|\b(?:def|return)\b|定义函数|函数体|调用函数|循环|遍历|条件|赋值|计算|索引|读写|调用.*参数|文件|[A-Za-z_][\w.]*\([^)]*\))/u.test(facts)
   const learnerAction: CodeLabTaskContract["learner_action"] = callable
     ? "implement_function"
-    : primary.observable_behavior === "recognize"
-        || primary.observable_behavior === "explain"
-      ? "recall_fact"
-      : implementationFactSignal
+    : implementationFactSignal
         ? "implement_program"
-        : "recall_fact"
+        : primary.observable_behavior === "recognize"
+            || primary.observable_behavior === "explain"
+          ? "recall_fact"
+          : "recall_fact"
   const learnerOwnedRegion: CodeLabTaskContract["learner_owned_region"] =
     learnerAction === "recall_fact"
       ? "fact_literal"

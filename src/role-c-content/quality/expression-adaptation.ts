@@ -34,7 +34,10 @@ export function evaluateExpressionAdaptation(
   const signals = [
     frameSignal(text, context.explanation_frame),
     terminologySignal(text, context.terminology_bridge),
-    contextSignal(text, [...context.task_contexts, ...context.analogy_domains]),
+    contextSignal(text, context.task_contexts),
+    ...(context.discipline_family !== "unspecified" && context.analogy_domains.length > 0
+      ? [contextSignal(text, context.analogy_domains)]
+      : []),
     focusSignal(text, [...context.hint_emphasis, ...context.troubleshooting_focus]),
   ]
   const applicableSignals = signals.filter((value) => value !== null) as number[]
@@ -49,6 +52,7 @@ export function evaluateExpressionAdaptation(
       `expression:${context.explanation_frame}`,
       `expression:${context.terminology_bridge}`,
       `expression:${context.discipline_family}`,
+      ...context.analogy_domains.map((domain) => `expression:analogy:${domain}`),
     ],
   }
 }

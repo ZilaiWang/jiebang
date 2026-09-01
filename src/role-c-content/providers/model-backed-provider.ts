@@ -62,6 +62,7 @@ import {
   materializeConceptSegmentV2,
   anchorConceptFactsInVisibleText,
   validateConceptSegmentV2AgainstPlans,
+  validateConceptMicroCheckEvidenceDiscipline,
   validateConceptVisibleFactCoverage,
   type ConceptSegmentAuthorPayloadV2,
 } from "../planning/concept-section-plan"
@@ -109,6 +110,7 @@ import {
   validateCodeLabSecureAgainstPlan,
   deriveCodeLabExecutionMode,
   freezeCodeLabExecutionContract,
+  normalizePracticalGuideLearnerVocabulary,
   type CodeLabExecutionRepairPatch,
   type CodeLabObjectivePlan,
   type CodeLabPublicAuthorPayload,
@@ -121,6 +123,7 @@ import {
 } from "./staged-generation"
 import { fastModelPolicy } from "../../model-runtime"
 import { buildLearningDesignSpecV2 } from "../planning/learning-design-spec-v2"
+import type { PracticalGuidePlan } from "../planning/practical-guide-plan"
 import { runPublicCandidateTournament } from "../quality/candidate-tournament"
 import {
   candidateIdentity,
@@ -129,11 +132,13 @@ import {
 import type { CandidateSelectionResult, PublicArtifactKind, PublicCandidateEvaluation } from "../quality/contracts"
 import { reviewPublicCandidatesWithModel } from "../quality/model-candidate-critic"
 import {
+  type AssessmentEvidenceFactView,
   validateAssessmentAuthorEvidenceDiscipline,
   validateAssessmentPairValidity,
   validateAssessmentPublicValidity,
 } from "../quality/assessment-validity"
 import { validateInputCandidates } from "../programming/test-plan"
+import type { ProgrammingProblemBlueprint } from "../programming/contracts"
 
 export interface ModelBackedProviderOptions {
   /** Staged is the production path; monolithic remains available for compatibility and benchmarks. */
@@ -246,6 +251,30 @@ function normalizeAssessmentAuthorFields(
       )
     }
   }
+}
+
+/**
+ * Multiple-choice items have a closed, evidence-bounded answer surface. The model still
+ * authors the stem, context and task structure; the two answer surfaces are
+ * projected from the cited facts as one faithful statement and one direct
+ * negation. This prevents valid content from depending on free paraphrase and
+ * prevents invented APIs, mechanisms or domains from becoming distractors.
+ */
+export function normalizeEvidenceBoundedAssessmentChoices(
+  authored: AssessmentPublicAuthorPayload,
+  _plan: AssessmentItemPlan[],
+  _evidence: AssessmentEvidenceFactView[],
+): AssessmentPublicAuthorPayload {
+  const normalized = structuredClone(authored)
+  // Preserve the AI-authored task-specific contrast. Earlier versions replaced
+  // every MCQ with a verbatim fact and the same sentence prefixed by “不”;
+  // that leaked the answer and removed all discrimination. Evidence closure is
+  // enforced by deterministic vocabulary/scope checks plus independent model
+  // review and the final semantic release audit.
+  normalized.items.forEach((item) => {
+    if (item.options) item.options = item.options.map((option) => option.trim())
+  })
+  return normalized
 }
 
 function projectCodeLabPublicModelInput(
@@ -419,6 +448,20 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             if (!schema.ok) return validationIssues(schema)
             const issues = validateConceptSegmentV2AgainstPlans(payload, sectionPlans)
             if (issues.length > 0) return issues
+            const factTextByObjective = new Map(segment.generation_spec.targets.map((target) => {
+              const source = segment.evidence_pack.results.find((entry) =>
+                entry.source_id === target.source_id)
+              const required = new Set(target.required_fact_ids)
+              return [target.objective_id, (source?.facts ?? [])
+                .filter((fact) => required.has(fact.fact_id))
+                .map((fact) => fact.content)] as const
+            }))
+            const microCheckIssues = validateConceptMicroCheckEvidenceDiscipline(
+              payload,
+              sectionPlans,
+              factTextByObjective,
+            )
+            if (microCheckIssues.length > 0) return microCheckIssues
             const visibleCoverageIssues = validateConceptVisibleFactCoverage(
               segment,
               payload,
@@ -502,6 +545,22 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         evidence: request.evidence_pack,
         assessment_plan: buildAssessmentItemPlan(request.generation_spec, request.evidence_pack),
       })
+    const normalizePublicAuthor = (payload: CodeLabPublicAuthorPayload): CodeLabPublicAuthorPayload => {
+      const normalized = normalizeCodeLabPublicAuthorPayload(
+        payload,
+        taskContract,
+        practicalGuidePlan,
+        programmingProblem,
+        objectivePlan,
+        request.evidence_pack,
+      )
+      normalized.execution_contract = freezeCodeLabExecutionContract(
+        normalized.execution_contract,
+        executionMode,
+        taskContract,
+      )
+      return normalized
+    }
     const publicTournament = await runPublicCandidateTournament<CodeLabPublicAuthorPayload>({
       candidate_count: this.publicCandidateCount,
       generate: (variantIndex) => this.generateStage<CodeLabPublicAuthorPayload>({
@@ -536,25 +595,22 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         variant_index: variantIndex,
       },
       max_repairs: maxRepairs,
+      // Validate, score, review and finally materialize the exact same
+      // platform-normalized candidate.  Previously validate() normalized a
+      // temporary copy while the tournament ranked and returned the raw model
+      // object, which could reintroduce internal vocabulary or malformed
+      // learner-facing fields after a successful validation pass.
+      normalize_output: normalizePublicAuthor,
       diagnostic_sink: this.stageFailureDiagnosticSink,
       validate: (payload) => {
-        // Freeze platform-owned execution fields before strict schema
-        // validation. Otherwise a model-proposed unsupported import is
-        // rejected before the trusted planning projection can remove it.
-        const normalizedAuthor = normalizeCodeLabPublicAuthorPayload(payload, taskContract)
-        normalizedAuthor.execution_contract = freezeCodeLabExecutionContract(
-          normalizedAuthor.execution_contract,
-          executionMode,
-          taskContract,
-        )
         const schema = validateRoleCSchemaFragment(
           "code_lab_draft.schema.json",
           "/$defs/public_author_payload",
-          normalizedAuthor,
+          payload,
         )
         if (!schema.ok) return validationIssues(schema)
         const planIssues = validateCodeLabPublicAuthorAgainstPlan(
-          normalizedAuthor,
+          payload,
           objectivePlan,
           taskContract,
           practicalGuidePlan,
@@ -564,7 +620,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         if (planIssues.length > 0) return planIssues
         const normalized = materializeCodeLabPublicAuthorPayload(
           request,
-          normalizedAuthor,
+          payload,
           identity.lab_id,
           objectivePlan,
           practicalGuidePlan,
@@ -600,15 +656,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     })
     await this.recordCandidateSelection("role-c.code-lab.public", publicTournament)
     const publicAuthor = publicTournament.winner
-    const normalizedPublicAuthor = normalizeCodeLabPublicAuthorPayload(
-      publicAuthor,
-      taskContract,
-    )
-    normalizedPublicAuthor.execution_contract = freezeCodeLabExecutionContract(
-      normalizedPublicAuthor.execution_contract,
-      executionMode,
-      taskContract,
-    )
+    const normalizedPublicAuthor = publicAuthor
     let normalizedPublic = materializeCodeLabPublicAuthorPayload(
       request,
       normalizedPublicAuthor,
@@ -1071,12 +1119,14 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               item_plan: [itemPlan],
               novelty_design_brief: {
                 history_count: noveltyBrief.history_count,
-                items: [noveltyBrief.items[itemIndex]!],
+                // 单题作者看到的是局部 items[0]。将全卷下标重映射为 0，
+                // 避免修订指令要求替换 items[0]，而设计说明却仍指向 items[2/3]。
+                items: [{ ...noveltyBrief.items[itemIndex]!, index: 0 }],
               },
             },
           },
           output_schema_id: "role_c_assessment_public_author_payload_v1",
-          output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
+          output_schema: assessmentPublicAuthorOutputSchema([itemPlan]),
           temperature: (request.prior_assessment_items?.length ?? 0) > 0
             ? Math.max(this.assessmentTemperature, 0.5)
             : Math.max(this.assessmentTemperature, 0.25),
@@ -1090,6 +1140,15 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             variant_index: variantIndex,
           },
           max_repairs: maxRepairs,
+          normalize_output: (payload) => normalizeEvidenceBoundedAssessmentChoices(
+            projectAssessmentPublicAuthorPayload(payload),
+            [itemPlan],
+            itemEvidence.flatMap((source) => source.facts.map((fact) => ({
+              source_id: source.source_id,
+              fact_id: fact.fact_id,
+              content: fact.content,
+            }))),
+          ),
           diagnostic_sink: this.stageFailureDiagnosticSink,
           validate: (payload) => {
             const authored = projectAssessmentPublicAuthorPayload(payload)
@@ -1108,7 +1167,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             const evidenceIssues = validateAssessmentAuthorEvidenceDiscipline(
               authored,
               [itemPlan],
-              itemEvidence.flatMap((source) => source.facts.map((fact) => ({
+              modelInput.evidence.flatMap((source) => source.facts.map((fact) => ({
                 source_id: source.source_id,
                 fact_id: fact.fact_id,
                 content: fact.content,
@@ -1167,11 +1226,17 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         return itemTournament.winner
       },
     )
-    let publicAuthorPayload: AssessmentPublicAuthorPayload = {
+    const assessmentEvidenceFacts = modelInput.evidence.flatMap((source) =>
+      source.facts.map((fact) => ({
+        source_id: source.source_id,
+        fact_id: fact.fact_id,
+        content: fact.content,
+      })))
+    let publicAuthorPayload: AssessmentPublicAuthorPayload = normalizeEvidenceBoundedAssessmentChoices({
       title: publicItemAuthors[0]?.title?.trim() || "本轮学习测评",
       items: publicItemAuthors.map((author) =>
         projectAssessmentPublicAuthorPayload(author).items[0]!),
-    }
+    }, plan, assessmentEvidenceFacts)
     normalizeAssessmentAuthorFields(publicAuthorPayload, plan)
     let normalizedPublic = materializeAssessmentPublicAuthorPayload(
       request.generation_spec,
@@ -1180,6 +1245,15 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       formId,
     )
     let composedPublicIssues = [
+      ...validateAssessmentAuthorEvidenceDiscipline(
+        publicAuthorPayload,
+        plan,
+        modelInput.evidence.flatMap((source) => source.facts.map((fact) => ({
+          source_id: source.source_id,
+          fact_id: fact.fact_id,
+          content: fact.content,
+        }))),
+      ).map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
       ...validationIssues(validateAssessmentPublicStage(request, normalizedPublic)),
       ...validateAssessmentNovelty(
         normalizedPublic,
@@ -1211,7 +1285,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           },
         },
         output_schema_id: "role_c_assessment_public_author_payload_v1",
-        output_schema: fragment("assessment_draft.schema.json", "/$defs/public_author_payload"),
+        output_schema: assessmentPublicAuthorOutputSchema(plan),
         temperature: Math.max(this.assessmentTemperature, 0.4),
         max_tokens: this.assessmentPublicMaxTokens,
         idempotency_identity: {
@@ -1231,11 +1305,15 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         repairStage.idempotency_identity,
       )
       if (directive.required_change_indices.length === 0) break
-      publicAuthorPayload = await this.generateAssessmentNoveltyRepair(
-        repairStage,
-        publicAuthorPayload,
-        composedPublicIssues,
-        directive,
+      publicAuthorPayload = normalizeEvidenceBoundedAssessmentChoices(
+        await this.generateAssessmentNoveltyRepair(
+          repairStage,
+          publicAuthorPayload,
+          composedPublicIssues,
+          directive,
+        ),
+        plan,
+        assessmentEvidenceFacts,
       )
       normalizeAssessmentAuthorFields(publicAuthorPayload, plan)
       normalizedPublic = materializeAssessmentPublicAuthorPayload(
@@ -1245,6 +1323,15 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         formId,
       )
       composedPublicIssues = [
+        ...validateAssessmentAuthorEvidenceDiscipline(
+          publicAuthorPayload,
+          plan,
+          modelInput.evidence.flatMap((source) => source.facts.map((fact) => ({
+            source_id: source.source_id,
+            fact_id: fact.fact_id,
+            content: fact.content,
+          }))),
+        ).map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
         ...validationIssues(validateAssessmentPublicStage(request, normalizedPublic)),
         ...validateAssessmentNovelty(
           normalizedPublic,
@@ -1858,7 +1945,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         repair_directive: repairDirective,
       },
       output_schema_id: "role_c_assessment_public_novelty_patch_v1",
-      output_schema: assessmentNoveltyPatchSchema(indices),
+      output_schema: assessmentNoveltyPatchSchema(indices, stage.input),
       temperature: stage.temperature,
       max_tokens: Math.min(stage.max_tokens, 4_000),
       policy: fastModelPolicy("ASSESSMENT_NOVELTY_PATCH", Math.min(stage.max_tokens, 4_000), {
@@ -2042,32 +2129,42 @@ export function buildAssessmentNoveltyDesignBrief(
     "representation",
     "context_family",
   ]
+  const currentOccurrences = new Map<string, number>()
   return {
     history_count: history.length,
-    items: plan.map((item, index) => ({
-      index,
-      objective_id: item.objective_id,
-      tier: item.tier,
-      modality: item.modality,
-      planned_cognitive_operation: item.cognitive_operation,
-      variation_axis: axes[(history.length + index) % axes.length]!,
-      in_form_role: item.tier === 1
-        ? "direct_foundation"
-        : item.tier === 2
-          ? "guided_application"
-          : "integrated_transfer",
-      planned_task_shape: assessmentTaskShape(item.modality, index),
-      forbidden_history: history
-        .filter((prior) => prior.objective_id === item.objective_id
-          && prior.modality === item.modality)
-        .slice(-8)
-        .map((prior) => ({
-          prompt: prior.prompt,
-          ...(prior.structure_meta
-            ? { structure_meta: structuredClone(prior.structure_meta) }
-            : {}),
-        })),
-    })),
+    items: plan.map((item, index) => {
+      const historyKey = `${item.objective_id}\u0000${item.modality}`
+      const relevantHistory = history.filter((prior) =>
+        prior.objective_id === item.objective_id
+        && prior.modality === item.modality)
+      const occurrence = currentOccurrences.get(historyKey) ?? 0
+      currentOccurrences.set(historyKey, occurrence + 1)
+      // 旧实现只按本卷 index 选 shape，同一位置每轮都会得到同一结构，
+      // 与 novelty 门禁天然冲突。现在按该目标/题型的真实历史次数继续轮换。
+      const semanticTurn = relevantHistory.length + occurrence
+      return {
+        index,
+        objective_id: item.objective_id,
+        tier: item.tier,
+        modality: item.modality,
+        planned_cognitive_operation: item.cognitive_operation,
+        variation_axis: axes[semanticTurn % axes.length]!,
+        in_form_role: item.tier === 1
+          ? "direct_foundation"
+          : item.tier === 2
+            ? "guided_application"
+            : "integrated_transfer",
+        planned_task_shape: assessmentTaskShape(item.modality, semanticTurn),
+        forbidden_history: relevantHistory
+          .slice(-8)
+          .map((prior) => ({
+            prompt: prior.prompt,
+            ...(prior.structure_meta
+              ? { structure_meta: structuredClone(prior.structure_meta) }
+              : {}),
+          })),
+      }
+    }),
   }
 }
 
@@ -2078,11 +2175,16 @@ function assessmentTaskShape(
   const shapes: Record<AssessmentItemPlan["modality"], string[]> = {
     mcq: [
       "select_one_supported_statement",
-      "identify_one_direct_contradiction",
       "choose_best_fact_summary",
-      "match_fact_to_description",
+      "match_subject_to_supported_description",
+      "identify_supported_relation",
     ],
-    true_false: ["verify_one_atomic_claim", "detect_one_scope_distortion"],
+    true_false: [
+      "verify_one_atomic_claim",
+      "judge_direct_fact_paraphrase",
+      "verify_supported_relation",
+      "judge_explicitly_negated_claim",
+    ],
     short_answer: ["restate_supported_fact", "compare_given_facts", "explain_given_relation"],
     trace: ["trace_given_state", "complete_given_trace", "locate_trace_divergence"],
     code: ["complete_missing_branch", "complete_missing_expression", "complete_missing_transformation"],
@@ -2196,11 +2298,17 @@ function stageRepairDirective(
     repair_attempt: attempt,
     variation_token: contentHash({ task, identity, attempt, issues }).slice("sha256:".length, "sha256:".length + 20),
     required_change_indices: indices,
-    replace_entire_item: task === "role-c.tiered-evaluator.public" && indices.length > 0,
+    replace_entire_item: (task === "role-c.tiered-evaluator.public"
+      || task === "role-c.tiered-evaluator.public-item") && indices.length > 0,
   }
 }
 
-function assessmentNoveltyPatchSchema(indices: number[]): Record<string, unknown> {
+function assessmentNoveltyPatchSchema(
+  indices: number[],
+  stageInput?: unknown,
+): Record<string, unknown> {
+  const plan = assessmentPlanFromStageInput(stageInput)
+  const patchOptionBounds = commonOptionCountForPlan(plan, indices)
   return {
     type: "object",
     additionalProperties: false,
@@ -2220,7 +2328,12 @@ function assessmentNoveltyPatchSchema(indices: number[]): Record<string, unknown
             options: {
               anyOf: [
                 { type: "null" },
-                { type: "array", minItems: 2, maxItems: 4, items: { type: "string", minLength: 1 } },
+                {
+                  type: "array",
+                  minItems: patchOptionBounds.min,
+                  maxItems: patchOptionBounds.max,
+                  items: { type: "string", minLength: 1 },
+                },
               ],
             },
             starter_code: {
@@ -2246,6 +2359,66 @@ function assessmentNoveltyPatchSchema(indices: number[]): Record<string, unknown
       },
     },
   }
+}
+
+/**
+ * 让模型输出合同与冻结题目计划一致。选项正文由模型依据本题 citations
+ * 设计，后处理不得把它覆盖为“事实原句 + 直接否定”；证据边界与唯一答案
+ * 由作者校验、secure 阶段和语义审核共同验证。
+ */
+export function assessmentPublicAuthorOutputSchema(
+  plan: AssessmentItemPlan[],
+): Record<string, unknown> {
+  const schema = structuredClone(fragment(
+    "assessment_draft.schema.json",
+    "/$defs/public_author_payload",
+  ))
+  const root = schema as {
+    properties?: { items?: { items?: { properties?: { options?: { oneOf?: Array<Record<string, unknown>> } } } } }
+  }
+  const optionArray = root.properties?.items?.items?.properties?.options?.oneOf
+    ?.find((entry) => entry.type === "array")
+  // 单题作者使用精确合同；整卷修订仍由逐题 validator 校验各题差异。
+  if (optionArray && plan.length === 1) {
+    const bounds = optionCountForPlan(plan, 0)
+    optionArray.minItems = bounds.min
+    optionArray.maxItems = bounds.max
+  }
+  return schema
+}
+
+function assessmentPlanFromStageInput(input: unknown): AssessmentItemPlan[] {
+  const stagedContract = asRecord(asRecord(input).staged_contract)
+  return Array.isArray(stagedContract.item_plan)
+    ? stagedContract.item_plan as AssessmentItemPlan[]
+    : []
+}
+
+function optionCountForPlan(
+  plan: AssessmentItemPlan[],
+  index = 0,
+): { min: number; max: number } {
+  const item = plan[index]
+  if (!item) return { min: 2, max: 4 }
+  if (item.modality === "true_false") return { min: 2, max: 2 }
+  if (item.modality === "mcq"
+    && item.citations.length === 1
+    && (item.cognitive_operation === "recognize_fact"
+      || item.cognitive_operation === "explain_reasoning")) {
+    return { min: 2, max: 2 }
+  }
+  return { min: 2, max: 4 }
+}
+
+function commonOptionCountForPlan(
+  plan: AssessmentItemPlan[],
+  indices: number[],
+): { min: number; max: number } {
+  const bounds = indices.map((index) => optionCountForPlan(plan, index))
+  return bounds.length > 0
+    && bounds.every((entry) => entry.min === bounds[0]!.min && entry.max === bounds[0]!.max)
+    ? bounds[0]!
+    : { min: 2, max: 4 }
 }
 
 function assessmentUpstreamWithoutHistory<T extends { prior_assessment_items?: unknown }>(upstream: T): T {
@@ -2457,6 +2630,13 @@ export function conservativeCodeLabPublicSafetyRepair(
         referenceSolution,
         task.gap_template.template_code,
       )
+      task.gap_template.gaps = task.gap_template.gaps.map((gap, index) => ({
+        ...gap,
+        label: sanitize(gap.label, `待填写代码片段 ${index + 1}`),
+        ...(gap.placeholder
+          ? { placeholder: sanitize(gap.placeholder, "# 按题目要求填写") }
+          : {}),
+      }))
     }
     task.public_examples = task.public_examples.map((example, index) => ({
       ...example,
@@ -2600,11 +2780,57 @@ function containsReferenceImplementationLine(
 export function normalizeCodeLabPublicAuthorPayload(
   payload: CodeLabPublicAuthorPayload,
   taskContract?: { learner_action: "recall_fact" | "implement_program" | "implement_function" },
+  practicalGuidePlan?: PracticalGuidePlan,
+  programmingProblem?: ProgrammingProblemBlueprint,
+  objectivePlan?: CodeLabObjectivePlan[],
+  evidence?: CodeLabRequest["evidence_pack"],
 ): CodeLabPublicAuthorPayload {
   // Authoring validation must see unsafe or undeclared imports so the model can
   // rewrite the actual starter. Silently replacing it with a one-line TODO
   // produces a schema-valid but instructionally unusable lab.
   const normalized = structuredClone(payload)
+  if (taskContract?.learner_action !== "recall_fact" && objectivePlan && evidence) {
+    normalizeCodeLabHintsToEvidence(normalized, objectivePlan, evidence)
+  }
+  if (practicalGuidePlan && normalized.practical_guide) {
+    normalized.practical_guide = normalizePracticalGuideLearnerVocabulary(
+      normalized.practical_guide,
+    )
+    // The plan owns guide cardinality. Extra prose items do not represent new
+    // instructional obligations, so project them away before strict review;
+    // missing items still fail validation and are repaired by the authoring
+    // stage instead of being fabricated here.
+    if (Array.isArray(normalized.practical_guide.readiness_checks)) {
+      normalized.practical_guide.readiness_checks = normalized.practical_guide.readiness_checks
+        .slice(0, practicalGuidePlan.readiness_slots.length)
+    }
+    if (Array.isArray(normalized.practical_guide.steps)) {
+      normalized.practical_guide.steps = normalized.practical_guide.steps
+        .slice(0, practicalGuidePlan.step_slots.length)
+    }
+    if (Array.isArray(normalized.practical_guide.troubleshooting)) {
+      normalized.practical_guide.troubleshooting = normalized.practical_guide.troubleshooting
+        .slice(0, practicalGuidePlan.troubleshooting_slots.length)
+    }
+  }
+  if (programmingProblem && normalized.programming_task) {
+    const requiredAdditional = Math.max(
+      0,
+      programmingProblem.public_case_count - normalized.objectives.length,
+    )
+    const seen = new Set(normalized.objectives.map((objective) =>
+      contentHash(objective.public_test.input)))
+    normalized.programming_task.additional_public_examples =
+      (normalized.programming_task.additional_public_examples ?? []).filter((example) => {
+        const hash = contentHash(example.input)
+        if (seen.has(hash)) return false
+        seen.add(hash)
+        return true
+      })
+    if (requiredAdditional === 0) {
+      delete normalized.programming_task.additional_public_examples
+    }
+  }
   if (taskContract?.learner_action === "recall_fact") {
     normalized.starter_code = [
       "# TODO: 只替换引号内的占位文本，保留变量和输出语句",
@@ -2646,6 +2872,7 @@ export function normalizeCodeLabPublicAuthorPayload(
       : gap.kind === "statement" || gap.kind === "block"
         ? "python_statement"
         : "python_expression"
+    if (typeof gap.label !== "string") return
     if (!gap.label.trim() || /^(?:gap|空|todo|待填)$/iu.test(gap.label.trim())) {
       gap.label = `第 ${index + 1} 处要补全的代码`
     }
@@ -2656,6 +2883,50 @@ export function normalizeCodeLabPublicAuthorPayload(
         : "填写一个 Python 表达式"
   })
   return normalized
+}
+
+/**
+ * Keep the model-authored progression while binding it to the current lesson.
+ * This runs before strict author validation so a useful task is not discarded
+ * merely because the model omitted the knowledge title from otherwise sound
+ * hints. No answer, reference implementation, or hidden test is introduced.
+ */
+export function normalizeCodeLabHintsToEvidence(
+  payload: CodeLabPublicAuthorPayload,
+  plan: CodeLabObjectivePlan[],
+  evidence: CodeLabRequest["evidence_pack"],
+): void {
+  const normalize = (value: unknown) => typeof value === "string" ? value
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\s，。！？；：、,.!?;:'"“”‘’`()（）\[\]【】_-]+/gu, "") : ""
+  payload.objectives.forEach((objective, index) => {
+    const objectivePlan = plan[index]
+    if (!objectivePlan || !Array.isArray(objective.hints)
+      || objective.hints.length !== 3
+      || objective.hints.some((hint) => typeof hint !== "string")) return
+    const cited = new Set(objectivePlan.citations.map((citation) =>
+      `${citation.source_id}:${citation.fact_id}`))
+    const source = evidence.results.find((entry) => entry.source_id === objectivePlan.source_id)
+    const facts = evidence.results.flatMap((entry) => entry.facts.filter((fact) =>
+      cited.has(`${fact.source_id}:${fact.fact_id}`)).map((fact) => fact.content.trim()))
+    const title = source?.title?.trim() || objectivePlan.source_id
+    const tokens = [title, ...facts]
+      .flatMap((text) => text.match(/[A-Za-z_][A-Za-z0-9_]{2,}|[\p{Script=Han}]{2,8}/gu) ?? [])
+      .map(normalize)
+      .filter((token) => token.length >= 2)
+    const isAnchored = (hint: string) => tokens.some((token) => normalize(hint).includes(token))
+    let anchored = objective.hints.filter(isAnchored).length
+    const prefixes = [
+      `围绕“${title}”这项当前操作，`,
+      `结合本题引用事实“${facts[0] ?? title}”，`,
+    ]
+    for (let hintIndex = 0; hintIndex < objective.hints.length && anchored < 2; hintIndex += 1) {
+      if (isAnchored(objective.hints[hintIndex]!)) continue
+      objective.hints[hintIndex] = `${prefixes[Math.min(anchored, prefixes.length - 1)]}${objective.hints[hintIndex]}`
+      anchored += 1
+    }
+  })
 }
 
 function minimalSafeStarter(

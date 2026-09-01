@@ -835,13 +835,16 @@ export function generationFailure(input: {
   const noveltyFailure = issueCodes.includes("ASSESSMENT_DUPLICATE")
   const recoveryAction = input.recovery?.required_action
 
+  const inferredContentStage = input.stage === "unknown"
+    ? stageFromContentFailureMessage(input.message)
+    : input.stage
   const stage = evidenceFailure
     ? "evidence" as const
     : providerFailure
       ? "provider" as const
       : reviewFailure && input.stage === "unknown"
         ? "review" as const
-      : input.stage
+      : inferredContentStage
   const code: RoleCGenerationFailure["code"] = unsupported
     ? "TARGET_UNSUPPORTED"
     : evidenceFailure
@@ -900,6 +903,17 @@ export function generationFailure(input: {
     ...failure,
     fingerprint: contentHash(failure),
   }
+}
+
+/**
+ * 旧 trace 在并行分支的质量失败处可能漏写 agent，导致 stage=unknown。
+ * 错误正文仍携带明确的阶段任务名；这里只恢复机器归属，不改变失败性质。
+ */
+function stageFromContentFailureMessage(message: string): RoleCGenerationFailure["stage"] {
+  if (/tiered-evaluator|assessment(?:\.public|\.secure)?/iu.test(message)) return "assessment"
+  if (/code-lab|code_lab/iu.test(message)) return "code_lab"
+  if (/concept-tutor|concept(?:\.segment)?/iu.test(message)) return "concept"
+  return "unknown"
 }
 
 function safeGenerationIssueCodes(details: string[], fallbackCode: string): string[] {

@@ -16,7 +16,7 @@ export { classifyOutputContract } from "../contracts/output-contract"
 import { classifyOutputContract } from "../contracts/output-contract"
 import { stableId, type CitationRef } from "../contracts/common"
 import type { RagEvidencePack } from "../contracts/evidence-pack"
-import { selectEvidenceBundle } from "../../knowledge/capabilities"
+import { inferFactCapabilities, selectEvidenceBundle } from "../../knowledge/capabilities"
 import type { GenerationSpec } from "../contracts/generation-spec"
 import { ModelOutputValidationError } from "../contracts/model-gateway"
 import { PLATFORM_PYTHON_IMPORT_ALLOWLIST } from "../security/python-static-analyzer"
@@ -746,6 +746,10 @@ export function buildLabIdentity(spec: GenerationSpec) {
 export function buildCodeLabObjectivePlan(
   spec: GenerationSpec,
   evidence?: RagEvidencePack,
+  executionIntent?: {
+    primary_objective_id: string
+    learner_action: "recall_fact" | "implement_program" | "implement_function"
+  },
 ): CodeLabObjectivePlan[] {
   return spec.targets.map((target) => {
     const identity = {
@@ -761,7 +765,16 @@ export function buildCodeLabObjectivePlan(
       // GenerationSpec.required_fact_ids 是整轮目标的完整事实覆盖合同；代码实验
       // 只应携带足以完成当前练习的最小证据切片，否则一个简单练习会把整章事实
       // 全部堆进 instruction、公开测试和提示。讲义与测评仍负责完整覆盖。
-      citations: codeLabFactIdsForTarget(target, evidence).map((factId) => ({
+      citations: codeLabFactIdsForTarget(
+        target,
+        evidence,
+        executionIntent?.primary_objective_id === target.objective_id
+          && executionIntent.learner_action !== "recall_fact"
+          ? "apply"
+          : target.observable_behavior,
+        executionIntent?.primary_objective_id === target.objective_id
+          && executionIntent.learner_action !== "recall_fact",
+      ).map((factId) => ({
         source_id: target.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
@@ -773,21 +786,23 @@ export function buildCodeLabObjectivePlan(
 function codeLabFactIdsForTarget(
   target: GenerationSpec["targets"][number],
   evidence?: RagEvidencePack,
+  behavior = target.observable_behavior,
+  includeOperationalContext = false,
 ): string[] {
   const sourceFacts = evidence?.results.find((entry) =>
     entry.source_id === target.source_id)?.facts.filter((fact) =>
       target.required_fact_ids.includes(fact.fact_id))
   if (sourceFacts?.length) {
     const selected = selectEvidenceBundle({
-      behavior: target.observable_behavior,
+      behavior,
       facts: sourceFacts,
       preferred_fact_ids: target.required_fact_ids,
-      max_facts: target.observable_behavior === "recognize" ? 1 : 4,
+      max_facts: behavior === "recognize" ? 1 : 4,
     })
     if (selected.fact_ids.length > 0) {
-      const limit = target.observable_behavior === "recognize"
+      const limit = behavior === "recognize"
         ? 1
-        : target.observable_behavior === "explain"
+        : behavior === "explain"
           ? 2
           : 6
       // Capability 的最小充分束保证“能测”，代码实验还需要把实际要调用的
@@ -803,12 +818,32 @@ function codeLabFactIdsForTarget(
         keys.forEach((key) => seenSurfaces.add(key))
         return [fact.fact_id]
       })
-      return [...selected.fact_ids, ...operational].slice(0, limit)
+      const operationalContext = includeOperationalContext
+        ? sourceFacts.filter((fact) => {
+            if (selected.fact_ids.includes(fact.fact_id)) return false
+            const capabilities = fact.capabilities?.length
+              ? fact.capabilities
+              : inferFactCapabilities(fact.content)
+            return capabilities.some((capability) => [
+              "procedure", "state_transition", "io_contract", "example",
+            ].includes(capability))
+          }).map((fact) => fact.fact_id)
+        : []
+      return [...new Set([
+        ...selected.fact_ids,
+        ...operational,
+        ...operationalContext,
+        // 一旦规划层冻结为真实编程任务，author 可能把同一目标中的多个
+        // 定义/类别关系组合进一个可执行练习。把当前目标已批准的事实一起
+        // 提供给实验，而不是只保留 capability 最小束，确保题面、样例、
+        // 实操指南和公开测试所使用的每个概念都有自己的 citation。
+        ...(includeOperationalContext ? sourceFacts.map((fact) => fact.fact_id) : []),
+      ])].slice(0, limit)
     }
   }
-  const limit = target.observable_behavior === "recognize"
+  const limit = behavior === "recognize"
     ? 1
-    : target.observable_behavior === "explain"
+    : behavior === "explain"
       ? 2
       : 6
   return target.required_fact_ids.slice(0, limit)
@@ -873,11 +908,12 @@ export function validateCodeLabPublicAuthorAgainstPlan(
     if (new Set(normalizedHints).size !== normalizedHints.length) {
       issues.push(`objectives[${index}].hints 三级提示不得重复或只改标点`)
     }
-    if (entry.hints.some((hint) => GENERIC_CODE_LAB_HINT.test(hint))) {
+    if (taskContract?.learner_action !== "recall_fact"
+      && entry.hints.some((hint) => GENERIC_CODE_LAB_HINT.test(hint))) {
       issues.push(`objectives[${index}].hints 必须针对当前实验内容生成，不得使用通用占位提示`)
     }
     const hintAnchors = hintAnchorsForPlan(plan[index], evidence)
-    if (hintAnchors.length > 0) {
+    if (taskContract?.learner_action !== "recall_fact" && hintAnchors.length > 0) {
       const anchoredCount = entry.hints.filter((hint) =>
         hintAnchors.some((anchor) => normalizeHintText(hint).includes(anchor))).length
       if (anchoredCount < 2) {
@@ -980,6 +1016,78 @@ function isEmptyProgramInput(value: unknown): boolean {
   return value === "" || value == null
 }
 
+/**
+ * Keep learner-facing guide prose aligned with the gap template authored in the
+ * same model response.  The platform subsequently materializes that template
+ * into the executable starter, so a guide that invents a second variable name
+ * (for example `message` beside `fact_text`) is operationally misleading even
+ * when both pieces are individually schema-valid.
+ *
+ * This is deliberately a narrow deterministic projection: it only normalizes
+ * assignment/print identifiers for a single gap and replaces the internal
+ * TODO wording with the learner-visible "待填写位置".  It does not author or
+ * replace the instructional content itself.
+ */
+export function alignPracticalGuideWithGapTemplate(
+  author: PracticalGuideAuthorPayload,
+  task: CodeLabPublicAuthorPayload["programming_task"],
+): PracticalGuideAuthorPayload {
+  const learnerFacingAuthor = normalizePracticalGuideLearnerVocabulary(author)
+  const template = task?.gap_template
+  if (!template || template.gaps.length !== 1) return learnerFacingAuthor
+
+  const gapId = template.gaps[0]!.gap_id
+  const escapedGapId = gapId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const assignment = template.template_code.match(
+    new RegExp(`\\b([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*\\{\\{gap:${escapedGapId}\\}\\}`),
+  )
+  const canonicalIdentifier = assignment?.[1]
+  if (!canonicalIdentifier) return learnerFacingAuthor
+
+  const templateIdentifiers = new Set(
+    template.template_code.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) ?? [],
+  )
+  const normalizeText = (text: string): string => text
+    .replace(/starter_code\s*中带有\s*TODO\s*标记的/giu, "完整代码预览中带有待填写位置的")
+    .replace(/starter_code\s*中的\s*TODO/giu, "完整代码预览中的待填写位置")
+    .replace(/\bTODO\b/giu, "待填写位置")
+    .replace(/\{\{\s*gap:[^}]+\}\}/giu, "待填写位置")
+    .replace(/\b([A-Za-z_][A-Za-z0-9_]*)\s*=/g, (whole, identifier: string) =>
+      `${templateIdentifiers.has(identifier) ? identifier : canonicalIdentifier} =`)
+    .replace(/\bprint\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, (whole, identifier: string) =>
+      `print(${templateIdentifiers.has(identifier) ? identifier : canonicalIdentifier})`)
+
+  return mapStringLeaves(learnerFacingAuthor, normalizeText)
+}
+
+/**
+ * Convert platform field names that occasionally appear in otherwise useful
+ * model-authored prose into the words the learner actually sees in the UI.
+ * This is a terminology projection only: it neither invents teaching content
+ * nor changes the executable task.
+ */
+export function normalizePracticalGuideLearnerVocabulary(
+  author: PracticalGuideAuthorPayload,
+): PracticalGuideAuthorPayload {
+  return mapStringLeaves(structuredClone(author), (text) => text
+    .replace(/\bstarter_code\b/giu, "完整代码预览")
+    .replace(/\bstarter\b\s*(?:代码)?/giu, "程序骨架")
+    .replace(/\bexpected_behavior\b/giu, "预期输出")
+    .replace(/\bpublic_test(?:_ids?)?\b/giu, "公开样例")
+    .replace(/\bgap_template\b/giu, "程序填空模板")
+    .replace(/\bTODO(?:_[A-Z0-9]+)*\b/giu, "待填写位置"))
+}
+
+function mapStringLeaves<T>(value: T, mapper: (text: string) => string): T {
+  if (typeof value === "string") return mapper(value) as T
+  if (Array.isArray(value)) return value.map((entry) => mapStringLeaves(entry, mapper)) as T
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => [key, mapStringLeaves(entry, mapper)])) as T
+  }
+  return value
+}
+
 export function materializeCodeLabPublicAuthorPayload(
   request: CodeLabRequest,
   payload: CodeLabPublicAuthorPayload,
@@ -1075,7 +1183,7 @@ export function materializeCodeLabPublicAuthorPayload(
     ...(practicalGuidePlan && payload.practical_guide ? {
       practical_guide: materializePracticalGuide({
         plan: practicalGuidePlan,
-        author: payload.practical_guide,
+        author: alignPracticalGuideWithGapTemplate(payload.practical_guide, payload.programming_task),
         execution_contract: payload.execution_contract,
         public_tests: tests,
       }),
@@ -1227,7 +1335,7 @@ function normalizeGuidedFactOutputTask(
     `请在右侧唯一的输入框中填写一个带引号的 Python 字符串，让程序输出：${fact}`,
     "系统会把你填写的内容放到等号右边，然后运行完整程序。",
   ].join("\n")
-  task.input_description = "本题没有外部输入；你只填写右侧的一个空格。"
+  task.input_description = "本题没有外部输入；你只填写右侧填写框中的一个空位。"
   task.output_description = `程序应完整输出：${fact}`
   task.constraints = [
     "只填写等号右边的内容，不要输入 fact_text =，也不要复制 print 语句",
@@ -1240,10 +1348,20 @@ function normalizeGuidedFactOutputTask(
   gap.placeholder = "例如：\"一行文字\""
   const authoredLadder = payload.hint_ladders.find((ladder) =>
     ladder.objective_id === primaryPlan?.objective_id) ?? payload.hint_ladders[0]
-  task.hint_ladders = authoredLadder?.hints.map((hint, index) => ({
+  const authoredHints = authoredLadder?.hints.map((hint) => hint.text) ?? []
+  const hintTexts = guidedFactHintsMatchWholeFact(authoredHints, fact)
+    ? authoredHints
+    : guidedFactHintTexts(fact)
+  if (authoredLadder) {
+    authoredLadder.hints = authoredLadder.hints.map((hint, index) => ({
+      ...hint,
+      text: hintTexts[index] ?? guidedFactHintTexts(fact)[index]!,
+    }))
+  }
+  task.hint_ladders = hintTexts.map((text, index) => ({
     level: (index + 1) as 1 | 2 | 3,
-    text: hint.text,
-  })) ?? []
+    text,
+  }))
   payload.instructions = payload.instructions.map((block) => {
     if (block.block_type !== "paragraph") return block
     block.text = "本题的目标是完成一次清晰的“填写—运行—核对输出”操作。你只需填写一个带引号的字符串，程序的赋值和输出结构已经提供。"
@@ -1261,6 +1379,30 @@ function normalizeGuidedFactOutputTask(
     expected_behavior: `标准输出应为：${fact}`,
   }))
   payload.reflection_questions = ["运行前，你填写的是完整代码，还是只填写等号右边的字符串？"]
+}
+
+function guidedFactHintsMatchWholeFact(hints: string[], fact: string): boolean {
+  const anchors = fact
+    .normalize("NFKC")
+    .split(/[^\p{L}\p{N}_=]+/u)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length >= 2 || entry === "=")
+  const joined = hints.join(" ").normalize("NFKC")
+  return hints.length === 3
+    && !hints.some((hint) => /(?:只填|填入|填写的是).{0,8}(?:单个|符号|关键词)|若.{0,8}符号/u.test(hint))
+    && hints.some((hint) => /(?:完整|整句|事实文本|目标句子)/u.test(hint))
+    && anchors.some((anchor) => joined.includes(anchor))
+}
+
+function guidedFactHintTexts(fact: string): [string, string, string] {
+  const subject = fact.split(/(?:是|属于|通常|常用于|适合|可以|表示|用|负责|使用)/u, 1)[0]?.trim()
+    || "当前知识点"
+  const prefix = [...fact].slice(0, Math.min(12, [...fact].length)).join("")
+  return [
+    `先定位本题要求复述的完整事实句，确认它描述的是“${subject}”。`,
+    `填写的是完整事实句，不是其中的单个符号或关键词；句子开头是“${prefix}”。`,
+    `请完整填写“${fact}”，并保留字符串两侧的英文引号。`,
+  ]
 }
 
 /**
@@ -1869,9 +2011,12 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
     // label.  An explain/recognize objective remains an understanding check in
     // Tier 2; combining two rules would silently turn a remedial form into a
     // basic transfer task.
-    const evidenceTier = tier === 2
-      && (objective.observable_behavior === "recognize" || objective.observable_behavior === "explain")
-      ? 1
+    // Difficulty and evidence breadth are separate. A recognize/explain
+    // objective remains an understanding task, while an MCQ needs two cited
+    // relations to avoid the degenerate "verbatim fact / add 不" answer pair.
+    const evidenceTier = objective.observable_behavior === "recognize"
+      || objective.observable_behavior === "explain"
+      ? modality === "mcq" && objective.required_fact_ids.length > 1 ? 2 : 1
       : tier
     const plannedFactIds = assessmentFactIdsForItem(
       objective.required_fact_ids,
@@ -1923,17 +2068,21 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
     const evidenceItem = evidence?.results.find((entry) => entry.source_id === objective.source_id)
     const misconceptions = (evidenceItem?.misconceptions ?? []).filter((entry) =>
       entry.factRefs.length === 0
-        || entry.factRefs.some((reference) => item.citations.some((citation) =>
+        || entry.factRefs.every((reference) => item.citations.some((citation) =>
           citation.source_id === reference.sourceId && citation.fact_id === reference.factId)))
-    const cognitiveDemand = item.tier === 1
+    // Tier 表示卷内顺序，不能把冻结为 recognize/explain 的目标偷偷升级为
+    // “分析具体用途/运行机制”。这类目标在任何 Tier 都保持 understand；
+    // 高阶性由真正冻结为 trace/apply/debug/create 的目标承担。
+    const cognitiveDemand = objective.observable_behavior === "recognize"
+      || objective.observable_behavior === "explain"
       ? "understand" as const
-      : item.tier === 2
-        ? objective.observable_behavior === "recognize" || objective.observable_behavior === "explain"
-          ? "understand" as const
-          : "apply" as const
-        : presentation.mode === "scenario_transfer"
-          ? "transfer" as const
-          : "analyze" as const
+      : item.tier === 1
+        ? "understand" as const
+        : item.tier === 2
+          ? "apply" as const
+          : presentation.mode === "scenario_transfer"
+            ? "transfer" as const
+            : "analyze" as const
     return {
       ...item,
       presentation_mode: presentation.mode,
@@ -2187,8 +2336,25 @@ export function validateAssessmentPublicAuthorAgainstPlan(
         || /(?:说明|解释).{0,28}(?:体现|表现).{0,8}(?:方面|场景|用途)/u.test(item.prompt))) {
       issues.push(`items[${index}] 事实识别/解释题不得要求补充 evidence 未提供的例子、用途或具体体现`)
     }
+    if (expected.cognitive_operation === "recognize_fact"
+      && assessmentPromptDemandsExecutionTrace(item.prompt, item.structure_meta)) {
+      issues.push(`items[${index}] 冻结为事实识别题，不得把任务改成代码执行、最终值或状态追踪`)
+    }
+    if (expected.modality === "mcq"
+      && expected.cognitive_operation === "recognize_fact"
+      && /(?:值|结果|输出)\s*(?:是|为)?\s*(?:多少|什么|哪一个)|是多少[？?]?$/u.test(item.prompt)) {
+      issues.push(`items[${index}] 事实识别选择题的题干应询问哪项规则或表述成立，不能索要具体值后再给规则型选项`)
+    }
   })
   return issues
+}
+
+function assessmentPromptDemandsExecutionTrace(
+  prompt: string,
+  structure: AssessmentStructureMeta,
+): boolean {
+  const taskText = `${prompt}\n${structure.operation}\n${structure.reasoning_pattern}`
+  return /(?:逐步)?追踪|运行结果|执行结果|最终(?:值|状态|输出)|输出(?:什么|结果)|执行.{0,30}(?:后|得到|状态|值)|第[一二三四五六七八九十\d]+条语句/u.test(taskText)
 }
 
 /**
@@ -2357,14 +2523,16 @@ function assessmentItemSimilaritySurface(item: {
 }): string {
   return [
     item.prompt,
-    ...(item.options?.map((option) => option.text) ?? []),
     item.starter_code ?? "",
   ].join("\n")
 }
 
 /**
  * structure_meta 是模型描述，不能单独作为去重事实。这里用实际题干
- * 的字符二元组覆盖度识别“大段相同、只换问法”的同卷近重复。
+ * 的字符二元组覆盖度识别“大段相同、只换问法”的同卷近重复。答案
+ * 选项不进入近似面：小证据集里的正确陈述和直接否定必然会被多个
+ * 不同任务复用，是否重复应由题干中的学习者操作决定。题干与选项
+ * 完全相同仍由 assessmentItemSignature 的精确重复检查拦截。
  * 仅在同 observation + 同题型内使用，避免跨目标误伤。
  */
 export function assessmentPromptNearDuplicate(left: string, right: string): boolean {
@@ -2669,8 +2837,12 @@ function codeLabExecutionContractIssues(
   const visibleText = learnerVisibleText.join(" ").normalize("NFKC").toLocaleLowerCase()
   const requestsFunctionWork = /(?:编写|定义|实现|提交)\s*(?:(?:一个|一个名为|名为|名叫|指定的)\s*)?(?:[A-Za-z_]\w*\s*)?(?:函数|function)/iu.test(visibleText)
   const declaresFunctionAsExternalInterface = /(?:只需|仅需|只|仅|单独)?\s*提交.{0,20}(?:函数|function)|(?:判题器|测试).{0,20}(?:调用|入口函数)|(?:函数|function).{0,20}(?:返回值|return\s+value).{0,20}(?:评分|判题|结果)/iu.test(visibleText)
-  const invokesNamedFunctionAsExternalInterface = /(?:调用|执行|测试)\s*(?:函数\s*)?[A-Za-z_]\w*\s*\([^)]*\).{0,30}(?:返回|得到|应为|结果)/iu.test(visibleText)
-  const describesWholeProgramInterface = /(?:完整(?:的)?程序|标准输入|标准输出|stdin|stdout|读取.{0,12}输入|打印|print\s*\()/iu.test(visibleText)
+  // Mentioning or calling a built-in function inside a whole program is not
+  // a callable-function submission contract.  Only an explicit return-value
+  // assertion (for example “调用 solve(...) 应返回 ...”) claims that the
+  // external judge invokes a function directly.
+  const invokesNamedFunctionAsExternalInterface = /(?:调用|执行|测试)\s*(?:函数\s*)?[A-Za-z_]\w*\s*\([^)]*\).{0,30}(?:应(?:当)?返回|返回值|返回\s*[^，。；;]{1,20})/iu.test(visibleText)
+  const describesWholeProgramInterface = /(?:完整(?:的)?程序|标准输入|标准输出|stdin|stdout|读取.{0,12}输入|打印|\bprint\s*\()/iu.test(visibleText)
   const explicitFunctionTask = declaresFunctionAsExternalInterface
     || invokesNamedFunctionAsExternalInterface
     || (requestsFunctionWork && !describesWholeProgramInterface)

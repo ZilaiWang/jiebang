@@ -166,6 +166,15 @@ describe("explicitFunctionTask 门禁：教学讲解不被误杀", () => {
     expect(issues.filter((i) => i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH"))).toEqual([])
   })
 
+  test("完整程序内调用 type/print 完成输出，不被误判成函数提交接口", () => {
+    const payload = payloadWith(
+      "程序骨架已给出 a = 3 和 b = 3.0，请补全两条 print 语句，对变量调用 type(x) 并输出结果。",
+    )
+    payload.starter_code = "a = 3\nb = 3.0\n# TODO: 调用 type 并用 print 输出\n"
+    const issues = validateCodeLabPublicAuthorAgainstPlan(payload, plan)
+    expect(issues.filter((i) => i.includes("STDIN_FUNCTION_CONTRACT_MISMATCH"))).toEqual([])
+  })
+
   test("真正要求提交函数（实现函数…返回）仍被拦截", () => {
     const issues = validateCodeLabPublicAuthorAgainstPlan(
       payloadWith("实现函数 solve，返回计算结果。"),

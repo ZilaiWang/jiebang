@@ -5,6 +5,8 @@ import {
   materializeConceptSegmentV2,
   validateConceptVisibleFactCoverage,
   validateConceptSectionStructure,
+  validateConceptSegmentV2AgainstPlans,
+  validateConceptMicroCheckEvidenceDiscipline,
 } from "../src/role-c-content/planning/concept-section-plan"
 import { normalizeConceptSegment } from "../src/role-c-content/providers/staged-generation"
 import { ModelBackedRoleCContentProvider } from "../src/role-c-content/providers/model-backed-provider"
@@ -79,6 +81,289 @@ const payloadV2 = {
 }
 
 describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
+  test("模型省略空 steps/code 时先规范化，不以 TypeError 中断候选修复", () => {
+    const request = segmentRequest(
+      [{ objective_id: "O1", source_id: "K001", fact_ids: ["F001"], behavior: "explain" }],
+      [{ source_id: "K001", fact_id: "F001", content: "Python 是一种通用编程语言。" }],
+    )
+    const plans = buildConceptSectionPlansForSegment(request)
+    const payload = {
+      title: "Python",
+      objectives: [{
+        objective_id: "O1",
+        sections: plans[0]!.slots.map((slot) => ({
+          slot_id: slot.slot_id,
+          heading: "说明",
+          body: "Python 是一种通用编程语言。这里用通俗语言说明它的类别。",
+        })),
+        micro_check: {
+          prompt: "哪项正确？",
+          options: ["Python 是一种通用编程语言", "Python 不是一种通用编程语言"],
+          answer: "Python 是一种通用编程语言",
+          explanation: "与事实一致",
+        },
+        hints: ["看类别", "对照事实", "判断描述"],
+      }],
+    } as any
+    const normalized = anchorConceptFactsInVisibleText({ payload, request, plans })
+    expect(normalized.objectives[0]!.sections.every((section) =>
+      Array.isArray(section.steps) && section.code === null)).toBe(true)
+  })
+
+  test("模型的一句长讲解和越界即时检查由事实物化层规范为可发布结构", () => {
+    const request = segmentRequest(
+      [{ objective_id: "O1", source_id: "K002", fact_ids: ["F001", "F002"], behavior: "explain" }],
+      [
+        { source_id: "K002", fact_id: "F001", content: "Python 使用 = 进行变量赋值。" },
+        { source_id: "K002", fact_id: "F002", content: "变量名用于引用程序中的数据。" },
+      ],
+    )
+    const plans = buildConceptSectionPlansForSegment(request)
+    const payload = {
+      title: "变量与赋值",
+      objectives: [{
+        objective_id: "O1",
+        sections: plans[0]!.slots.map((slot) => ({
+          slot_id: slot.slot_id,
+          heading: "理解变量",
+          body: "变量名用于引用程序中的数据，赋值把名称和数据联系起来",
+          steps: [],
+          code: null,
+        })),
+        micro_check: {
+          prompt: "变量保存在哪个硬件区域？",
+          options: ["内存", "编译器", "网页"],
+          answer: "内存",
+          explanation: "根据常识判断。",
+        },
+        hints: ["看目标", "看关系", "再判断"],
+      }],
+    } as any
+
+    const normalized = anchorConceptFactsInVisibleText({ payload, request, plans })
+    expect(validateConceptSegmentV2AgainstPlans(normalized, plans).join("\n"))
+      .not.toContain("至少需要")
+    expect(normalized.objectives[0]!.micro_check.answer).toContain("Python 使用 = 进行变量赋值")
+    expect(normalized.objectives[0]!.micro_check.prompt).toContain("理解变量")
+    expect(normalized.objectives[0]!.micro_check.options).toEqual([
+      "Python 使用 = 进行变量赋值。",
+      "Python 不使用 = 进行变量赋值。",
+    ])
+    expect(normalized.objectives[0]!.micro_check.options.join(" ")).not.toContain("变量名用于引用")
+    expect(validateConceptMicroCheckEvidenceDiscipline(
+      normalized,
+      plans,
+      new Map([["O1", ["Python 使用 = 进行变量赋值。", "变量名用于引用程序中的数据。"]]]),
+    )).toEqual([])
+  })
+
+  test("同一讲义中的重复代码示例会在作者阶段被拒绝", () => {
+    const plan = {
+      objective_id: "O1",
+      mode: "guided_explanation",
+      slots: ["S1", "S2"].map((slot_id) => ({
+        slot_id, kind: "guided_example", fact_ids: ["F1"],
+        allowed_moves: ["direct_instance"], required: true,
+        min_sentences: 1, max_sentences: 3, allowed_block_types: ["code"],
+        requires_executable_code: true,
+      })),
+      micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "重复示例",
+      objectives: [{
+        objective_id: "O1",
+        sections: ["S1", "S2"].map((slot_id) => ({
+          slot_id, heading: slot_id, body: "观察这段程序。", steps: [], code: 'print("Python")',
+        })),
+        micro_check: { prompt: "哪项正确？", options: ["正确", "错误"], answer: "正确", explanation: "直接判断" },
+        hints: ["先看事实", "再看关系", "最后判断"],
+      }],
+    } as any
+    expect(validateConceptSegmentV2AgainstPlans(payload, [plan])).toContain(
+      "section S2 与 S1 不得重复同一段代码示例",
+    )
+  })
+
+  test("讲义即时检查不能用未引用的绝对用途制造干扰项", () => {
+    const plan = {
+      objective_id: "O1", mode: "definition_only", slots: [],
+      micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "Python",
+      objectives: [{
+        objective_id: "O1", sections: [],
+        micro_check: {
+          prompt: "哪项正确？",
+          options: ["Python 是一种通用编程语言", "Python 仅限用于网页设计"],
+          answer: "Python 是一种通用编程语言",
+          explanation: "与事实一致",
+        },
+        hints: ["先看事实", "再看关键词", "最后判断"],
+      }],
+    } as any
+    const issues = validateConceptMicroCheckEvidenceDiscipline(
+      payload,
+      [plan],
+      new Map([["O1", ["Python 是一种通用编程语言。"]]]),
+    )
+    expect(issues.join("\n")).toContain("未授权的绝对限定：仅限")
+  })
+
+  test("讲义即时检查不能用未引用的编译器机制制造干扰项", () => {
+    const plan = {
+      objective_id: "O1", mode: "definition_only", slots: [],
+      micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "Python",
+      objectives: [{
+        objective_id: "O1", sections: [],
+        micro_check: {
+          prompt: "哪项正确？",
+          options: ["Python 程序通常由解释器执行", "Python 程序通常由编译器执行"],
+          answer: "Python 程序通常由解释器执行",
+          explanation: "与事实一致",
+        },
+        hints: ["先看事实", "再看关键词", "最后判断"],
+      }],
+    } as any
+    const issues = validateConceptMicroCheckEvidenceDiscipline(
+      payload,
+      [plan],
+      new Map([["O1", ["Python 程序通常由解释器执行。"]]]),
+    )
+    expect(issues.join("\n")).toContain("不是事实复述或直接否定")
+  })
+
+  test("普通讲解不能把解释器事实扩写成未引用的否定性机制", () => {
+    const plan = {
+      objective_id: "O1", mode: "definition_only",
+      slots: [{ slot_id: "S1", kind: "fact_explanation" }],
+      micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "Python",
+      objectives: [{
+        objective_id: "O1",
+        sections: [{ slot_id: "S1", heading: "运行方式", body: "解释器执行代码，而不是事先把整个程序转换后再运行。", steps: [], code: null }],
+        micro_check: {
+          prompt: "哪项正确？", options: ["Python 程序通常由解释器执行", "Python 程序不是由解释器执行"],
+          answer: "Python 程序通常由解释器执行", explanation: "与事实一致",
+        },
+        hints: ["先看事实", "再看关键词", "最后判断"],
+      }],
+    } as any
+    const issues = validateConceptMicroCheckEvidenceDiscipline(
+      payload,
+      [plan],
+      new Map([["O1", ["Python 程序通常由解释器执行。"]]]),
+    )
+    expect(issues.join("\n")).toContain("否定性机制说明：而不是")
+  })
+
+  test("赋值事实允许用新变量名和值作直接实例，不误判为替代机制", () => {
+    const plan = {
+      objective_id: "O1", mode: "guided_explanation",
+      slots: [{ slot_id: "S1", kind: "guided_example" }],
+      micro_check: { mode: "recognition", fact_ids: ["F1", "F2"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "变量与赋值",
+      objectives: [{
+        objective_id: "O1",
+        sections: [{
+          slot_id: "S1",
+          heading: "换一个名称观察",
+          body: "例如写 city = '北京'。这里的 city 是变量名，它引用字符串数据；如果之后写 city = '上海'，新值会覆盖旧绑定。",
+          steps: [],
+          code: "city = '北京'\ncity = '上海'\nprint(city)",
+        }],
+        micro_check: {
+          prompt: "哪项正确？",
+          options: ["变量可以被重新赋值，新值会覆盖旧绑定", "变量不可以被重新赋值"],
+          answer: "变量可以被重新赋值，新值会覆盖旧绑定",
+          explanation: "与事实一致。",
+        },
+        hints: ["看赋值", "看新值", "判断绑定"],
+      }],
+    } as any
+    const issues = validateConceptMicroCheckEvidenceDiscipline(
+      payload,
+      [plan],
+      new Map([["O1", ["Python 使用 = 进行变量赋值。", "变量名用于引用程序中的数据。", "变量可以被重新赋值，新值会覆盖旧绑定。"]]]),
+    )
+    expect(issues.join("\n")).not.toContain("具体替代说法")
+  })
+
+  test("分步示例不能用未引用的编译器或大括号制造具体反例", () => {
+    const plan = {
+      objective_id: "O1", mode: "guided_explanation",
+      slots: [{ slot_id: "S1", kind: "guided_example" }],
+      micro_check: { mode: "recognition", fact_ids: ["F1", "F2"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "Python",
+      objectives: [{
+        objective_id: "O1",
+        sections: [{
+          slot_id: "S1",
+          heading: "辨析",
+          body: "有人声称“Python 程序由编译器直接转换为硬件指令”，另一个说法是“Python 用大括号表示代码块”。",
+          steps: [],
+          code: null,
+        }],
+        micro_check: {
+          prompt: "哪项正确？",
+          options: ["Python 程序通常由解释器执行", "Python 程序不是由解释器执行"],
+          answer: "Python 程序通常由解释器执行",
+          explanation: "与事实一致",
+        },
+        hints: ["先看事实", "再看关系", "最后判断"],
+      }],
+    } as any
+    const issues = validateConceptMicroCheckEvidenceDiscipline(
+      payload,
+      [plan],
+      new Map([["O1", ["Python 程序通常由解释器执行。", "Python 用缩进表示代码块。"]]]),
+    )
+    expect(issues.join("\n")).toContain("事实未提供的具体替代说法")
+    expect(issues.join("\n")).toContain("编译器直接转换为硬件指令")
+    expect(issues.join("\n")).toContain("大括号表示代码块")
+  })
+
+  test("误区不能用知识库未提供的具体领域缩小事实范围", () => {
+    const plan = {
+      objective_id: "O1", mode: "definition_only",
+      slots: [{ slot_id: "S1", kind: "misconception" }],
+      micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
+    } as any
+    const payload = {
+      title: "Python",
+      objectives: [{
+        objective_id: "O1",
+        sections: [{
+          slot_id: "S1", heading: "误区",
+          body: "有人认为 Python 仅用于网页设计。", steps: [], code: null,
+        }],
+        micro_check: {
+          prompt: "哪项正确？",
+          options: ["Python 是一种通用编程语言", "Python 不是一种通用编程语言"],
+          answer: "Python 是一种通用编程语言",
+          explanation: "与事实一致",
+        },
+        hints: ["先看事实", "再看关系", "最后判断"],
+      }],
+    } as any
+    const issues = validateConceptMicroCheckEvidenceDiscipline(
+      payload,
+      [plan],
+      new Map([["O1", ["Python 是一种通用编程语言。"]]]),
+    )
+    expect(issues.join("\n")).toContain("misconception S1 引入事实未授权的绝对限定：仅用于")
+  })
+
   test("buildConceptSectionPlansForSegment 为每个 objective 生成 section plan", () => {
     const request = segmentRequest(
       [{ objective_id: "O1", source_id: "K001", fact_ids: ["F001", "F002"], behavior: "apply" }],

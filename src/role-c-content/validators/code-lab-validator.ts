@@ -12,7 +12,10 @@ import { analyzePythonSource } from "../security/python-static-analyzer"
 import { validateCitations, type ValidationIssue } from "./citation-validator"
 import { validateCodeLabPublicSecureSeparation, validatePublicArtifactNoSecrets } from "./public-secure-leak-validator"
 import { validateRoleCSchema, validateRoleCSchemaFragment } from "./runtime-schema-validator"
-import { validatePracticalGuideForRelease } from "./section-six-resource-validator"
+import {
+  validatePracticalGuideAgainstLearnerSurface,
+  validatePracticalGuideForRelease,
+} from "./section-six-resource-validator"
 import { classifyExpectedValue, classifyOutputContract } from "../contracts/output-contract"
 import { validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
 import { validateInputCandidates } from "../programming/test-plan"
@@ -71,6 +74,14 @@ export function validateCodeLabPublicStage(
   }
   if (guidePlan && publicGuide) {
     for (const guideIssue of validatePracticalGuideForRelease(publicGuide)) {
+      issues.push(issue(guideIssue.code, `$.practical_guide${guideIssue.path.slice(1)}`, guideIssue.message))
+    }
+    for (const guideIssue of validatePracticalGuideAgainstLearnerSurface({
+      guide: publicGuide,
+      starter_code: publicPayload.starter_code,
+      gap_template_code: publicPayload.programming_task?.gap_template?.template_code,
+      evidence_facts: request.evidence_pack.results.flatMap((entry) => entry.facts.map((fact) => fact.content)),
+    })) {
       issues.push(issue(guideIssue.code, `$.practical_guide${guideIssue.path.slice(1)}`, guideIssue.message))
     }
   }
@@ -157,6 +168,14 @@ export function validateCodeLabDraftStructure(
   }
   if (guidePlan && practicalGuide) {
     for (const guideIssue of validatePracticalGuideForRelease(practicalGuide)) {
+      issues.push(issue(guideIssue.code, `$.public_draft.payload.practical_guide${guideIssue.path.slice(1)}`, guideIssue.message))
+    }
+    for (const guideIssue of validatePracticalGuideAgainstLearnerSurface({
+      guide: practicalGuide,
+      starter_code: publicPayload.starter_code,
+      gap_template_code: publicPayload.programming_task?.gap_template?.template_code,
+      evidence_facts: request.evidence_pack.results.flatMap((entry) => entry.facts.map((fact) => fact.content)),
+    })) {
       issues.push(issue(guideIssue.code, `$.public_draft.payload.practical_guide${guideIssue.path.slice(1)}`, guideIssue.message))
     }
     if (practicalGuide.plan_id !== guidePlan.plan_id) issues.push(issue("practical_guide_plan_mismatch", "$.public_draft.payload.practical_guide.plan_id", "实操指南未绑定当前冻结计划"))
