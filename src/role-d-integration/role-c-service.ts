@@ -596,12 +596,12 @@ export async function generateRoleCForRoleDWithRuntime(
   }
 }
 
-function progressStateForRoundAction(
+export function progressStateForRoundAction(
   action: NonNullable<GenerateRoleCForRoleDInput["next_round_context"]>["action"],
-): "starting" | "stable" | "struggling" {
+): "mastered" | "stable" | "struggling" {
   if (action === "remediate") return "struggling"
   if (action === "reinforce") return "stable"
-  return "starting"
+  return "mastered"
 }
 
 function roleCPublicCandidateCount(value: string | undefined): 1 | 2 | 3 {

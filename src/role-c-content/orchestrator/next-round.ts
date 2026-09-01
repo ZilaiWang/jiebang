@@ -991,12 +991,12 @@ function buildReadyNextRound(input: {
   }
 }
 
-function progressStateForGenerationAction(
+export function progressStateForGenerationAction(
   action: "remediate" | "reinforce" | "advance",
-): "struggling" | "stable" | "starting" {
+): "struggling" | "stable" | "mastered" {
   if (action === "remediate") return "struggling"
   if (action === "reinforce") return "stable"
-  return "starting"
+  return "mastered"
 }
 
 function specBuildBlocked(
