@@ -140,6 +140,32 @@ function normalizeDiagnosticOptions(output: ModelDiagnosticOutput): void {
       if (surface && !unique.has(surface)) unique.set(surface, trimmed)
     }
     item.options = [...unique.values()]
+    // 答案映射：部分模型（如 DeepSeek）习惯输出答案字母（a/b/c/d）或数字索引（0-3），
+    // 而 schema 要求 answer 是选项文本。这里把字母/索引映射到对应选项。
+    const rawAnswer = typeof item.answer === "string" ? item.answer.trim() : ""
+    if (item.options.length >= 3) {
+      const letterMatch = /^[A-Da-d]$/.exec(rawAnswer)
+      const indexMatch = /^[0-3]$/.exec(rawAnswer)
+      if (letterMatch) {
+        const idx = rawAnswer.toLocaleLowerCase().charCodeAt(0) - 97
+        if (idx >= 0 && idx < item.options.length) item.answer = item.options[idx]
+      } else if (indexMatch) {
+        const idx = parseInt(rawAnswer, 10)
+        if (idx >= 0 && idx < item.options.length) item.answer = item.options[idx]
+      }
+    }
+    // 选项数量修正：超过 4 项裁剪到 4（优先保留答案选项）；不足 3 项时用"以上都不对"补足（答案不受影响）。
+    // DeepSeek 等模型对选项数量约束遵循不稳定，这里做结构性兜底，避免校验直接拒绝。
+    if (item.options.length > 4) {
+      const answerSurfaceNow = normalizeSurface(item.answer ?? "")
+      const kept = item.options.filter((option) => normalizeSurface(option) === answerSurfaceNow)
+      const rest = item.options.filter((option) => normalizeSurface(option) !== answerSurfaceNow)
+      item.options = [...kept, ...rest].slice(0, 4)
+    }
+    while (item.options.length < 3) {
+      const fallbacks = ["以上都不对", "无法确定", "题目信息不足"]
+      item.options.push(fallbacks[item.options.length - 1] ?? `其他 ${item.options.length}`)
+    }
     if (answerSurface && unique.has(answerSurface)) {
       item.answer = unique.get(answerSurface)!
     }
@@ -166,7 +192,10 @@ function validateModelOutput(output: ModelDiagnosticOutput, input: DiagnosticQue
     }
     if (typeof item.question !== "string" || item.question.trim().length < 6) issues.push(`items[${index}].question 过短`)
     if (!Array.isArray(item.options) || item.options.length < 3 || item.options.length > 4) issues.push(`items[${index}].options 必须有 3–4 项`)
-    else if (new Set(item.options.map(normalizeSurface)).size !== item.options.length) issues.push(`items[${index}].options 存在重复`)
+    else if (new Set(item.options.map(normalizeSurface)).size !== item.options.length) {
+      const normed = item.options.map((option) => `${JSON.stringify(option)}->${normalizeSurface(option)}`)
+      issues.push(`items[${index}].options 存在重复：${normed.join(" | ")}`)
+    }
     if (!Array.isArray(item.options) || item.options.filter((option) => option === item.answer).length !== 1) {
       issues.push(`items[${index}].answer 必须唯一匹配一个选项`)
     }
@@ -206,5 +235,21 @@ function materialize(output: ModelDiagnosticOutput, targets: DiagnosticEvidenceT
 }
 
 function normalizeSurface(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase().replace(/[\s，,。！？；：“”"'、`()\[\]{}\-_]+/g, "")
+  let normalized = value.normalize("NFKC").toLocaleLowerCase()
+  // 等价短语归一：把"可以/可用来/通常用于"等表达统一，识别语义相同但表面不同的重复选项。
+  for (const [pattern, replacement] of DIAGNOSTIC_EQUIVALENT_PHRASES) {
+    normalized = normalized.replace(pattern, replacement)
+  }
+  return normalized.replace(/[\s，,。！？；：“”"'、`()\[\]{}_\-]+/g, "")
 }
+
+const DIAGNOSTIC_EQUIVALENT_PHRASES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/可以用来/gu, "可用于"],
+  [/可用来/gu, "可用于"],
+  [/可以用于/gu, "可用于"],
+  [/通常用于/gu, "常用于"],
+  [/常常用于/gu, "常用于"],
+  [/不可以/gu, "不能"],
+  [/能够/gu, "能"],
+  [/应当/gu, "应"],
+]

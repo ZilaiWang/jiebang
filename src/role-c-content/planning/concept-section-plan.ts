@@ -836,7 +836,16 @@ function conceptAlternativeAssertions(text: string): string[] {
 
 function conceptIsDirectNegation(value: string, facts: string[]): boolean {
   if (!CONCEPT_DIRECT_NEGATION.test(value)) return false
-  const affirmative = value.replace(/(?:没有|并非|不是|无法|不能|不|未)/gu, "")
+  // 只取否定断言的前半段（否定词之前的完整主谓），避免"而是/但/并且"后续补充
+  // 使 affirmative 无法与事实直接对齐。例如"Python 不是一种通用编程语言，而是……"
+  // 只取"Python 不是一种通用编程语言"部分做否定核对。
+  const negatedHead = value.split(/(?:而是|但是|但|并且|而且|，而)/u, 1)[0]
+  // 否定词替换为肯定形式："不是"→"是"（保留系动词），"没有/并非/无法/不能"→删除。
+  // 否则"Python 不是一种通用编程语言"删掉"不是"后变"Python 一种……"，无法与
+  // 事实"Python 是一种……"对齐（"是"被一起吃掉了）。
+  const affirmative = negatedHead
+    .replace(/不是/gu, "是")
+    .replace(/(?:没有|并非|无法|不能)/gu, "")
   return conceptSurfaceIsDirectlyGrounded(affirmative, facts)
 }
 
