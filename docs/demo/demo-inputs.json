@@ -1,0 +1,131 @@
+{
+  "_说明": "KnowBalance 演示视频输入模板（HTTP POST http://127.0.0.1:8787/orchestrator/sessions）",
+  "_用法": "录制演示时，按下面 4 个场景依次建会话。选择字段对应前端表单：学习用途(goal_profile) / 自评等级(self_rating) / 学科背景(discipline_background) / 温度(objective_temperature)。测评答题策略见每个场景的 _演示脚本。",
+  "_注意": "objective_temperature: 0=低温(3轮晋级) 1=中温(2轮) 2=高温(1轮)；discipline_background 仅课程学习(coursework)时前端会追问。",
+
+  "scenarios": [
+    {
+      "name": "场景1 - remediate 分支（文科生·课程学习）",
+      "_演示脚本": "诊断全选第一项；测评全选最后一个选项（正确率低→remediate→触发'你主要卡在哪里'追问卡片→回答→B 写回学习记忆）",
+      "objective_temperature": 2,
+      "learner_request": {
+        "learner_id": "demo-arts-01",
+        "goal": "掌握 Python 基础并完成课程作业",
+        "background": "文科生，汉语言文学专业大二，数学基础较弱，从未接触过编程",
+        "self_rating": "beginner",
+        "goal_profile": "coursework",
+        "learning_goal_spec": { "mode": "curriculum_node", "selected_node_ids": ["PY-CH01"] },
+        "profile_intake": {
+          "learner_id": "demo-arts-01",
+          "goal": "掌握 Python 基础并完成课程作业",
+          "background_summary": "文科生，汉语言文学专业大二，数学基础较弱，从未接触过编程",
+          "self_rating": "beginner",
+          "goal_use_case": "coursework",
+          "discipline_background": ["文科生"],
+          "desired_outcome": "能独立完成课程要求的 Python 作业",
+          "weekly_time_budget_minutes": 300,
+          "session_time_budget_minutes": 45,
+          "explanation_preference": "example_first",
+          "practice_preference": "coding",
+          "pace_preference": "steady",
+          "privacy": { "personalization_enabled": true, "retention": "cross_session", "allow_profile_display": true }
+        }
+      }
+    },
+    {
+      "name": "场景2 - reinforce 分支（求职·basic）",
+      "_演示脚本": "诊断全选第一项；测评奇偶轮换（第1、3、5题选第一项，第2、4题选最后一项→约7/10→reinforce→反馈页'进入巩固学习'→round2 自动推进）",
+      "objective_temperature": 2,
+      "learner_request": {
+        "learner_id": "demo-job-02",
+        "goal": "掌握 Python 基础并完成课程作业",
+        "background": "职场新人，想转行做数据分析，逻辑尚可但没系统学过 Python",
+        "self_rating": "basic",
+        "goal_profile": "job_interview",
+        "learning_goal_spec": { "mode": "curriculum_node", "selected_node_ids": ["PY-CH01"] },
+        "profile_intake": {
+          "learner_id": "demo-job-02",
+          "goal": "掌握 Python 基础并完成课程作业",
+          "background_summary": "职场新人，想转行做数据分析，逻辑尚可但没系统学过 Python",
+          "self_rating": "basic",
+          "goal_use_case": "job",
+          "desired_outcome": "能独立完成课程要求的 Python 作业",
+          "weekly_time_budget_minutes": 300,
+          "session_time_budget_minutes": 45,
+          "explanation_preference": "example_first",
+          "practice_preference": "coding",
+          "pace_preference": "steady",
+          "privacy": { "personalization_enabled": true, "retention": "cross_session", "allow_profile_display": true }
+        }
+      }
+    },
+    {
+      "name": "场景3 - advance 分支（竞赛·intermediate·PY-CH02）",
+      "_演示脚本": "诊断全选第一项；测评全选正确选项（需从 .tmp/integrated-orchestrator/role-c/secure-artifacts/ 读 correct_option_id，或直接用我之前验证过的 e2e-adv-05 会话展示）→10/10→advance→'进入下一知识点'→round2 新测评题就绪",
+      "_替代方案": "演示时可直接打开 http://127.0.0.1:4177/?session=SESSION-0d4b55b6-f9cc-4ff0-9e88-6e7469ae094c&learner=e2e-adv-05&name=张伟 查看已跑通的 advance 会话（round2 测评题已就绪）",
+      "objective_temperature": 2,
+      "learner_request": {
+        "learner_id": "demo-sci-03",
+        "goal": "掌握 Python 基础并完成课程作业",
+        "background": "竞赛选手，刷过洛谷，数学好，想系统提升算法能力",
+        "self_rating": "intermediate",
+        "goal_profile": "algorithm_competition",
+        "learning_goal_spec": { "mode": "curriculum_node", "selected_node_ids": ["PY-CH02"] },
+        "profile_intake": {
+          "learner_id": "demo-sci-03",
+          "goal": "掌握 Python 基础并完成课程作业",
+          "background_summary": "竞赛选手，刷过洛谷，数学好，想系统提升算法能力",
+          "self_rating": "intermediate",
+          "goal_use_case": "competition",
+          "desired_outcome": "能独立完成课程要求的 Python 作业",
+          "weekly_time_budget_minutes": 300,
+          "session_time_budget_minutes": 45,
+          "explanation_preference": "example_first",
+          "practice_preference": "coding",
+          "pace_preference": "steady",
+          "privacy": { "personalization_enabled": true, "retention": "cross_session", "allow_profile_display": true }
+        }
+      }
+    },
+    {
+      "name": "场景4 - 温度对比（同一学习者，低/中/高温三档）",
+      "_演示脚本": "用同一个 learner_id 建 3 次会话，只改 objective_temperature（0/1/2），画像详情'客观影响温度'显示对应档位；高温1轮晋级、中温2轮、低温3轮（多轮测评后等级变化不同）",
+      "objective_temperature": 0,
+      "learner_request": {
+        "learner_id": "demo-temp-04",
+        "goal": "掌握 Python 基础并完成课程作业",
+        "background": "大学生，想系统学习 Python，每周 5 小时",
+        "self_rating": "basic",
+        "goal_profile": "coursework",
+        "learning_goal_spec": { "mode": "curriculum_node", "selected_node_ids": ["PY-CH01"] },
+        "profile_intake": {
+          "learner_id": "demo-temp-04",
+          "goal": "掌握 Python 基础并完成课程作业",
+          "background_summary": "大学生，想系统学习 Python，每周 5 小时",
+          "self_rating": "basic",
+          "goal_use_case": "coursework",
+          "desired_outcome": "能独立完成课程要求的 Python 作业",
+          "weekly_time_budget_minutes": 300,
+          "session_time_budget_minutes": 45,
+          "explanation_preference": "example_first",
+          "practice_preference": "coding",
+          "pace_preference": "steady",
+          "privacy": { "personalization_enabled": true, "retention": "cross_session", "allow_profile_display": true }
+        }
+      }
+    }
+  ],
+
+  "_curl示例": {
+    "method": "POST",
+    "url": "http://127.0.0.1:8787/orchestrator/sessions",
+    "headers": { "Authorization": "Bearer <learner_id>", "Content-Type": "application/json" },
+    "body": "见 scenarios[0].learner_request（外层包 { mode: 'deterministic', learner_request: {...}, objective_temperature: 2 }）"
+  },
+
+  "_已跑通的会话(可直接展示)": [
+    { "场景": "remediate+追问卡", "SID": "SESSION-a99484e1-02d5-4747-b6f0-2e0c519fcad1", "learner": "e2e-arts-01" },
+    { "场景": "reinforce+反馈页", "SID": "SESSION-b772deb4-00e4-40d1-8c29-d5668d16c8ac", "learner": "e2e-reinf-04" },
+    { "场景": "advance+round2", "SID": "SESSION-0d4b55b6-f9cc-4ff0-9e88-6e7469ae094c", "learner": "e2e-adv-05" }
+  ]
+}

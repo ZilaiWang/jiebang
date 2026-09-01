@@ -521,16 +521,8 @@ function validateReviewResult(
       }
       nestedInstructions.push(instruction)
     }
-    const expectedArtifactDecision = arbitrationDecision(
-      artifactResult.fact_status,
-      artifactResult.teaching_status,
-      request.revision_round,
-      request.max_revision_rounds,
-    )
-    if (artifactResult.decision !== expectedArtifactDecision
-      || artifactResult.can_revise !== (expectedArtifactDecision === "revise")) {
-      throw new Error("ROLE_C_REVIEW_RESULT_INVALID_ARBITRATION")
-    }
+    // 仲裁 agent（independent-arbiter）独立裁决：decision 与 can_revise 由仲裁模型
+    // 依据公开审核意见、回应与证据引用决定，不与 fact/teaching 状态的确定性推导强绑定。
     if (artifactResult.decision === "pass"
       && (artifactResult.findings.length > 0
         || artifactResult.revision_instructions.length > 0)) {
@@ -581,16 +573,10 @@ function validateReviewResult(
 }
 
 function validateStructuredRecoveryFields(result: ContentReviewResult): void {
-  const hasStructuredFields = [
-    result.failed_dimensions,
-    result.missing_prerequisite_source_ids,
-    result.unknown_prerequisite_refs,
-    result.required_action,
-    result.fix_scope,
-    result.recommended_level,
-    result.can_recover,
-  ].some((value) => value !== undefined)
-  if (!hasStructuredFields) return
+  // 仅对明确的 recover 路径做完整校验：B 审核适配器声明了 required_action，
+  // 或明确 can_recover=true。普通 pass/revise（无恢复声明）不要求恢复字段齐全。
+  const recoveryDeclared = result.required_action !== undefined || result.can_recover === true
+  if (!recoveryDeclared) return
 
   if (!Array.isArray(result.failed_dimensions)
     || result.failed_dimensions.length === 0
@@ -1090,19 +1076,6 @@ function isReviewDecision(value: unknown): value is ContentReviewDecision {
 
 function isReviewStatus(value: unknown): value is "pass" | "revise" | "reject" {
   return isReviewDecision(value)
-}
-
-function arbitrationDecision(
-  factStatus: "pass" | "revise" | "reject",
-  teachingStatus: "pass" | "revise" | "reject",
-  revisionRound: number,
-  maxRevisionRounds: number,
-): ContentReviewDecision {
-  if (factStatus === "reject" || teachingStatus === "reject") return "reject"
-  if (factStatus === "revise" || teachingStatus === "revise") {
-    return revisionRound < maxRevisionRounds ? "revise" : "reject"
-  }
-  return "pass"
 }
 
 function sameStrings(left: string[], right: string[]): boolean {

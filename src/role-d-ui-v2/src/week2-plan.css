@@ -102,3 +102,16 @@
 .pd-dim-row i em { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg,#5da3e9,#8a70d3); }
 .pd-dim-row b { color: #4a5570; font-size: 10.5px; text-align: right; }
 .pd-evidence-note { margin: 0; color: #9aa0ab; font-size: 10px; line-height: 1.55; }
+
+/* 多 Agent 辩论 · 交叉回应与独立仲裁日志 */
+.review-debate-log { margin-top: 16px; border-top: 1px dashed rgba(109,85,183,.22); padding-top: 13px; display: grid; gap: 8px; }
+.review-debate-log > b { color: #5d4e8f; font-size: 11px; letter-spacing: .02em; }
+.review-debate-log details { border: 1px solid rgba(109,85,183,.16); border-radius: 12px; background: rgba(109,85,183,.045); overflow: hidden; }
+.review-debate-log summary { cursor: pointer; padding: 9px 12px; color: #4c4368; font-size: 11px; font-weight: 700; list-style: none; display: flex; align-items: center; gap: 6px; }
+.review-debate-log summary::before { content: "⚖"; font-size: 11px; }
+.review-debate-log details[open] summary { border-bottom: 1px dashed rgba(109,85,183,.16); }
+.review-debate-log details > div { padding: 9px 12px; display: grid; gap: 6px; }
+.review-debate-log details p { margin: 0; color: #6f6a7e; font-size: 10.5px; line-height: 1.55; }
+.review-debate-log details p b { color: #554b78; }
+.review-debate-log .debate-arbitration { border-top: 1px dashed rgba(109,85,183,.16); margin-top: 4px; padding-top: 8px; color: #5d4e8f; }
+.review-debate-log .debate-arbitration b { color: #7c3aed; }
