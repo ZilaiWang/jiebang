@@ -106,9 +106,21 @@ export function buildPracticalGuidePlan(input: {
       public_test_ids: unique(publicTestIds),
     }
   }
-  const readiness = input.prerequisite_fact_refs.length > 0
-    ? [binding("readiness", 0, input.primary_objective_id, [], [], input.prerequisite_fact_refs)]
-    : [binding("readiness", 0, input.primary_objective_id, ["execution.input_contract"])]
+  // Readiness prose commonly connects a prerequisite to the concrete task
+  // that follows (input shape, execution order, target operation). Bind both
+  // sides explicitly so the author never has to infer task mechanics from a
+  // broad prerequisite such as “Python is a general-purpose language”.
+  const readiness = [binding(
+    "readiness",
+    0,
+    input.primary_objective_id,
+    ["execution.input_contract"],
+    [],
+    [
+      ...input.prerequisite_fact_refs,
+      ...(input.objective_fact_refs[input.primary_objective_id] ?? []),
+    ],
+  )]
   const supporting = objectiveIds.filter((id) => id !== input.primary_objective_id)
   const allTestIds = input.public_tests.map((test) => test.test_id)
   const steps = Array.from({ length: count }, (_, index) => {

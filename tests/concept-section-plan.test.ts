@@ -82,4 +82,26 @@ describe("改进方案5 第六节：讲义 Section Plan", () => {
     expect(misconception.allowed_moves).toEqual(["fact_negation"])
     expect(misconception.allowed_moves).not.toContain("procedure_trace")
   })
+
+  test("多个 worked example 只有首个复用可执行示例，其余按不同事实组织讲解", () => {
+    const plan = buildConceptSectionPlan({
+      objective_id: "O1",
+      observable_behavior: "recognize",
+      fact_ids: ["F1", "F2", "F3"],
+      support: support({ behaviors: ["recognize", "explain"], factCount: 3 }),
+      executable_example_fact_ids: ["F1", "F2"],
+      pedagogy_contract: {
+        lesson: { worked_example_count: 3, opening: "balanced", require_step_trace: false, require_debugging_clinic: false },
+      } as any,
+    })
+    const examples = plan.slots.filter((slot) => slot.kind === "guided_example")
+    expect(examples).toHaveLength(3)
+    expect(examples[0]).toMatchObject({
+      fact_ids: ["F1", "F2"],
+      allowed_block_types: ["code"],
+      requires_executable_code: true,
+    })
+    expect(examples[1]).toMatchObject({ fact_ids: ["F2"], allowed_block_types: ["paragraph"] })
+    expect(examples[2]).toMatchObject({ fact_ids: ["F3"], allowed_block_types: ["paragraph"] })
+  })
 })

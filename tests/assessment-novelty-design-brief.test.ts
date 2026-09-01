@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  assessmentPublicAuthorOutputSchema,
   buildAssessmentNoveltyDesignBrief,
 } from "../src/role-c-content/providers/model-backed-provider"
 import type {
@@ -84,5 +85,49 @@ describe("assessment novelty design brief", () => {
       "guided_application",
       "integrated_transfer",
     ])
+  })
+
+  test("同一目标同一题型跨轮继续轮换任务结构，不把固定题号写成固定题型模板", () => {
+    const history = Array.from({ length: 3 }, (_, index) => ({
+      form_id: `FORM-${index}`,
+      item_id: `OLD-${index}`,
+      objective_id: "OBJ-K001",
+      modality: "mcq" as const,
+      prompt: `历史题 ${index}`,
+      options: ["A", "B"],
+    }))
+    const first = buildAssessmentNoveltyDesignBrief(plan, []).items[0]!
+    const next = buildAssessmentNoveltyDesignBrief(plan, history).items[0]!
+    expect(next.planned_task_shape).not.toBe(first.planned_task_shape)
+    expect(next.planned_task_shape).toBe("identify_supported_relation")
+  })
+
+  test("选择题任务结构全部保持正向问法，不规划选择否定项或绝对范围", () => {
+    const shapes = Array.from({ length: 4 }, (_, round) =>
+      buildAssessmentNoveltyDesignBrief(plan, Array.from({ length: round }, (_, index) => ({
+        form_id: `FORM-${index}`,
+        item_id: `OLD-${index}`,
+        objective_id: "OBJ-K001",
+        modality: "mcq" as const,
+        prompt: `历史题 ${index}`,
+        options: ["A", "B"],
+      }))).items[0]!.planned_task_shape)
+    expect(shapes).toEqual([
+      "select_one_supported_statement",
+      "choose_best_fact_summary",
+      "match_subject_to_supported_description",
+      "identify_supported_relation",
+    ])
+  })
+
+  test("单事实识别题的模型 Schema 与提示一致，只允许两个有证据的选项", () => {
+    const schema = assessmentPublicAuthorOutputSchema([{
+      ...plan[0]!,
+      citations: [{ source_id: "K001", fact_id: "F001", relation: "supports" }],
+    }]) as any
+    const optionArray = schema.properties.items.items.properties.options.oneOf
+      .find((entry: any) => entry.type === "array")
+    expect(optionArray.minItems).toBe(2)
+    expect(optionArray.maxItems).toBe(2)
   })
 })

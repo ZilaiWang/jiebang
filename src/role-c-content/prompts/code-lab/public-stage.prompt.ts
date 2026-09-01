@@ -46,8 +46,11 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - practice_goal 写当前真实任务的实践目标；deliverable 写学习者最终可提交、可运行、可验证的具体产物。
 - readiness_checks 每项写“检查什么、何时算就绪”；steps 每项必须同时写 action、input、expected_result、verification，形成可执行闭环，不能只写概念说明。
 - 程序填空题可以在指南中明确提到题面可见的 TODO 或待填写区域；这类文字是在说明学习者操作，不是未完成的占位正文。
+- 指南最终会原样显示给学习者，只能使用“完整代码预览”“待填写位置”“公开样例”“预期输出”等界面用语。不得写 starter_code、expected_behavior、public_test、TODO_FILL_FACT 等内部字段或占位标记；引用变量名时必须与本次实际 starter_code / gap_template 完全一致，不能把 fact_text 写成 message 等另一个变量。
 - troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。
-- extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。
+- extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。若扩展任务要新增变量，必须明确写“新增/定义变量”，不得把新变量写成当前代码已存在的变量。
+- extension_task、troubleshooting 和提示中的事实反例只能直接否定当前 cited fact，不得另造具体行业用途、API、语法或运行机制。程序填空的学习者区域称为“填写框”或“空位”，不得称为“空格”，避免与空格字符混淆。
+- learner_action=recall_fact 时，填写目标始终是 cited fact 的完整句子，不是事实中的单个符号、关键词或对象名；三级提示必须围绕“识别完整事实→确认整句边界→核对完整填写”逐级展开，不得把局部关键词误写成最终提交内容。
 - 验收条件由编排器根据 public_tests 确定性生成，模型不得另造测试 ID 或期望值。
 - 指南正文只可使用 evidence.facts、冻结 execution contract 和 public tests 中已公开的信息；不得引入未给出的 Python 规则、隐藏测试或参考实现。
 

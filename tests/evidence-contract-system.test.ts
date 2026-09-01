@@ -49,7 +49,10 @@ describe("统一证据身份与能力合同", () => {
       const factIds = new Set(item.facts.map((fact) => fact.factId))
       for (const objective of item.observableObjectives ?? []) {
         expect(objective.factIds.length).toBeGreaterThan(0)
-        expect(objective.factIds.length).toBeLessThanOrEqual(3)
+        // Composite objectives may need one fact each for create/read/update/order.
+        // Keep the bundle small, but do not drop a required semantic link merely
+        // to satisfy the former three-fact heuristic.
+        expect(objective.factIds.length).toBeLessThanOrEqual(4)
         expect(objective.factIds.every((factId) => factIds.has(factId))).toBe(true)
         const bound = bindObjectiveEvidence({
           source_id: item.sourceId,

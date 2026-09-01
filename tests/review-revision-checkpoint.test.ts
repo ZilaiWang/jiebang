@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   canResumeStage,
+  recoveryInvalidatesStage,
   stageFingerprint,
 } from "../src/role-c-content/orchestrator/content-pipeline"
 import type { CPipelineCheckpoint } from "../src/role-c-content/reliability/checkpoint-store"
@@ -34,6 +35,23 @@ function checkpoint(stage: CPipelineCheckpoint["stage"], fingerprints?: CPipelin
 }
 
 describe("改进方案4 第一批：检查点与外审修订关系", () => {
+  test("阶段恢复只失效失败分支；讲义变化才级联失效下游", () => {
+    const codeRecovery = {
+      attempt: 1,
+      failed_stage: "code_lab",
+      issue_codes: ["PUBLIC_OUTPUT_INVALID"],
+      failure_fingerprint: "sha256:code",
+    } as any
+    expect(recoveryInvalidatesStage(codeRecovery, "concept")).toBe(false)
+    expect(recoveryInvalidatesStage(codeRecovery, "code_lab")).toBe(true)
+    expect(recoveryInvalidatesStage(codeRecovery, "assessment")).toBe(false)
+
+    const conceptRecovery = { ...codeRecovery, failed_stage: "concept" }
+    expect(recoveryInvalidatesStage(conceptRecovery, "concept")).toBe(true)
+    expect(recoveryInvalidatesStage(conceptRecovery, "code_lab")).toBe(true)
+    expect(recoveryInvalidatesStage(conceptRecovery, "assessment")).toBe(true)
+  })
+
   test("普通轮（无修订上下文）可恢复检查点", () => {
     expect(canResumeStage(checkpoint("concept_ready"), "concept", "any-fingerprint", undefined)).toBe(true)
     expect(canResumeStage(checkpoint("concept_ready"), "concept", "fp", { ...revisionContext(), revision_round: 0 })).toBe(true)

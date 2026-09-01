@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { normalizeCodeLabPublicAuthorPayload } from "../src/role-c-content/providers/model-backed-provider"
 import {
+  normalizeCodeLabHintsToEvidence,
+  normalizeCodeLabPublicAuthorPayload,
+} from "../src/role-c-content/providers/model-backed-provider"
+import {
+  materializeCodeLabPublicAuthorPayload,
   validateCodeLabPublicAuthorAgainstPlan,
   type CodeLabObjectivePlan,
   type CodeLabPublicAuthorPayload,
@@ -50,13 +54,57 @@ const recallFactContract = {
 }
 
 describe("code lab content-specific hint ladders", () => {
-  test("rejects the old reusable hint template", () => {
+  test("recall_fact 的旧通用提示由事实绑定物化替换，不再让候选卡死", () => {
+    const author = payload([
+      "先定位本目标要求表达的核心事实。",
+      "确认填写内容保留了事实中的主语、对象和关系。",
+      "只替换 TODO 字符串，不改动变量赋值和输出语句。",
+    ])
+    author.programming_task = {
+      statement: "补全事实文本。",
+      input_description: "无输入。",
+      output_description: "输出事实文本。",
+      constraints: ["只填字符串", "保留输出语句"],
+      gap_template: {
+        schema_version: "code-gap-template.v1",
+        template_code: "fact_text = {{gap:fact_text}}\nprint(fact_text)\n",
+        gaps: [{
+          gap_id: "fact_text",
+          label: "事实文本",
+          kind: "expression",
+          max_chars: 500,
+          max_lines: 1,
+        }],
+      },
+      additional_public_examples: [],
+    }
     const issues = validateCodeLabPublicAuthorAgainstPlan(payload([
       "先定位本目标要求表达的核心事实。",
       "确认填写内容保留了事实中的主语、对象和关系。",
       "只替换 TODO 字符串，不改动变量赋值和输出语句。",
     ]), plan, recallFactContract, undefined, undefined, evidence)
-    expect(issues.some((issue) => issue.includes("通用占位提示"))).toBe(true)
+    expect(issues.some((issue) => issue.includes("通用占位提示"))).toBe(false)
+    const materialized = materializeCodeLabPublicAuthorPayload({
+      generation_spec: {
+        spec_id: "SPEC-1",
+        path_node: { goal: "理解 for 循环" },
+        targets: [{ objective_id: "OBJ-K007", source_id: "K007" }],
+      },
+      evidence_pack: evidence,
+      resource_blueprint: { code_lab: { task_contract: {
+        ...recallFactContract,
+        primary_objective_id: "OBJ-K007",
+      } } },
+    } as any, author, "LAB-1", plan, undefined, {
+      blueprint_id: "BP-1",
+      task_kind: "code_completion",
+      submission_mode: "gap_answers",
+    } as any)
+    const texts = materialized.hint_ladders[0]?.hints.map((hint) => hint.text) ?? []
+    expect(texts).toHaveLength(3)
+    expect(texts.join(" ")).toContain("for 循环")
+    expect(texts.join(" ")).toContain("完整事实句")
+    expect(texts.join(" ")).not.toContain("只替换 TODO 字符串")
   })
 
   test("accepts a progressive ladder grounded in the current for-loop fact", () => {
@@ -78,5 +126,73 @@ describe("code lab content-specific hint ladders", () => {
     ]
     const normalized = normalizeCodeLabPublicAuthorPayload(payload(hints), recallFactContract)
     expect(normalized.objectives[0]?.hints).toEqual(hints)
+  })
+
+  test("可执行任务保留模型提示主体并绑定当前标题与事实", () => {
+    const author = payload([
+      "先找出每轮发生变化的位置。",
+      "再运行一个最小案例观察结果。",
+      "最后核对输出是否满足题面。",
+    ])
+    normalizeCodeLabHintsToEvidence(author, plan, evidence)
+    expect(author.objectives[0]!.hints[0]).toContain("先找出每轮发生变化的位置")
+    expect(author.objectives[0]!.hints[1]).toContain("再运行一个最小案例观察结果")
+    expect(author.objectives[0]!.hints.slice(0, 2).join(" ")).toContain("for 循环")
+    expect(validateCodeLabPublicAuthorAgainstPlan(
+      author,
+      plan,
+      { ...recallFactContract, learner_action: "implement_program" },
+      undefined,
+      undefined,
+      evidence,
+    ).some((issue) => issue.includes("至少两级必须点明"))).toBe(false)
+  })
+
+  test("normalization projects extra guide slots and duplicate public examples to the frozen plan", () => {
+    const author = payload([
+      "先观察 for 循环每一轮处理的对象。",
+      "for 循环变量会按序接收序列里的元素。",
+      "完整表达应包含依次取出序列中的每个元素。",
+    ])
+    author.practical_guide = {
+      practice_goal: "运行练习",
+      deliverable: "可运行程序",
+      readiness_checks: [
+        { title: "检查一", check: "检查输入", ready_when: "输入就绪" },
+        { title: "多余检查", check: "重复检查", ready_when: "重复就绪" },
+      ],
+      steps: [
+        { title: "步骤一", action: "运行", input: "空输入", expected_result: "看到输出", verification: "核对输出" },
+        { title: "多余步骤", action: "重复", input: "空输入", expected_result: "重复", verification: "重复" },
+      ],
+      troubleshooting: [
+        { symptom: "无输出", likely_cause: "未运行", recovery_steps: ["运行"], verification: "看到输出" },
+        { symptom: "多余", likely_cause: "多余", recovery_steps: ["忽略"], verification: "完成" },
+      ],
+      extension_task: { task: "再次运行", changed_dimension: "文本", verification: "核对输出" },
+    }
+    author.programming_task = {
+      statement: "输出事实。",
+      input_description: "无输入。",
+      output_description: "输出事实。",
+      constraints: ["保留结构", "核对输出"],
+      additional_public_examples: [
+        { description: "重复空输入", input: "", expected_behavior: "输出事实" },
+      ],
+    }
+    const normalized = normalizeCodeLabPublicAuthorPayload(
+      author,
+      undefined,
+      {
+        readiness_slots: [{}],
+        step_slots: [{}],
+        troubleshooting_slots: [{}],
+      } as any,
+      { public_case_count: 1 } as any,
+    )
+    expect(normalized.practical_guide?.readiness_checks).toHaveLength(1)
+    expect(normalized.practical_guide?.steps).toHaveLength(1)
+    expect(normalized.practical_guide?.troubleshooting).toHaveLength(1)
+    expect(normalized.programming_task?.additional_public_examples).toBeUndefined()
   })
 })

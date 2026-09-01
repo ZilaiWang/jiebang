@@ -463,6 +463,26 @@ export function activeAdaptationView(session: any): any | null {
   return adaptation
 }
 
+/**
+ * Returns the round that produced the currently published C resources.
+ * A failed next-round generation intentionally keeps the last reviewed artifacts,
+ * so session.round_no alone must not be used to label those artifacts as current.
+ */
+export function publishedResourceRound(session: any): number | null {
+  const runIds = [
+    session?.learning_resources?.concept_lesson?.run_id,
+    session?.learning_resources?.code_lab?.run_id,
+    session?.assessment?.run_id,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0)
+  const rounds = runIds
+    .map((runId) => runId.match(/-R(\d+)-/i)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .map(Number)
+    .filter(Number.isFinite)
+  if (rounds.length === 0 || new Set(rounds).size !== 1) return null
+  return rounds[0]!
+}
+
 export function mainFlowStatusView(session: any): MainFlowStatusView {
   const waitingType = session?.waiting_for?.type
   const waitingCount = Array.isArray(session?.waiting_for?.items) ? session.waiting_for.items.length : 0
@@ -864,8 +884,19 @@ export function blockedSessionAction(session: any): { canRetry: boolean; label: 
     if (canRetry) {
       return { canRetry: true, label: labels[generationFailure.nextAction] ?? "重新生成当前学习资源" }
     }
-    // 内容生成失败且上游"失败2次"兜底把 nextAction 改成了 change_goal：
-    // 这是 C 生成服务的问题，不是用户目标问题，不应引导用户"调整学习目标"。
+    // 旧会话曾把不同阶段的失败累计到同一个“失败 2 次”计数中，进而把
+    // assessment 的第一次失败错误标成 change_goal。artifact 归属仍明确时
+    // 允许按真实阶段恢复；服务端会重建新的 stage-local retry contract。
+    if (generationFailure.repairScope === "artifact") {
+      const stageAction = generationFailure.stage === "concept"
+        ? "regenerate_concept"
+        : generationFailure.stage === "code_lab"
+          ? "regenerate_code_lab"
+          : generationFailure.stage === "assessment"
+            ? "regenerate_assessment"
+            : ""
+      return { canRetry: true, label: labels[stageAction] ?? "重新生成当前学习资源" }
+    }
     return { canRetry: false, label: "内容生成暂时失败，请稍后重试" }
   }
   if (outcome?.kind === "unsupported_goal") {

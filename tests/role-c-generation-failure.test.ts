@@ -57,4 +57,20 @@ describe("Role C structured generation failure", () => {
       nextAction: "regenerate_code_lab",
     })
   })
+
+  test("recovers the assessment owner from an internal task id when a legacy parallel trace omitted agent", () => {
+    const failure = generationFailure({
+      code: "BLOCKED_INVALID_OUTPUT",
+      message: "ModelOutputValidationError: role-c.tiered-evaluator.public-item 未通过分阶段输出校验",
+      details: ["BLOCKED_INVALID_OUTPUT"],
+      stage: "unknown",
+    })
+    expect(failure).toMatchObject({
+      code: "CONTENT_INVALID",
+      stage: "assessment",
+      repairScope: "artifact",
+      nextAction: "regenerate_assessment",
+      canRetry: true,
+    })
+  })
 })

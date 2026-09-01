@@ -58,6 +58,28 @@ describe("assessment capacity planning：事实/结构不足时少出题而非 r
     expect(plan.feasible_items).toBe(5)
   })
 
+  test("纯定义事实只承担一次测量，规则事实可承担第二个应用视角", () => {
+    const plan = planAssessmentCapacity({
+      requested: { tier_1_count: 2, tier_2_count: 2, tier_3_count: 1, required_modalities: ["mcq", "true_false"] },
+      objectives: [{
+        objective_id: "O1",
+        observable_behavior: "recognize",
+        importance: "core",
+        available_facts: 3,
+        // 两条 definition（1+1）+ 一条 procedure（2）= 4 个真实测量槽位。
+        evidence_item_capacity: 4,
+        used_structures: 0,
+      }],
+    })
+    expect(plan.decision).toBe("REDUCE")
+    expect(plan.feasible_items).toBe(4)
+    expect(plan.adjusted_blueprint).toMatchObject({
+      tier_1_count: 2,
+      tier_2_count: 2,
+      tier_3_count: 0,
+    })
+  })
+
   test("连 core objective 都无法覆盖 → REPLAN", () => {
     const plan = planAssessmentCapacity({
       requested: { tier_1_count: 3, tier_2_count: 0, tier_3_count: 0, required_modalities: ["mcq"] },

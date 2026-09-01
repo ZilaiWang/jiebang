@@ -21,6 +21,14 @@ export interface AssessmentCapacityObjective {
   importance: "core" | "supporting"
   /** 该 objective 在证据包里可用的事实数（required_fact_ids 长度或检索命中数）。 */
   available_facts: number
+  /**
+   * 当前事实束在一份测评中能承担的独立题目槽位。
+   *
+   * 定义类事实通常只适合一次直接识别；规则、过程、边界等事实可以再承担
+   * 一次应用/追踪视角。由调用方拿到真实事实能力时填写，旧调用方省略时
+   * 继续使用 available_facts 的兼容估算。
+   */
+  evidence_item_capacity?: number
   /** 该 objective 历史里已占用的任务结构数（novelty 约束）。 */
   used_structures: number
 }
@@ -62,8 +70,11 @@ function capacityForObjective(
   const limiting: AssessmentCapacityPlan["limiting_factors"] = []
   // 同一事实可以通过不同、且与 observable behavior 相容的题型进行复测，
   // 因此事实数不是题数的一比一上限。容量取“事实 × 可测题型”与剩余结构空间的交集。
-  const evidenceCapacity = Math.max(0, objective.available_facts)
+  const compatibilityCapacity = Math.max(0, objective.available_facts)
     * Math.min(MAX_ITEMS_PER_FACT_PER_FORM, measuringModalityCount(objective.observable_behavior))
+  const evidenceCapacity = objective.evidence_item_capacity === undefined
+    ? compatibilityCapacity
+    : Math.max(0, Math.min(compatibilityCapacity, objective.evidence_item_capacity))
   const structureCapacity = Math.max(0,
     STRUCTURE_BUDGET_PER_OBJECTIVE - Math.max(0, objective.used_structures))
   if (evidenceCapacity < STRUCTURE_BUDGET_PER_OBJECTIVE) {

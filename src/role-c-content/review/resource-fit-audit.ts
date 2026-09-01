@@ -117,13 +117,17 @@ function estimateObserved(kind: ResourceFitKind, payload: unknown): Observed {
 }
 
 function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
-  const codeBlocks = payload.explanation_blocks.filter((block) => "block_type" in block && block.block_type === "code").length
-    + payload.worked_examples.filter((block) => "block_type" in block && block.block_type === "code").length
-  const workedSteps = payload.worked_examples.reduce((sum, block) => {
+  const codeBlockTexts = [
+    ...payload.explanation_blocks,
+    ...payload.worked_examples,
+  ].filter((block) => "block_type" in block && block.block_type === "code")
+    .map(learnerVisibleBlockText)
+  const workedStepDepths = payload.worked_examples.map((block) => {
     const text = learnerVisibleBlockText(block)
     const explicitSteps = text.split(/\r?\n/u).filter((line) => /^\s*(?:\d+[.)、]|[-*])\s+/u.test(line)).length
-    return sum + Math.max(1, explicitSteps)
-  }, 0)
+    return Math.max(1, explicitSteps)
+  })
+  const maxWorkedDepth = Math.max(0, ...workedStepDepths)
   const misconceptionDepth = payload.misconceptions.length
   const hintCount = payload.hint_ladders.reduce((sum, ladder) => sum + ladder.hints.length, 0)
   const microCheckCount = payload.micro_checks.length
@@ -145,11 +149,16 @@ function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
   return {
     challenge: {
       domain_complexity: CLAMP(1 + payload.objective_ids.length * 0.5),
-      cognitive_demand: CLAMP(1 + Math.min(2, codeBlocks / 3)),
-      reasoning_steps: CLAMP(Math.min(5, workedSteps)),
-      code_complexity: CLAMP(codeBlocks * 0.8),
+      // Multiple worked examples are additional scaffolding, not cumulative
+      // learner challenge. Measure the deepest single example instead of
+      // summing every demonstration in the lesson.
+      cognitive_demand: CLAMP(1 + Math.min(2, maxWorkedExampleCognitiveSignal(payload) * 0.5)),
+      reasoning_steps: CLAMP(guidedReasoningDepth(maxWorkedDepth)),
+      code_complexity: CLAMP(Math.max(0, ...codeBlockTexts.map(codeBlockComplexity))),
       prerequisite_load: CLAMP(payload.prerequisite_bridge.length),
-      transfer_distance: CLAMP(Math.max(0, payload.worked_examples.length - 1)),
+      // Repeating the same fact through several examples is not transfer.
+      // Only explicit cross-context/application language counts as distance.
+      transfer_distance: CLAMP(conceptTransferSignal(payload)),
       boundary_condition_density: CLAMP(misconceptionDepth),
       task_composition: CLAMP(Math.max(0, payload.objective_ids.length - 1)),
     },
@@ -161,6 +170,48 @@ function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
     },
     confidence: 0.85,
   }
+}
+
+function guidedReasoningDepth(explicitSteps: number): number {
+  if (explicitSteps <= 0) return 0
+  if (explicitSteps <= 3) return 1
+  if (explicitSteps <= 5) return 2
+  return 3
+}
+
+function codeBlockComplexity(code: string): number {
+  const lines = code.split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+  if (lines.length === 0) return 0
+  const controlFlow = lines.filter((line) => /^(?:for|while|if|elif|else|try|except|match|case)\b/u.test(line)).length
+  const functionDefs = lines.filter((line) => /^def\s+/u.test(line)).length
+  // A one-line print/assignment demonstration is presentation glue.  Count
+  // branching, loops and functions much more than the number of examples.
+  return Math.min(5, Math.max(0.5, (lines.length - 1) * 0.35 + controlFlow * 1.2 + functionDefs * 1.5))
+}
+
+function maxWorkedExampleCognitiveSignal(payload: ConceptLessonPayload): number {
+  return Math.max(0, ...payload.worked_examples.map((block) => {
+    const text = learnerVisibleBlockText(block)
+    if (block.block_type === "comparison") return 3
+    if (block.block_type === "code") {
+      const complexity = codeBlockComplexity(block.code)
+      return complexity >= 2.5 ? 3 : complexity >= 1.5 ? 2 : 1
+    }
+    const explicitSteps = text.split(/\r?\n/u)
+      .filter((line) => /^\s*(?:\d+[.)、]|[-*])\s+/u.test(line)).length
+    if (explicitSteps >= 4 || /调试|推导|反例|debug|derive/iu.test(text)) return 3
+    if (explicitSteps >= 2 || /追踪|分析原因|trace/iu.test(text)) return 2
+    return text.trim() ? 1 : 0
+  }))
+}
+
+function conceptTransferSignal(payload: ConceptLessonPayload): number {
+  const text = payload.worked_examples.map(learnerVisibleBlockText).join("\n")
+  if (/跨领域|陌生情境|综合迁移|novel\s+context/iu.test(text)) return 2
+  if (/迁移到|应用到|换一个情境|transfer\s+to/iu.test(text)) return 1
+  return 0
 }
 
 function estimateCodeLab(payload: CodeLabPublicPayload): Observed {

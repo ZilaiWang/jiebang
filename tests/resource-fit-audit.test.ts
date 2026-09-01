@@ -56,6 +56,45 @@ describe("resource-fit-audit：生成后实际难度估计与匹配判定", () =
     expect(["fit", "too_easy", "too_hard", "uncertain"]).toContain(entry.fit.verdict)
   })
 
+  test("多个简单示例属于脚手架，不会被累加成高代码复杂度和远迁移", () => {
+    const entry = auditResourceFit({
+      artifact_id: "lesson-guided-examples",
+      kind: "concept_lesson",
+      target: {
+        challenge_target: {
+          domain_complexity: 1, cognitive_demand: 1, reasoning_steps: 1,
+          code_complexity: 0, prerequisite_load: 0, transfer_distance: 0,
+          boundary_condition_density: 0, task_composition: 0,
+        },
+        support_target: {
+          scaffold_strength: 4, reading_density: "low", hint_strength: 4, starter_support: 0,
+        },
+      },
+      payload: {
+        title: "认识 Python", objective_ids: ["O1"], prerequisite_bridge: [],
+        explanation_blocks: [{ block_id: "e", block_type: "paragraph", text: "直接解释核心事实。", citations: [] }],
+        worked_examples: [1, 2, 3].map((index) => ({
+          block_id: `w${index}`, block_type: "code", language: "python",
+          code: `print(\"示例 ${index}\")`, caption: `示例 ${index}`, citations: [],
+        })).concat([{
+          block_id: "trace", block_type: "paragraph",
+          text: "1. 编写代码\n2. 解释器接收代码\n3. 产生输出", citations: [],
+        }] as never),
+        misconceptions: [{ misconception_tag: "m", explanation: "辨析一个常见误区", objective_id: "O1", citations: [] }],
+        micro_checks: [{ block_id: "q", block_type: "quiz", item_id: "i", prompt: "判断", citations: [] }],
+        hint_ladders: [{ objective_id: "O1", hints: [1, 2, 3].map((level) => ({ hint_level: level, text: `提示 ${level}`, citations: [] })) }],
+        summary: [{ block_id: "s", block_type: "paragraph", text: "总结", citations: [] }],
+        objective_coverage: [], used_evidence: [],
+      } as never,
+    })
+
+    expect(entry.observed.challenge.reasoning_steps).toBe(1)
+    expect(entry.observed.challenge.code_complexity).toBeLessThanOrEqual(1)
+    expect(entry.observed.challenge.transfer_distance).toBe(0)
+    expect(entry.fit.score).toBeGreaterThanOrEqual(0.85)
+    expect(entry.fit.verdict).toBe("fit")
+  })
+
   test("测评：挑战高（tier3+code 题）时判 too_hard；支架应为 0", () => {
     const entry = auditResourceFit({
       artifact_id: "assess-1",

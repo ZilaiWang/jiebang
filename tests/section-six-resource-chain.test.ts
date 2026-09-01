@@ -2,9 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { contentHash } from "../src/role-c-content/contracts/common"
 import { buildResourceBlueprint } from "../src/role-c-content/planning/resource-blueprint"
 import { buildAssessmentTaxonomyPlan } from "../src/role-c-content/planning/assessment-taxonomy"
+import { buildPracticalGuidePlan } from "../src/role-c-content/planning/practical-guide-plan"
 import { materializeCodeLabPublicAuthorPayload } from "../src/role-c-content/providers/staged-generation"
 import { validateRoleCSchemaFragment } from "../src/role-c-content/validators/runtime-schema-validator"
-import { validatePracticalGuideForRelease } from "../src/role-c-content/validators/section-six-resource-validator"
+import {
+  validatePracticalGuideAgainstLearnerSurface,
+  validatePracticalGuideForRelease,
+} from "../src/role-c-content/validators/section-six-resource-validator"
 import { extractCodeLabBlocks } from "../src/role-c-content/review/extract-review-blocks"
 
 function fixture() {
@@ -44,6 +48,20 @@ function fixture() {
 }
 
 describe("第 6 项统一资源链", () => {
+  test("实操前置检查同时绑定先修事实、当前任务事实与输入合同", () => {
+    const plan = buildPracticalGuidePlan({
+      lab_id: "LAB-R", objective_ids: ["O1"], primary_objective_id: "O1",
+      goal_context: "变量练习", scaffold_strength: 3, session_minutes: 30,
+      require_troubleshooting: true, tool_constraints: [],
+      prerequisite_fact_refs: [{ source_id: "K001", fact_id: "F001", relation: "prerequisite" }],
+      objective_fact_refs: { O1: [{ source_id: "K002", fact_id: "F013", relation: "derived_from" }] },
+      public_tests: [{ test_id: "T1", objective_id: "O1" }],
+    })
+    expect(plan.readiness_slots[0]!.citations.map((entry) => `${entry.source_id}:${entry.fact_id}`))
+      .toEqual(["K001:F001", "K002:F013"])
+    expect(plan.readiness_slots[0]!.contract_refs).toContain("execution.input_contract")
+  })
+
   test("真实 mastery 驱动 LearningDesignSpec，测评计划携带双重分阶", () => {
     const { evidence, spec } = fixture()
     const blueprint = buildResourceBlueprint(spec, evidence)
@@ -106,6 +124,38 @@ describe("第 6 项统一资源链", () => {
     unfinished.steps[0]!.action = "TODO"
     expect(validatePracticalGuideForRelease(unfinished)).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "placeholder_visible_text", path: "$.steps[0].action" }),
+    ]))
+    const inconsistentGuide = structuredClone(payload.practical_guide!)
+    inconsistentGuide.steps[0]!.action = "打开 starter_code，把 message 等号右边的 TODO_FILL_FACT 替换掉"
+    expect(validatePracticalGuideAgainstLearnerSurface({
+      guide: inconsistentGuide,
+      starter_code: payload.starter_code,
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "internal_guide_vocabulary" }),
+      expect.objectContaining({ code: "guide_identifier_mismatch" }),
+    ]))
+    const legitimateExtension = structuredClone(payload.practical_guide!)
+    legitimateExtension.extension_task.task = "新增变量 extra_value = 5，再比较扩展前后的整理结果"
+    expect(validatePracticalGuideAgainstLearnerSurface({
+      guide: legitimateExtension,
+      starter_code: payload.starter_code,
+    }).filter((issue) => issue.code === "guide_identifier_mismatch")).toEqual([])
+    const misleadingExtension = structuredClone(payload.practical_guide!)
+    misleadingExtension.extension_task.task = "把已有的 extra_value = 5 改成 6"
+    expect(validatePracticalGuideAgainstLearnerSurface({
+      guide: misleadingExtension,
+      starter_code: payload.starter_code,
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "guide_identifier_mismatch" }),
+    ]))
+    const inventedDomainGuide = structuredClone(payload.practical_guide!)
+    inventedDomainGuide.extension_task.task = "例如列表仅用于网页数据时，判断该说法是否正确"
+    expect(validatePracticalGuideAgainstLearnerSurface({
+      guide: inventedDomainGuide,
+      starter_code: payload.starter_code,
+      evidence_facts: ["列表可以按顺序保存多个值。"],
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "unsupported_guide_example" }),
     ]))
     expect(validateRoleCSchemaFragment("code_lab_draft.schema.json", "/$defs/public_payload", payload).ok).toBe(true)
     const guideGoal = extractCodeLabBlocks({

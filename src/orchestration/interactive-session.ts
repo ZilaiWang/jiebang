@@ -245,6 +245,8 @@ export interface InteractiveSessionRecord {
     role_c_generation_attempt: number
     /** Consecutive artifact-generation failures in the current round; reset on publication. */
     role_c_failed_generations: number
+    /** Stage owning the consecutive failure count; progress to another stage resets the count. */
+    role_c_failed_stage?: RoleCGenerationFailure["stage"] | null
     /** Private stage-local retry directive; cleared after a successful publication. */
     role_c_generation_recovery: GenerationRecoveryContext | null
     /** 画像纪元：初始 0，reprofile 重建画像时 +1，作为 profile_version 的一部分，
@@ -390,6 +392,7 @@ export class InteractiveSessionStore {
       generation_attempt: record.private.role_c_generation_attempt,
       failed_generations: record.private.role_c_failed_generations,
       recovery_fingerprint: record.private.role_c_generation_recovery?.failure_fingerprint ?? null,
+      recovery_attempt: record.private.role_c_generation_recovery?.attempt ?? null,
       next_request_id: record.private.next_round_context?.request_id ?? null,
       kind,
     })
@@ -540,6 +543,7 @@ export class InteractiveSessionStore {
         assessment_history: structuredClone(learnerMemory.recent_assessment_items ?? []),
         role_c_generation_attempt: 0,
         role_c_failed_generations: 0,
+        role_c_failed_stage: null,
         role_c_generation_recovery: null,
         profile_epoch: 0,
         node_remediate_rounds: 0,
@@ -996,33 +1000,65 @@ export class InteractiveSessionStore {
         await this.save(updated)
         return response
       }
-      const generationFailure = record.terminal_outcome?.generation_failure
+      const persistedGenerationFailure = record.terminal_outcome?.generation_failure
+      let generationFailureState = persistedGenerationFailure?.stage === "unknown"
+        ? generationFailure({
+            code: "BLOCKED_INVALID_OUTPUT",
+            message: persistedGenerationFailure.message,
+            details: persistedGenerationFailure.issueCodes,
+            stage: "unknown",
+          })
+        : persistedGenerationFailure
+      // Older sessions counted failures across concept/code/assessment as one
+      // global total and could mark a later, different stage as permanently
+      // exhausted. Reconstruct the stage-local retry contract once; the
+      // current implementation tracks consecutive failures per owning stage.
+      if (generationFailureState
+        && generationFailureState.repairScope === "artifact"
+        && !generationFailureState.canRetry) {
+        generationFailureState = generationFailure({
+          code: "BLOCKED_INVALID_OUTPUT",
+          message: generationFailureState.message,
+          details: generationFailureState.issueCodes,
+          stage: generationFailureState.stage,
+        })
+        if (!record.private.role_c_failed_stage) {
+          record.private.role_c_failed_stage = generationFailureState.stage
+          record.private.role_c_failed_generations = 0
+        }
+      }
       if (record.terminal_outcome?.kind === "content_generation_failed"
-        && generationFailure?.canRetry
+        && generationFailureState?.canRetry
         && record.profile && record.formal_path && record.current_path_node) {
-        // Every explicit recovery is a new generation attempt. This changes
-        // both the Role C run identity and durable job identity, so a prior
-        // completed/failed artifact_revision job cannot swallow a later retry.
-        record.private.role_c_generation_attempt = (record.private.role_c_generation_attempt ?? 0) + 1
+        const retryPlan = nextRoleCGenerationRetry(
+          record.private.role_c_generation_attempt ?? 0,
+          record.private.role_c_generation_recovery?.attempt ?? 0,
+          generationFailureState.stage,
+        )
+        // A provider/network deadline does not invalidate content that was
+        // already generated and checkpointed. Keep the same Role C run
+        // identity so the retry can resume those stages. Artifact/review
+        // failures still receive a fresh content identity.
+        record.private.role_c_generation_attempt = retryPlan.generationAttempt
         record.status = "running"
         record.current_stage = "assessment"
         record.waiting_for = null
         record.blocked_reason = null
         record.terminal_outcome = null
         const recovery = generationRecoveryContext(
-          generationFailure,
-          record.private.role_c_generation_attempt,
+          generationFailureState,
+          retryPlan.recoveryAttempt,
         )
         record.private.role_c_generation_recovery = recovery
         const startedAt = new Date().toISOString()
-        const recoveryWorker = workerForRoleCFailure(generationFailure)
+        const recoveryWorker = workerForRoleCFailure(generationFailureState)
         const recoveryAttemptNo = nextWorkerAttemptNo(record, recoveryWorker, record.round_no)
-        upsertLedger(record, recoveryWorker, "running", `${generationFailure.nextAction} 已开始`, {
+        upsertLedger(record, recoveryWorker, "running", `${generationFailureState.nextAction} 已开始`, {
           startedAt,
           attemptNo: recoveryAttemptNo,
           executionType: "reviewed_pipeline",
         })
-        record.events.push(event(record.session_id, "session_updated", "assessment", `${generationFailure.nextAction} started`, startedAt, workerForRoleCFailure(generationFailure)))
+        record.events.push(event(record.session_id, "session_updated", "assessment", `${generationFailureState.nextAction} started`, startedAt, workerForRoleCFailure(generationFailureState)))
         record.updated_at = startedAt
         const response = publicSessionView(record)
         record.processed_commands[command.command_id] = { request_hash: requestHash, response }
@@ -1035,7 +1071,7 @@ export class InteractiveSessionStore {
         return response
       }
       if (record.terminal_outcome?.kind === "content_generation_failed"
-        && generationFailure && !generationFailure.canRetry) {
+        && generationFailureState && !generationFailureState.canRetry) {
         throw new InteractiveSessionError(
           "C_RECOVERY_EXHAUSTED",
           "当前生成策略未能产生有效内容，请调整学习目标后重新开始",
@@ -1399,6 +1435,7 @@ function normalizeSessionRecord(record: InteractiveSessionRecord): InteractiveSe
       assessment_history: record.private?.assessment_history ?? [],
       role_c_generation_attempt: record.private?.role_c_generation_attempt ?? 0,
       role_c_failed_generations: record.private?.role_c_failed_generations ?? 0,
+      role_c_failed_stage: record.private?.role_c_failed_stage ?? null,
       role_c_generation_recovery: record.private?.role_c_generation_recovery ?? null,
       profile_epoch: record.private?.profile_epoch ?? 0,
       node_remediate_rounds: record.private?.node_remediate_rounds ?? 0,
@@ -2177,6 +2214,24 @@ export function roleCRoundRunId(baseRunId: string, roundNo: number, generationAt
   return `${baseRunId}-R${roundNo}-C${generationAttempt + 1}`
 }
 
+/**
+ * Every stage-local recovery stays inside the same Role C round identity so
+ * durable checkpoints can actually reuse reviewed siblings/upstream stages.
+ * generation_recovery (including its attempt/fingerprint) participates in the
+ * model request hash, so the failed stage still receives a fresh candidate.
+ * A new identity is reserved for a genuinely new learning round.
+ */
+export function nextRoleCGenerationRetry(
+  currentGenerationAttempt: number,
+  previousRecoveryAttempt: number,
+  _failedStage: RoleCGenerationFailure["stage"],
+): { generationAttempt: number; recoveryAttempt: number } {
+  return {
+    generationAttempt: currentGenerationAttempt,
+    recoveryAttempt: Math.max(1, previousRecoveryAttempt + 1),
+  }
+}
+
 /** 轮次决策阈值单点来源：与 C 侧 `DEFAULT_ROUND_ACTION_POLICY` 对齐，
  *  <40% 针对性补救，≥80% 推进；避免主 Agent 与 C 各自维护一份导致调优漂移。 */
 export const REMEDIATE_ACCURACY_THRESHOLD = DEFAULT_ROUND_ACTION_POLICY.remediate_below
@@ -2499,25 +2554,32 @@ function applyRoleCGenerationFailure(
   record.current_stage = "blocked"
   record.waiting_for = null
   record.next_round_action = null
-  record.blocked_reason = result.reason
   if (!result.failure) {
+    record.blocked_reason = "互动学习资源暂未生成完成，请稍后重新生成。"
     record.terminal_outcome = null
     return
   }
   const contentFailure = result.failure.repairScope === "artifact"
   if (contentFailure) {
-    record.private.role_c_failed_generations = (record.private.role_c_failed_generations ?? 0) + 1
+    const sameStage = !record.private.role_c_failed_stage
+      || record.private.role_c_failed_stage === result.failure.stage
+    record.private.role_c_failed_generations = sameStage
+      ? (record.private.role_c_failed_generations ?? 0) + 1
+      : 1
+    record.private.role_c_failed_stage = result.failure.stage
   }
   const failure: RoleCGenerationFailure = contentFailure
     && record.private.role_c_failed_generations >= 2
     ? { ...result.failure, nextAction: "change_goal", canRetry: false }
     : result.failure
+  const publicMessage = publicRoleCGenerationFailureMessage(failure)
+  record.blocked_reason = publicMessage
   markContentReviewFailed(record, { ...result, failure })
   if (failure.code === "TARGET_UNSUPPORTED") {
     record.terminal_outcome = {
       kind: "unsupported_goal",
       code: "UNSUPPORTED_GOAL",
-      message: result.reason,
+      message: publicMessage,
       recommended_actions: ["retry_planning", "change_goal"],
       evidence_refs: [failure.fingerprint],
       generation_failure: failure,
@@ -2528,7 +2590,7 @@ function applyRoleCGenerationFailure(
     record.terminal_outcome = {
       kind: "insufficient_evidence",
       code: "INSUFFICIENT_EVIDENCE",
-      message: result.reason,
+      message: publicMessage,
       recommended_actions: ["retry_retrieval", "expand_knowledge_base", "change_goal"],
       evidence_refs: [failure.fingerprint],
       generation_failure: failure,
@@ -2545,11 +2607,22 @@ function applyRoleCGenerationFailure(
   record.terminal_outcome = {
     kind: "content_generation_failed",
     code: "C_GENERATION_FAILED",
-    message: result.reason,
+    message: publicMessage,
     recommended_actions: recommended,
     evidence_refs: [failure.fingerprint],
     generation_failure: failure,
   }
+}
+
+function publicRoleCGenerationFailureMessage(failure: RoleCGenerationFailure): string {
+  if (failure.code === "TARGET_UNSUPPORTED") return "当前学习目标暂不具备可发布的互动资源，请重新规划学习路径。"
+  if (failure.code === "EVIDENCE_UNAVAILABLE") return "当前知识证据不足以支撑完整互动资源，请刷新知识检索后重试。"
+  if (failure.code === "PROVIDER_UNAVAILABLE") return "模型服务本次未能完成生成，请稍后重试。"
+  if (failure.stage === "concept") return "概念讲解未通过内容质量审核，已保留上一轮资源，可重新生成概念讲解。"
+  if (failure.stage === "code_lab") return "代码实验未通过内容或执行审核，已保留上一轮资源，可重新生成代码实验。"
+  if (failure.stage === "assessment") return "正式测评未通过题目质量审核，已保留上一轮资源，可重新生成正式测评。"
+  if (failure.stage === "review") return "本轮互动资源未通过发布审核，已保留上一轮资源，可重新生成。"
+  return "本轮互动资源暂未通过质量审核，已保留上一轮资源，可重新生成。"
 }
 
 function generationRecoveryContext(
@@ -2608,6 +2681,7 @@ async function applyFormalRoleCRound(
   record.rag_result = round.rag_result
   markContentReviewPassed(record, round.audit)
   record.private.role_c_failed_generations = 0
+  record.private.role_c_failed_stage = null
   record.learning_resources = { concept_lesson: round.concept_lesson, code_lab: round.code_lab }
   record.assessment = round.assessment
   record.private.assessment_history = mergeAssessmentHistory(
@@ -2931,6 +3005,7 @@ async function resetToDiagnosisPhase(
       // 递增而非归零：reprofile 后新 run 的 runId 不与首轮冲突（C 侧 run 幂等）。
       role_c_generation_attempt: (record.private.role_c_generation_attempt ?? 0) + 1,
       role_c_failed_generations: 0,
+      role_c_failed_stage: null,
       role_c_generation_recovery: null,
       // 新画像纪元：新画像的 mastery 状态从零开始，不与旧画像累积串扰。
       profile_epoch: (record.private.profile_epoch ?? 0) + 1,

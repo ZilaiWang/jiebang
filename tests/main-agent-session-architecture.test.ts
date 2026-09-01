@@ -8,6 +8,7 @@ import {
   bindPathNodeFactsForRoleC,
   buildNextRoundContext,
   interactiveSessionProductionBoundary,
+  nextRoleCGenerationRetry,
   resolveRoleCKnowledgeBaseVersion,
   roleCRoundRunId,
 } from "../src/orchestration/interactive-session"
@@ -33,8 +34,26 @@ describe("main agent session architecture", () => {
     expect(roleCRoundRunId("RUN-001", 1, 1)).toBe("RUN-001-R1-C2")
   })
 
+  test("provider retries preserve the C identity while advancing the durable recovery attempt", () => {
+    expect(nextRoleCGenerationRetry(0, 0, "provider")).toEqual({
+      generationAttempt: 0,
+      recoveryAttempt: 1,
+    })
+    expect(nextRoleCGenerationRetry(0, 1, "provider")).toEqual({
+      generationAttempt: 0,
+      recoveryAttempt: 2,
+    })
+  })
+
+  test("artifact retries preserve the C identity so stage checkpoints remain addressable", () => {
+    expect(nextRoleCGenerationRetry(0, 0, "assessment")).toEqual({
+      generationAttempt: 0,
+      recoveryAttempt: 1,
+    })
+  })
+
   test("uses A's live knowledge-base version for every reviewed C round", async () => {
-    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.11.0")
+    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.12.0")
     expect(await resolveRoleCKnowledgeBaseVersion()).not.toBe("python-basics-v1")
   })
 

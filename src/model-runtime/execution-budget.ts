@@ -24,6 +24,12 @@ export interface RoleCContentBudgetWorkload {
  * semantic review form one quality workflow. The durable job deliberately
  * outlives its model budget so the accepted release can still be persisted.
  */
+// A five-item form with three public candidates, secure authoring, independent
+// critics and one evidence-driven revision can legitimately exceed eight
+// minutes on a reasoning model even though every individual call is healthy.
+// Keep the durable lease above the model budget; call-count limits still
+// prevent runaway loops while the longer lease lets a completed release be
+// persisted after model authoring finishes.
 export const ROLE_C_REVIEWED_WORKFLOW_SOFT_DEADLINE_MS = 600_000
 export const ROLE_C_REVIEWED_WORKFLOW_HARD_DEADLINE_MS = 900_000
 export const ROLE_C_DURABLE_JOB_DEADLINE_MS = 1_200_000
