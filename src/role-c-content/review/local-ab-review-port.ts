@@ -19,6 +19,10 @@ import {
 import { extractReviewBlocks } from "./extract-review-blocks"
 import { agentForReviewArtifact } from "./revision-mapper"
 import { resolveFindingDisposition } from "./disposition-resolver"
+import { runBoundedReviewDebate } from "./debate-orchestrator"
+import type { DebateFinding, DebateReviewInput } from "./debate-orchestrator"
+import { ModelBackedReviewDebateArbiter } from "./debate-orchestrator"
+import { createModelBackedDebateAgent } from "./debate-orchestrator"
 import type {
   ArtifactReviewResult,
   ContentSemanticAuditPort,
@@ -42,6 +46,7 @@ export interface LocalABContentReviewPortOptions {
   kb_version?: string
   policy_version?: string
   semantic_audit_port?: ContentSemanticAuditPort
+  debate_arbiter?: import("../contracts/model-gateway").ModelGateway
 }
 
 export function createLocalABContentReviewPort(
@@ -69,6 +74,7 @@ export function createLocalABContentReviewPort(
           teachingAudit,
           index === 0,
           options.semantic_audit_port,
+          options.debate_arbiter,
         ))
       )
       const artifactResults = reviewed.map((entry) => entry.result)
@@ -157,6 +163,7 @@ async function reviewArtifact(
   teachingAudit: TeachingAuditResult,
   includePathFindings: boolean,
   semanticAuditPort?: ContentSemanticAuditPort,
+  debateArbiter?: import("../contracts/model-gateway").ModelGateway,
 ): Promise<{
   result: ArtifactReviewResult
 }> {
@@ -264,6 +271,35 @@ async function reviewArtifact(
         ? objectiveIds.slice(0, 1)
         : objectiveIds,
     ))
+  const debate = await runBoundedReviewDebate(
+    {
+      run_id: request.run_id,
+      artifact_id: target.artifact.artifact_id,
+      artifact_kind: target.kind,
+      evidence_hash: request.evidence_hash,
+      artifact_hash: target.artifact_hash,
+      facts: request.evidence_pack.results.flatMap((item) => item.facts.map((fact) => ({
+        source_id: fact.source_id,
+        fact_id: fact.fact_id,
+        content: fact.content,
+      }))),
+    } satisfies DebateReviewInput,
+    {
+      factAgent: debateArbiter
+        ? createModelBackedDebateAgent(debateArbiter, "fact", findings.filter((finding) => finding.source === "fact_audit").map(toDebateFinding("fact")))
+        : fixedDebateAgent(findings.filter((finding) => finding.source === "fact_audit"), "fact"),
+      teachingAgent: debateArbiter
+        ? createModelBackedDebateAgent(debateArbiter, "teaching", findings.filter((finding) => finding.source === "teaching_audit").map(toDebateFinding("teaching")))
+        : fixedDebateAgent(findings.filter((finding) => finding.source === "teaching_audit"), "teaching"),
+    },
+    debateArbiter ? new ModelBackedReviewDebateArbiter(debateArbiter) : fixedDebateArbiter,
+    { max_rounds: 2 },
+  )
+  const finalDecision: ContentReviewDecision = debate.decision === "blocked" || debate.decision === "reject"
+    ? "reject"
+    : debate.decision === "revise"
+      ? "revise"
+      : decision
   return {
     result: {
       artifact_kind: target.kind,
@@ -271,12 +307,64 @@ async function reviewArtifact(
       artifact_hash: target.artifact_hash,
       fact_status: factStatus,
       teaching_status: teachingAudit.status,
-      decision,
-      can_revise: decision === "revise" && arbitration.canRevise,
+      decision: finalDecision,
+      can_revise: finalDecision === "revise" && arbitration.canRevise,
       findings,
       revision_instructions: instructions,
+      debate,
     },
   }
+}
+
+function fixedDebateAgent(
+  sourceFindings: ContentReviewFinding[],
+  agent: "fact" | "teaching",
+) {
+  const ownFindings: DebateFinding[] = sourceFindings.map((finding) => ({
+    finding_id: `${agent}-${finding.code}-${finding.artifact_id}`,
+    agent,
+    code: finding.code,
+    severity: finding.source_decision === "reject" ? "critical" : "warning",
+    message: finding.message,
+    evidence_refs: finding.evidence_refs,
+    proposed_action: finding.proposed_action,
+  }))
+  return {
+    async review() { return structuredClone(ownFindings) },
+    async respond(input: { visible_findings: DebateFinding[] }) {
+      return input.visible_findings.map((visible) => ({
+        finding_id: `${agent}-response-${visible.finding_id}`,
+        agent,
+        target_finding_id: visible.finding_id,
+        stance: "partially_agree" as const,
+        message: `${agent === "fact" ? "事实审核方" : "教学审核方"}已阅读对方意见，并提交独立仲裁。`,
+      }))
+    },
+  }
+}
+
+function toDebateFinding(agent: "fact" | "teaching") {
+  return (finding: ContentReviewFinding): DebateFinding => ({
+    finding_id: `${agent}-${finding.code}-${finding.artifact_id}`,
+    agent,
+    code: finding.code,
+    severity: finding.source_decision === "reject" ? "critical" : "warning",
+    message: finding.message,
+    evidence_refs: finding.evidence_refs,
+    proposed_action: finding.proposed_action,
+  })
+}
+
+const fixedDebateArbiter = {
+  async arbitrate(input: { rounds: import("./debate-orchestrator").DebateRound[] }) {
+    const findings = input.rounds.at(-1)?.findings ?? []
+    const critical = findings.filter((finding) => finding.severity === "critical")
+    return {
+      decision: critical.length > 0 ? "reject" as const : findings.length > 0 ? "revise" as const : "pass" as const,
+      accepted_finding_ids: critical.map((finding) => finding.finding_id),
+      reason: critical.length > 0 ? "独立仲裁确认存在关键审核问题。" : findings.length > 0 ? "独立仲裁确认存在可修订审核问题。" : "独立仲裁确认 A/B 未提出问题。",
+    }
+  },
 }
 
 async function auditSemanticBlocks(

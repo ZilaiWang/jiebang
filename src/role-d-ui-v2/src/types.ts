@@ -163,6 +163,15 @@ export interface PublicSessionFixture {
       last_error: string | null
       updated_at: string
     }>
+    debates?: Array<{
+      decision: "pass" | "revise" | "reject" | "blocked"
+      rounds: Array<{
+        round_no: number
+        findings: Array<{ finding_id: string; agent: string; code: string; severity: string; message: string }>
+        responses: Array<{ finding_id: string; agent: string; target_finding_id: string; stance: string; message: string }>
+      }>
+      arbitration: { arbiter_agent: string; decision: string; reason: string }
+    }>
   }
   profile?: {
     learner_id: string

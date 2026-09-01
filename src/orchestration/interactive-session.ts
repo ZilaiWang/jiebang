@@ -147,6 +147,15 @@ export interface ContentReviewState {
   round_no: number
   policy: "local-ab-content-review"
   workers: Record<"concept-tutor" | "code-lab" | "tiered-evaluator", ContentReviewWorkerState>
+  debates?: Array<{
+    decision: "pass" | "revise" | "reject" | "blocked"
+    rounds: Array<{
+      round_no: number
+      findings: Array<{ finding_id: string; agent: string; code: string; severity: string; message: string }>
+      responses: Array<{ finding_id: string; agent: string; target_finding_id: string; stance: string; message: string }>
+    }>
+    arbitration: { arbiter_agent: string; decision: string; reason: string }
+  }>
 }
 
 export type Day4NextRoundAction = "remediate" | "reinforce" | "advance" | "reprofile"
@@ -2159,6 +2168,7 @@ interface FormalRoleCRound {
   adaptation?: RoleCAdaptationInfo
   /** 三类资源 target/observed 难度与 fit 结论。 */
   resource_fit?: ResourceFitReport
+  audit?: import("../role-d-integration/contracts").RoleDContentAuditSummary
 }
 
 type FormalRoleCRoundResult = FormalRoleCRound | { ok: false; reason: string; failure?: RoleCGenerationFailure }
@@ -2474,6 +2484,7 @@ async function generateFormalRoleCRound(
       rag_result: currentRagResult,
       adaptation: result.reviewedRelease.adaptation,
       resource_fit: result.reviewedRelease.resource_fit,
+      audit: result.audit,
     }
   }
   console.warn(`[orchestrator] Role C round ${record.round_no} ${result.failure.stage} blocked: ${result.reason}`)
@@ -2595,7 +2606,7 @@ async function applyFormalRoleCRound(
   record.next_round_action = null
   record.private.role_c_generation_recovery = null
   record.rag_result = round.rag_result
-  markContentReviewPassed(record)
+  markContentReviewPassed(record, round.audit)
   record.private.role_c_failed_generations = 0
   record.learning_resources = { concept_lesson: round.concept_lesson, code_lab: round.code_lab }
   record.assessment = round.assessment
@@ -3201,12 +3212,13 @@ function markContentReviewStarted(record: InteractiveSessionRecord): void {
   }
 }
 
-function markContentReviewPassed(record: InteractiveSessionRecord): void {
+function markContentReviewPassed(record: InteractiveSessionRecord, audit?: { debates?: ContentReviewState["debates"] }): void {
   record.content_review = reviewState(record.round_no, "passed", {
     "concept-tutor": "passed",
     "code-lab": "passed",
     "tiered-evaluator": "passed",
   }, { published: true })
+  if (audit?.debates?.length) record.content_review.debates = structuredClone(audit.debates)
   upsertLedger(record, "concept-tutor", "completed", "审核通过，概念讲解已发布", { attemptNo: latestWorkerAttemptNo(record, "concept-tutor", record.round_no), outputRefs: ["concept-tutor:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
   upsertLedger(record, "code-lab", "completed", "审核通过，代码实验已发布", { attemptNo: latestWorkerAttemptNo(record, "code-lab", record.round_no), outputRefs: ["code-lab:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })
   upsertLedger(record, "tiered-evaluator", "completed", "审核通过，正式测评已发布", { attemptNo: latestWorkerAttemptNo(record, "tiered-evaluator", record.round_no), outputRefs: ["tiered-evaluator:reviewed-result"], evidenceRefs: ["content-review:audit"], executionType: "reviewed_pipeline" })

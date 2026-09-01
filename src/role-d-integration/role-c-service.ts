@@ -70,6 +70,7 @@ import {
   LearningCycleService,
   ModelContentSemanticAuditPort,
   ModelBackedRoleCContentProvider,
+  ModelBackedReviewDebateArbiter,
   ModelRoundSemanticPlanner,
   modelBackedProviderOptionsFromEnv,
   projectPublicRagEvidencePack,
@@ -472,6 +473,7 @@ export async function generateRoleCForRoleDWithRuntime(
           ...(modelGateway
             ? { semantic_audit_port: new ModelContentSemanticAuditPort(modelGateway) }
             : {}),
+          ...(modelGateway ? { debate_arbiter: modelGateway } : {}),
         }),
       profile_snapshot: profileSnapshot,
       path_planning_port: createEvidenceAwareBPathPlanningPort(
@@ -1358,6 +1360,7 @@ export async function continueRoleCAfterSubmission(
               ...(modelGateway
                 ? { semantic_audit_port: new ModelContentSemanticAuditPort(modelGateway) }
                 : {}),
+              ...(modelGateway ? { debate_arbiter: modelGateway } : {}),
             }),
           ...(runtime.critic ? { critic: runtime.critic } : {}),
           ...(persistence.checkpointStore
@@ -1716,6 +1719,9 @@ function reviewAuditSummary(
   })
   const factStatus = combineReviewStatuses(final.artifact_results.map((result) => result.fact_status))
   const teachingStatus = combineReviewStatuses(final.artifact_results.map((result) => result.teaching_status))
+  const debates = final.artifact_results
+    .map((result) => result.debate)
+    .filter((debate): debate is NonNullable<typeof debate> => Boolean(debate))
   return {
     factStatus,
     factAudits,
@@ -1737,6 +1743,7 @@ function reviewAuditSummary(
           ? "A/B 审核要求 C 修订后重新提交。"
           : "A/B 审核驳回，本轮产物未发布给 D。",
     },
+    ...(debates.length > 0 ? { debates } : {}),
   }
 }
 

@@ -18,6 +18,7 @@ import type {
 import type { GenerationRecoveryContext } from "../role-c-content"
 import type { PracticalGuidePublicPayload } from "../role-c-content/planning/practical-guide-plan"
 import type { AssessmentCognitiveLevel, AssessmentDifficultyBand } from "../role-c-content/planning/assessment-taxonomy"
+import type { ReviewDebateResult } from "../role-c-content/review/debate-orchestrator"
 
 export const ROLE_C_API_PATHS = {
   generate: "/api/role-c/generate",
@@ -145,6 +146,7 @@ export interface RoleDContentAuditSummary {
   factAudits: RoleDFactAuditSummary[]
   teachingAudit: RoleDTeachingAuditSummary
   arbitration: RoleDArbitrationSummary
+  debates?: ReviewDebateResult[]
 }
 
 export interface RoleDReviewRecoverySummary {

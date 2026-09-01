@@ -12,6 +12,7 @@ import type {
   CPipelineResult,
 } from "../orchestrator/content-pipeline"
 import type { LearnerLevel } from "../contracts/common"
+import type { ReviewDebateResult } from "./debate-orchestrator"
 
 export type ReviewArtifactKind = "concept" | "code_lab" | "assessment"
 export type ContentReviewDecision = "pass" | "revise" | "reject"
@@ -217,6 +218,7 @@ export interface ArtifactReviewResult {
   can_revise: boolean
   findings: ContentReviewFinding[]
   revision_instructions: ContentRevisionInstruction[]
+  debate?: ReviewDebateResult
 }
 
 export interface ContentReviewResult {
