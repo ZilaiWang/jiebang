@@ -1,4 +1,6 @@
-# 正式评测方法
+# 正式评测方法（历史 V1）
+
+本文件记录早期 60×2 方案，保留用于追溯，不再作为比赛最终执行入口。当前冻结合同、60×1 放量顺序、同模型独立调用标识、断点恢复和正式命令统一见 [`docs/evaluation-v3/RUNBOOK.md`](../docs/evaluation-v3/RUNBOOK.md)。执行时以 V3 文档和 `evaluation/v2/frozen.json` 为准。
 
 ## 评测对象
 

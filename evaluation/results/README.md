@@ -1,5 +1,7 @@
 # 评测结果目录
 
+当前正式口径为 Evaluation Reliability V3：固定金丝雀 3 例、平衡开发集 12 例、冻结正式集 60×1。完整协议与恢复规则见 [`docs/evaluation-v3/RUNBOOK.md`](../../docs/evaluation-v3/RUNBOOK.md)。本目录只保存需要随仓库发布的说明；真实运行产物写入 `.tmp`，其中可能含模型生成内容，不提交仓库。
+
 真实模型评测会把以下可审计文件写入本目录：
 
 - `claims.json`：逐声明事实审核结果（claim_id / verdict / supported_fact_ids / reason）
@@ -16,13 +18,17 @@
 运行方式：
 
 ```bash
-# 开发自检（12 例）
-bun run eval:competition:dev
+# 固定 3 例金丝雀
+bun run eval:competition:dev -- --self-audit --output-dir=.tmp/eval-v3-canary
 
-# 正式评测（60 例 × 2 次，门禁断言）
-bun run eval:competition:final
+# 平衡 12 例
+bun run eval:competition:balanced12 -- --self-audit --output-dir=.tmp/eval-v3-balanced12
+
+# 正式评测（冻结 60×1；要求同一提交上的平衡集证据与评审校准证据）
+bun run eval:competition:final -- --self-audit \
+  --gate-evidence=.tmp/eval-v3-balanced12/latest.json \
+  --calibration-evidence=evaluation/judge-calibration.v1.json \
+  --output-dir=.tmp/eval-v3-formal60
 ```
 
-脚本会直接运行真实主 Agent 流水线、Docker 与独立评审器，再计算三项指标。
-`--assert-gates` 未通过时以非零码退出。正式成绩必须同时保留分子、分母、
-协议哈希和两名成员完成的人工复核，不能只引用百分比。
+脚本直接运行真实主 Agent 流水线、Docker 与逐声明/逐资源评审，再计算三项指标。任何 Gate 未通过均以非零码退出；报告始终保留完整分母、未运行数、失败归因和协议哈希，不能只引用百分比。
