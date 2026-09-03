@@ -58,11 +58,11 @@
 ## 运行命令
 
 ```bash
-# 12 例开发检查
-bun run eval:competition:dev
+# 历史 12 例开发检查（仅用于追溯 V1）
+bun run eval:competition:legacy:dev
 
-# 60 例 × 2 次正式评测
-bun run eval:competition:final
+# 历史 60 例 × 2 次评测（不作为当前正式结果）
+bun run eval:competition:legacy:final
 
 # 12 例辅助鲁棒性检查
 bun run eval:competition:robustness
