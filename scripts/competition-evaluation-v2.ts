@@ -64,6 +64,7 @@ import {
 } from "../src/evaluation/v2/reporting.v2"
 import { runControlledPairV2 } from "../src/evaluation/v2/counterfactual-runner.v2"
 import { createDockerPythonCodeRunnerFromEnv } from "../src/role-c-content/security/code-runner"
+import { competitionRuntimeIdentityV2 } from "../src/evaluation/v2/runtime-identity.v2"
 import {
   summarizeCaseReliability, isRetryableOperationalRecord, selectReliabilityCases,
   evaluateReliabilityGate, contractSatisfiability, buildReliabilityScorecard,
@@ -358,6 +359,7 @@ async function run() {
     runner_image_digest: docker.runner_image_digest,
     generation_model: generation.model_id,
     generation_config: generation.model_config_hash,
+    generation_runtime_config: contentHash(competitionRuntimeIdentityV2(env)),
     judge_model: judge?.model_id ?? null,
     judge_mode: evaluationJudgeModeV2(generation.model_id, judge?.model_id),
     judge_config: judge?.model_config_hash ?? null,
@@ -376,7 +378,7 @@ async function run() {
     const gateEvidence = option("--gate-evidence")
     if (!gateEvidence) throw new Error("FORMAL_REQUIRES_BALANCED12_GATE_EVIDENCE")
     const prior = await read<{ gate?: { gate?: string; passed?: boolean }; protocol?: Partial<typeof protocolBody> }>(resolve(gateEvidence))
-    const evidenceKeys = ["manifest_hash", "source_tree_hash", "runner_image_digest", "generation_model", "generation_config", "judge_model", "judge_config", "difficulty_judge_version", "rubric_hash", "prompt_version"] as const
+    const evidenceKeys = ["manifest_hash", "source_tree_hash", "runner_image_digest", "generation_model", "generation_config", "generation_runtime_config", "judge_model", "judge_config", "difficulty_judge_version", "rubric_hash", "prompt_version"] as const
     if (prior.gate?.gate !== "balanced12" || prior.gate.passed !== true
       || evidenceKeys.some((key) => prior.protocol?.[key] !== protocol[key])) {
       throw new Error("FORMAL_GATE_EVIDENCE_MISMATCH")

@@ -33,7 +33,7 @@ bun run eval:v2:final -- --self-audit --gate-evidence=.tmp/eval-v3-balanced12/la
 - `--resume` 复用已保存结果；进程中断留下的运行中记录使用 `--resume --retry-infrastructure` 继续。
 - Provider、网络、证书、额度或持久化问题处理完成后，增加 `--retry-infrastructure`；内容质量失败不会被顺带重试。
 - 已发布资源的事实或难度评审中断时，增加 `--retry-audits`；资源生成与 Docker 结果保持不变。
-- 源码、Prompt、模型配置或冻结合同变化会改变协议 ID，必须使用新输出目录重新从 Gate 1 开始；知识事实或能力元数据变化后重新复核 manifest，旧证据保留原版本。
+- 源码、Prompt、模型配置、候选/修复策略、分阶段 token 预算、任务调用预算、Docker 资源策略或冻结合同变化会改变协议 ID，必须使用新输出目录重新从 Gate 1 开始；知识事实或能力元数据变化后重新复核 manifest，旧证据保留原版本。协议只保存这些非密钥配置的哈希，不写入 API Key。
 
 每次生成完成后即保存公开资源，每批最多 12 条事实审核与每一类难度审核分别落盘，JSON 使用原子替换避免中断留下半个文件。C 内部原有的资源级 checkpoint 继续负责讲义、实验和测评的局部恢复。
 
