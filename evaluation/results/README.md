@@ -2,7 +2,7 @@
 
 当前正式口径为 Evaluation Reliability V3：固定金丝雀 3 例、平衡开发集 12 例、冻结正式集 60×1。完整协议与恢复规则见 [`docs/evaluation-v3/RUNBOOK.md`](../../docs/evaluation-v3/RUNBOOK.md)。本目录只保存需要随仓库发布的说明；真实运行产物写入 `.tmp`，其中可能含模型生成内容，不提交仓库。
 
-真实模型评测会把以下可审计文件写入本目录：
+真实模型评测会把以下可审计文件写入命令指定的 `.tmp` 输出目录：
 
 - `claims.json`：逐声明事实审核结果（claim_id / verdict / supported_fact_ids / reason）
 - `difficulty-audits.json`：每份生成资源的难度分类结果（predicted_difficulty / reasons）

@@ -39,7 +39,7 @@ import {
   extractCompetitionClaimCandidates,
   evidenceFactsFromDelivery,
 } from "../src/evaluation/competition-claim-auditor"
-import { ModelResourceDifficultyJudge } from "../src/evaluation/resource-difficulty-judge"
+import { ModelResourceDifficultyJudge, MODEL_DIFFICULTY_JUDGE_VERSION } from "../src/evaluation/resource-difficulty-judge"
 import { runJudgeCalibration, calibrationRows, type CalibrationResource, type CalibrationResult } from "../src/evaluation/reliability/calibration-runner"
 import { writeEvaluationJson } from "../src/evaluation/reliability/atomic-json"
 import { competitionArtifactViews } from "../src/evaluation/competition-artifact-view"
@@ -176,6 +176,7 @@ if (action === "candidate") {
   if (!judgeEnv) throw new Error("CALIBRATION_JUDGE_REQUIRED")
   const judge = createRoleCModelGatewayFromEnv(judgeEnv)
   const qualification = { judge_model: judge.model_id, judge_config: judge.model_config_hash,
+    judge_version: MODEL_DIFFICULTY_JUDGE_VERSION,
     rubric_hash: contentHash(await readFile("evaluation/difficulty-rubric.v1.md", "utf8")) }
   const identity = { ...qualification, resources_hash: contentHash(resources) }
   const identityPath = join(root, "calibration.protocol.json")
@@ -200,11 +201,12 @@ if (action === "candidate") {
   const input = option("--input")
   if (!input) throw new Error("CALIBRATION_INPUT_REQUIRED")
   const data = await read<JudgeCalibrationRow[] | {
-    rows: JudgeCalibrationRow[]; judge_model: string; judge_config: string; rubric_hash: string
+    rows: JudgeCalibrationRow[]; judge_model: string; judge_config: string; judge_version?: string; rubric_hash: string
   }>(resolve(input))
   const rows = Array.isArray(data) ? data : data.rows
   const qualification = Array.isArray(data) ? null : {
-    judge_model: data.judge_model, judge_config: data.judge_config, rubric_hash: data.rubric_hash,
+    judge_model: data.judge_model, judge_config: data.judge_config,
+    judge_version: data.judge_version, rubric_hash: data.rubric_hash,
   }
   const report = { ...evaluateJudgeCalibration(rows), rows_hash: contentHash(rows), qualification }
   await write(join(root, "judge-calibration.json"), report)
@@ -360,6 +362,7 @@ async function run() {
     judge_mode: evaluationJudgeModeV2(generation.model_id, judge?.model_id),
     judge_config: judge?.model_config_hash ?? null,
     judge_independent: !!judge && judge.model_id !== generation.model_id,
+    difficulty_judge_version: MODEL_DIFFICULTY_JUDGE_VERSION,
     prompt_version: ROLE_C_PROMPT_MANIFEST_VERSION,
     rubric_hash: contentHash(
       await readFile("evaluation/difficulty-rubric.v1.md", "utf8"),
@@ -373,16 +376,21 @@ async function run() {
     const gateEvidence = option("--gate-evidence")
     if (!gateEvidence) throw new Error("FORMAL_REQUIRES_BALANCED12_GATE_EVIDENCE")
     const prior = await read<{ gate?: { gate?: string; passed?: boolean }; protocol?: Partial<typeof protocolBody> }>(resolve(gateEvidence))
-    const evidenceKeys = ["manifest_hash", "source_tree_hash", "runner_image_digest", "generation_model", "generation_config", "judge_model", "judge_config", "rubric_hash", "prompt_version"] as const
+    const evidenceKeys = ["manifest_hash", "source_tree_hash", "runner_image_digest", "generation_model", "generation_config", "judge_model", "judge_config", "difficulty_judge_version", "rubric_hash", "prompt_version"] as const
     if (prior.gate?.gate !== "balanced12" || prior.gate.passed !== true
       || evidenceKeys.some((key) => prior.protocol?.[key] !== protocol[key])) {
       throw new Error("FORMAL_GATE_EVIDENCE_MISMATCH")
     }
     const calibrationPath = option("--calibration-evidence")
     if (!calibrationPath) throw new Error("FORMAL_REQUIRES_JUDGE_CALIBRATION")
-    const calibration = await read<{ passed?: boolean; qualification?: { judge_model?: string; judge_config?: string; rubric_hash?: string } }>(resolve(calibrationPath))
-    if (calibration.passed !== true || ["judge_model", "judge_config", "rubric_hash"].some((key) =>
-      calibration.qualification?.[key as "judge_model" | "judge_config" | "rubric_hash"] !== protocol[key as "judge_model" | "judge_config" | "rubric_hash"])) {
+    const calibration = await read<{ passed?: boolean; qualification?: {
+      judge_model?: string; judge_config?: string; judge_version?: string; rubric_hash?: string
+    } }>(resolve(calibrationPath))
+    if (calibration.passed !== true
+      || calibration.qualification?.judge_model !== protocol.judge_model
+      || calibration.qualification?.judge_config !== protocol.judge_config
+      || calibration.qualification?.judge_version !== protocol.difficulty_judge_version
+      || calibration.qualification?.rubric_hash !== protocol.rubric_hash) {
       throw new Error("FORMAL_JUDGE_CALIBRATION_MISMATCH")
     }
   }

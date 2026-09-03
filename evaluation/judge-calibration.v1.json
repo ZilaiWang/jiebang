@@ -543,6 +543,7 @@
   "qualification": {
     "judge_model": "glm-5.2",
     "judge_config": "MODEL-7d8507d4be1dcb64b82774ed68b31bf9a7b804d7e11ee4fbe5e2895c7d05f84e",
+    "judge_version": "competition-difficulty-judge-v3",
     "rubric_hash": "sha256:aac9c8de3d0b971154dc0018843c65f355752127f17ba0f8a8a882da28c57fbc"
   },
   "rows_hash": "sha256:50128cf6ad46d8bcae38fa3207233f5ebc152cf70645266b063a095dda661637"

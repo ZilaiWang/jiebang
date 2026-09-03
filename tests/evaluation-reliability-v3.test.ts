@@ -10,6 +10,7 @@ import {
   validateArtifactContract,
   evaluateJudgeCalibration,
   evaluateReliabilityGate,
+  isRetryableOperationalRecord,
 } from "../src/evaluation/reliability"
 import { buildCompetitionManifestCandidateV2 } from "../src/evaluation/v2/competition-manifest.v2"
 import { loadKnowledgeBase } from "../src/knowledge/loader"
@@ -21,6 +22,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { contentHash } from "../src/role-c-content/contracts/common"
+import { MODEL_DIFFICULTY_JUDGE_VERSION } from "../src/evaluation/resource-difficulty-judge"
 
 describe("Evaluation Reliability V3", () => {
   test("atomic evidence replacement preserves the previous file on serialization failure", async () => {
@@ -80,6 +82,51 @@ describe("Evaluation Reliability V3", () => {
     expect(record.claims.filter((c: any) => c.audited)).toHaveLength(13)
     expect(record.errors).toEqual([])
   })
+
+  test("independent claim batches use bounded concurrency and checkpoint every paid batch", async () => {
+    const candidates = Array.from({ length: 25 }, (_, index) => ({
+      claim_id: `C${index}`,
+      artifact_kind: "lesson" as const,
+      text: `claim ${index}`,
+      citations: [],
+      surface: "text",
+    }))
+    const record: any = { case_id: "R", repeat_index: 1, claims: [], difficulty: [], errors: [] }
+    let active = 0
+    let maximumActive = 0
+    let calls = 0
+    let checkpoints = 0
+    await resumeEvaluationAudits({
+      record,
+      candidates,
+      evidence: [],
+      views: [],
+      difficultyJudge: {} as any,
+      checkpoint: async () => { checkpoints += 1 },
+      claimAuditor: {
+        audit: async ({ candidates: batch }: any) => {
+          calls += 1
+          active += 1
+          maximumActive = Math.max(maximumActive, active)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          active -= 1
+          return batch.map((candidate: any) => ({
+            ...candidate,
+            case_id: "R",
+            factual: true,
+            audited: true,
+            verdict: "supported",
+            supported_fact_ids: [],
+          }))
+        },
+      },
+    })
+    expect(calls).toBe(3)
+    expect(maximumActive).toBe(2)
+    expect(checkpoints).toBe(3)
+    expect(record.claims.every((claim: any) => claim.audited)).toBe(true)
+  })
+
   test("taxonomy labels describe a uniform foundation plan without inventing difficulty", () => {
     const plan = buildAssessmentTaxonomyPlan({
       items: Array.from({ length: 3 }, (_, i) => ({ item_id: `I${i}`, objective_id: "O", tier: 1 as const, modality: "mcq" as const, cognitive_operation: "recognize_fact" as const })),
@@ -93,6 +140,24 @@ describe("Evaluation Reliability V3", () => {
     expect(value.status).toBe("retryable_error")
     expect(classifyEvaluationFailure({ message: "HTTP 503 service unavailable" }).category).toBe("model_transport")
     expect(classifyEvaluationFailure({ message: "schema invalid: expected length 512" }).category).toBe("structured_output")
+  })
+
+  test("a quota-stopped case can resume after operator recovery without retrying content failures", () => {
+    const base = {
+      case_id: "C1",
+      status: "failed",
+      claims: [],
+      difficulty: [],
+      code_execution: "not_reached" as const,
+    }
+    expect(isRetryableOperationalRecord({
+      ...base,
+      errors: ["模型服务返回 HTTP 429：余额不足或无可用资源包,请充值。"],
+    })).toBe(true)
+    expect(isRetryableOperationalRecord({
+      ...base,
+      errors: ["模型服务返回 HTTP 429", "MISSING_EVIDENCE_ANCHOR:/items/0"],
+    })).toBe(false)
   })
 
   test("separates frozen evidence gaps from generated grounding defects", () => {
@@ -163,7 +228,7 @@ describe("Evaluation Reliability V3", () => {
       accuracy: number | null
       rows_hash: string
       rows: Parameters<typeof evaluateJudgeCalibration>[0]
-      qualification: { judge_model: string; judge_config: string; rubric_hash: string }
+      qualification: { judge_model: string; judge_config: string; judge_version: string; rubric_hash: string }
     }
     const rubric = await readFile("evaluation/difficulty-rubric.v1.md", "utf8")
     const recalculated = evaluateJudgeCalibration(calibration.rows)
@@ -174,6 +239,7 @@ describe("Evaluation Reliability V3", () => {
     expect(calibration.qualification.rubric_hash).toBe(contentHash(rubric))
     expect(calibration.qualification.judge_model).toBe("glm-5.2")
     expect(calibration.qualification.judge_config).toMatch(/^MODEL-[a-f0-9]{64}$/)
+    expect(calibration.qualification.judge_version).toBe(MODEL_DIFFICULTY_JUDGE_VERSION)
   })
 
   test("missing artifacts and omitted frozen objectives are not valid", () => {
