@@ -20,6 +20,7 @@ import { writeEvaluationJson } from "../src/evaluation/reliability/atomic-json"
 import { mkdtemp, rm, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { contentHash } from "../src/role-c-content/contracts/common"
 
 describe("Evaluation Reliability V3", () => {
   test("atomic evidence replacement preserves the previous file on serialization failure", async () => {
@@ -154,6 +155,25 @@ describe("Evaluation Reliability V3", () => {
   test("calibration never treats empty or unreviewed evidence as success", () => {
     expect(evaluateJudgeCalibration([]).passed).toBe(false)
     expect(evaluateJudgeCalibration([]).accuracy).toBe(null)
+  })
+
+  test("committed judge calibration stays complete and bound to the current rubric", async () => {
+    const calibration = JSON.parse(await readFile("evaluation/judge-calibration.v1.json", "utf8")) as {
+      passed: boolean
+      accuracy: number | null
+      rows_hash: string
+      rows: Parameters<typeof evaluateJudgeCalibration>[0]
+      qualification: { judge_model: string; judge_config: string; rubric_hash: string }
+    }
+    const rubric = await readFile("evaluation/difficulty-rubric.v1.md", "utf8")
+    const recalculated = evaluateJudgeCalibration(calibration.rows)
+    expect(recalculated.passed).toBe(true)
+    expect(recalculated.accuracy).toBe(calibration.accuracy)
+    expect(calibration.passed).toBe(true)
+    expect(calibration.rows_hash).toBe(contentHash(calibration.rows))
+    expect(calibration.qualification.rubric_hash).toBe(contentHash(rubric))
+    expect(calibration.qualification.judge_model).toBe("glm-5.2")
+    expect(calibration.qualification.judge_config).toMatch(/^MODEL-[a-f0-9]{64}$/)
   })
 
   test("missing artifacts and omitted frozen objectives are not valid", () => {
