@@ -48,6 +48,21 @@ function fixture() {
 }
 
 describe("第 6 项统一资源链", () => {
+  test("整个程序的排错和扩展同时绑定配套目标证据，非首目标知识不会失去引用", () => {
+    const plan = buildPracticalGuidePlan({
+      lab_id: "LAB-MULTI", objective_ids: ["LOOP", "LIST"], primary_objective_id: "LOOP",
+      goal_context: "循环处理列表", scaffold_strength: 2, session_minutes: 30,
+      require_troubleshooting: true, tool_constraints: [], prerequisite_fact_refs: [],
+      objective_fact_refs: {
+        LOOP: [{ source_id: "K007", fact_id: "F005", relation: "derived_from" }],
+        LIST: [{ source_id: "K009", fact_id: "F015", relation: "derived_from" }],
+      }, public_tests: [{ test_id: "T1", objective_id: "LOOP" }, { test_id: "T2", objective_id: "LIST" }],
+    })
+    for (const entry of [...plan.troubleshooting_slots, plan.extension_slot]) {
+      expect(entry.citations.map(c => `${c.source_id}:${c.fact_id}`)).toEqual(["K007:F005", "K009:F015"])
+    }
+    expect(plan.step_slots[1]!.citations.map(c => c.source_id)).toEqual(["K009"])
+  })
   test("实操前置检查同时绑定先修事实、当前任务事实与输入合同", () => {
     const plan = buildPracticalGuidePlan({
       lab_id: "LAB-R", objective_ids: ["O1"], primary_objective_id: "O1",
@@ -136,10 +151,20 @@ describe("第 6 项统一资源链", () => {
     ]))
     const legitimateExtension = structuredClone(payload.practical_guide!)
     legitimateExtension.extension_task.task = "新增变量 extra_value = 5，再比较扩展前后的整理结果"
+    legitimateExtension.extension_task.verification = "检查 extra_value 的值是否为 5，再核对扩展输出"
     expect(validatePracticalGuideAgainstLearnerSurface({
       guide: legitimateExtension,
       starter_code: payload.starter_code,
     }).filter((issue) => issue.code === "guide_identifier_mismatch")).toEqual([])
+    const leakedExtension = structuredClone(legitimateExtension)
+    leakedExtension.steps[0]!.action = "修改骨架中 extra_value 的值"
+    expect(validatePracticalGuideAgainstLearnerSurface({ guide: leakedExtension, starter_code: payload.starter_code }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: "guide_identifier_mismatch", path: "$.steps[0].action" })]))
+    const learnerLocal = structuredClone(payload.practical_guide!)
+    learnerLocal.steps[0]!.action = "读取文件并将文本保存为 content，供后续处理"
+    learnerLocal.steps[0]!.expected_result = "content 的值包含读到的文本"
+    expect(validatePracticalGuideAgainstLearnerSurface({ guide: learnerLocal, starter_code: "def solve(path):\n    pass" })
+      .filter(issue => issue.code === "guide_identifier_mismatch")).toEqual([])
     const misleadingExtension = structuredClone(payload.practical_guide!)
     misleadingExtension.extension_task.task = "把已有的 extra_value = 5 改成 6"
     expect(validatePracticalGuideAgainstLearnerSurface({

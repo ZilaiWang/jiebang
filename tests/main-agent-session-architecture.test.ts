@@ -13,6 +13,7 @@ import {
   roleCRoundRunId,
 } from "../src/orchestration/interactive-session"
 import { buildLearningEvidenceRequest, retrieveLearningEvidence } from "../src/rag/learning-evidence"
+import { loadKnowledgeBase } from "../src/knowledge/loader"
 
 const roots: string[] = []
 
@@ -53,7 +54,7 @@ describe("main agent session architecture", () => {
   })
 
   test("uses A's live knowledge-base version for every reviewed C round", async () => {
-    expect(await resolveRoleCKnowledgeBaseVersion()).toBe("0.12.0")
+    expect(await resolveRoleCKnowledgeBaseVersion()).toBe((await loadKnowledgeBase()).version)
     expect(await resolveRoleCKnowledgeBaseVersion()).not.toBe("python-basics-v1")
   })
 

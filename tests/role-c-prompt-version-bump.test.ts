@@ -13,7 +13,8 @@ describe("role c prompt manifest version", () => {
   })
 
   test("keeps teaching scenarios inside the frozen evidence boundary", () => {
-    expect(ROLE_C_COMMON_SYSTEM_POLICY).toContain("evidence 未提及的用途类别、应用领域和技术能力")
+    expect(ROLE_C_COMMON_SYSTEM_POLICY).toContain("专业能力主张必须由 evidence 提供支持")
+    expect(ROLE_C_COMMON_SYSTEM_POLICY).toContain("虚构标签不能豁免这些专业规则")
     expect(CONCEPT_TUTOR_SYSTEM_PROMPT).toContain("不得新增用途、领域、能力或真实案例")
     expect(CONCEPT_TUTOR_SYSTEM_PROMPT).toContain("不能自行扩展为网站、游戏、自动化、科学计算等其他用途")
   })

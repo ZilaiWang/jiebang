@@ -48,7 +48,7 @@ const NEVER_ALLOWED_MODULES = new Set([
 ])
 
 const DANGEROUS_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(?:eval|exec|compile|open|breakpoint|__import__)\s*\(/, "dangerous_builtin"],
+  [/\b(?:eval|exec|compile|breakpoint|__import__)\s*\(/, "dangerous_builtin"],
   [/\b(?:globals|locals|vars)\s*\(/, "namespace_introspection"],
   [/\b(?:getattr|setattr|delattr)\s*\(/, "dynamic_attribute_access"],
   [/\bmemoryview\s*\(/, "raw_memory_access"],

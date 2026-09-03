@@ -1,4 +1,5 @@
 export * from "./artifacts"
+export * from "./artifact-task"
 export * from "./assessment-measurement"
 export * from "./common"
 export * from "./dynamic-feedback"

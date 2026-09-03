@@ -22,6 +22,7 @@ import { buildPersonalizationPolicy, type PersonalizationPolicy } from "../plann
 import { redactDirectIdentifiers, sanitizeFreeTextList } from "../../privacy/privacy-boundary"
 import { assessmentBlueprintCanMeasureCoreObjectives } from "./assessment-measurement"
 import { modalityMeasuresBehavior } from "./assessment-measurement"
+import { aggregateArtifactDifficulty, validateArtifactTaskAlignment, type ArtifactTaskContractsV2 } from "./artifact-task"
 
 export type { AssessmentBlueprint } from "./profile-adapter"
 
@@ -30,13 +31,13 @@ export type { AssessmentBlueprint } from "./profile-adapter"
  * runtime projection emitted by the builder and are checked against JSON
  * Schema when the process starts, so code and Schema cannot drift silently.
  */
-export const GENERATION_SPEC_CONTRACT_VERSION = "generation-spec.v1.1" as const
+export const GENERATION_SPEC_CONTRACT_VERSION = "generation-spec.v1.2" as const
 export const GENERATION_SPEC_CONTRACT_KEYS = {
   root: [
     "schema_version", "spec_id", "run_id", "evidence_ref",
     "evidence_content_hash", "versions", "profile_ref", "path_node",
     "targets", "learner_adaptation", "personalization_policy",
-    "difficulty", "assessment_blueprint", "policies",
+    "difficulty", "artifact_tasks", "assessment_blueprint", "policies",
   ],
   versions: [
     "profile_version", "kb_version", "rag_version", "prompt_version",
@@ -121,6 +122,7 @@ export interface GenerationSpec {
   }
   personalization_policy?: PersonalizationPolicy
   difficulty: DifficultyVector
+  artifact_tasks?: ArtifactTaskContractsV2
   assessment_blueprint: AssessmentBlueprint
   policies: {
     external_knowledge_allowed: false
@@ -140,6 +142,7 @@ export interface BuildGenerationSpecInput {
   seed?: number
   progress_state?: import("../planning/personalization-policy").ProgressState
   difficulty?: Partial<DifficultyVector>
+  artifact_tasks?: ArtifactTaskContractsV2
   /** Narrow C-owned presentation override; profile facts remain read-only. */
   adaptive_shell?: {
     scaffold_level?: 0 | 1 | 2 | 3
@@ -250,7 +253,8 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
       ? { expression_context: structuredClone(input.profile_snapshot.expression_context) }
       : {}),
   }
-  const difficulty = canonicalDifficulty(defaults.difficulty, input.difficulty)
+  const difficulty = canonicalDifficulty(defaults.difficulty, input.artifact_tasks ? aggregateArtifactDifficulty(input.artifact_tasks) : input.difficulty)
+  const artifactTasks = input.artifact_tasks ? { artifact_tasks: structuredClone(input.artifact_tasks) } : {}
   const pathNode = {
     node_id: input.path_node.node_id,
     target_source_ids: [...input.path_node.target_source_ids],
@@ -298,6 +302,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     learner_adaptation: learnerAdaptation,
     personalization_policy: personalizationPolicy,
     difficulty,
+    ...artifactTasks,
     assessment_blueprint: assessmentBlueprint,
     policies,
   }
@@ -319,6 +324,7 @@ export function buildGenerationSpec(input: BuildGenerationSpecInput): BuildGener
     learner_adaptation: learnerAdaptation,
     personalization_policy: personalizationPolicy,
     difficulty,
+    ...artifactTasks,
     assessment_blueprint: assessmentBlueprint,
     policies,
   }
@@ -379,6 +385,7 @@ function deepFreeze<T>(value: T): T {
 
 function validateInputShape(input: BuildGenerationSpecInput): string[] {
   const errors: string[] = []
+  if (input.artifact_tasks) errors.push(...validateArtifactTaskAlignment(input.artifact_tasks, input.path_node.objectives, input.path_node.assessment_blueprint))
   if (!input.run_id.trim()) errors.push("run_id 不能为空")
   if (!input.profile_snapshot.profile_id.trim()) errors.push("profile_id 不能为空")
   if (!input.profile_snapshot.profile_version.trim()) errors.push("profile_version 不能为空")

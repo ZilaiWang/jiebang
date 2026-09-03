@@ -1,9 +1,11 @@
+import { artifactDifficulty, type ArtifactTaskContractV2 } from "../contracts/artifact-task"
 import type { ConceptTutorRequest } from "../agents/types"
 import type { EvidenceFact } from "../contracts/evidence-pack"
 import { projectNextRoundContext } from "./next-round-context"
 
 export interface ConceptTutorModelInput {
   contract: {
+    artifact_task?: ArtifactTaskContractV2
     spec_id: string
     run_id: string
     path_node: ConceptTutorRequest["generation_spec"]["path_node"]
@@ -115,7 +117,8 @@ export function buildConceptTutorModelInput(
       path_node: structuredClone(request.generation_spec.path_node),
       targets: structuredClone(request.generation_spec.targets),
       learner_adaptation: structuredClone(request.generation_spec.learner_adaptation),
-      difficulty: structuredClone(request.generation_spec.difficulty),
+      difficulty: artifactDifficulty(request.generation_spec, "concept_lesson"),
+      ...(request.generation_spec.artifact_tasks ? { artifact_task: structuredClone(request.generation_spec.artifact_tasks.concept_lesson) } : {}),
       policies: structuredClone(request.generation_spec.policies),
     },
     evidence,

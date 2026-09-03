@@ -8,6 +8,8 @@ playwright-report/
 .DS_Store
 opencode.json
 .env.role-c.local
+.env.evaluation-v2.local
+evaluation/v2/
 
 # Generated competition-evaluation artifacts. Commit a curated report under
 # docs/ instead of raw model outputs, runtime state, or audit payloads.

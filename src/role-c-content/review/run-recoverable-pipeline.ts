@@ -1080,6 +1080,7 @@ function buildRecoverySpec(
   })
   return buildGenerationSpec({
     run_id: `RUN-C-RECOVERY-${digest.slice(7, 31)}`,
+    artifact_tasks: tasksForNextPath(current, path.objectives, path.assessment_blueprint, profile.level),
     profile_snapshot: profile,
     path_node: path,
     evidence_pack: evidence,
@@ -1462,3 +1463,4 @@ function deepFreeze<T>(value: T): T {
   Object.values(value as Record<string, unknown>).forEach(deepFreeze)
   return Object.freeze(value)
 }
+import { tasksForNextPath } from "../contracts/artifact-task"

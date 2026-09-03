@@ -114,7 +114,7 @@ describe("GenerationSpec closed-contract normalization", () => {
 
   test("runtime exposes the loaded schema identity", () => {
     expect(roleCSchemaRegistryMetadata()).toMatchObject({
-      generation_spec_contract: "generation-spec.v1.1",
+      generation_spec_contract: "generation-spec.v1.2",
       loaded_schema_count: 37,
     })
     expect(roleCSchemaRegistryMetadata().fingerprint).toMatch(/^sha256:[a-f0-9]{64}$/)

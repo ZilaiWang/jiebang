@@ -1,3 +1,6 @@
+import { projectAssessmentTask } from "../contracts/artifact-task"
+import { applyPublicFileFixtures, publicLabInputCases } from "../security/public-lab-inputs"
+import { conceptOwnedTeachingContract } from "../planning/teaching-unit-contract"
 import type {
   ArtifactDraft,
   AssessmentDraft,
@@ -272,7 +275,7 @@ export function normalizeEvidenceBoundedAssessmentChoices(
   // enforced by deterministic vocabulary/scope checks plus independent model
   // review and the final semantic release audit.
   normalized.items.forEach((item) => {
-    if (item.options) item.options = item.options.map((option) => option.trim())
+    if (Array.isArray(item.options)) item.options = item.options.map((option) => typeof option === "string" ? option.trim() : option)
   })
   return normalized
 }
@@ -380,10 +383,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       const sectionPlanContract = sectionPlans.map((plan) => ({
         objective_id: plan.objective_id,
         mode: plan.mode,
+        terminology: plan.terminology,
         slots: plan.slots,
         micro_check: plan.micro_check,
         ...(plan.teaching_unit_contract
-          ? { teaching_unit_contract: plan.teaching_unit_contract }
+          ? { teaching_unit_contract: conceptOwnedTeachingContract(plan.teaching_unit_contract) }
           : {}),
       }))
       const materialize = (payload: ConceptSegmentAuthorPayloadV2) =>
@@ -405,6 +409,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           system_prompt: CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
           input: {
             ...modelInput,
+            // Prerequisite bridges are materialized separately with their own
+            // citations. Section authors only own the current target sources.
+            evidence: modelInput.evidence.filter(source => segment.generation_spec.targets.some(target => target.source_id === source.source_id)),
+            author_scope: { prerequisite_bridge: "materialized_by_program" },
+            upstream: { ...modelInput.upstream, round_semantic_plan: undefined },
             learning_design: learningDesign,
             candidate_context: publicCandidateContext("concept_lesson", variantIndex),
             staged_contract: {
@@ -492,6 +501,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           evidence: modelInput.evidence,
           contract: {
             targets: modelInput.contract.targets,
+            artifact_task: modelInput.contract.artifact_task,
             section_plan: sectionPlanContract,
           },
         }),
@@ -581,10 +591,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         },
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
-      output_schema: fragment(
-        "code_lab_draft.schema.json",
-        "/$defs/public_author_payload",
-      ),
+      output_schema: codeLabPublicAuthorSchema(programmingProblem),
       temperature: Math.max(this.codeLabTemperature, 0.2),
       max_tokens: this.codeLabPublicMaxTokens,
       idempotency_identity: {
@@ -645,6 +652,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         evidence: publicModelInput.evidence,
         contract: {
           targets: publicModelInput.contract.targets,
+          artifact_task: publicModelInput.contract.artifact_task,
           task_contract: taskContract,
           programming_problem: programmingProblem,
           objective_plan: objectivePlan,
@@ -865,6 +873,21 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       })
     }
 
+    if (feedback.issues.some(issue => issue.startsWith("PUBLIC_REFERENCE_INPUT_FAILED:") && issue.includes("FileNotFoundError"))) {
+      const cases = publicLabInputCases(publicPayload)
+      const patch = await this.generateStage<{ fixtures: Array<{ case_id: string; files: Record<string, string> }> }>({
+        task: "role-c.code-lab.public.file-fixtures",
+        system_prompt: `${CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT}\n本次只补齐公开样例已承诺的初始文件夹具。根据题面和公开参数确定文件名，生成合理的初始文本；保持已有 files 内容不变。不得修改 args/kwargs、题意、预期行为或其他字段，不提供参考实现，不猜测隐藏测试。每个公开 case_id 输出一项 files 字典；纯创建文件的样例可以为空字典。`,
+        input: { public_payload: publicPayload, cases, execution_issues: feedback.issues.filter(issue => issue.startsWith("PUBLIC_REFERENCE_INPUT_FAILED:")) },
+        output_schema_id: "public_file_fixtures_v1",
+        output_schema: { type: "object", additionalProperties: false, required: ["fixtures"], properties: { fixtures: { type: "array", minItems: cases.length, maxItems: cases.length, items: { type: "object", additionalProperties: false, required: ["case_id", "files"], properties: { case_id: { type: "string", enum: cases.map(c => c.case_id) }, files: { type: "object", additionalProperties: { type: "string" } } } } } } },
+        temperature: 0.2, max_tokens: 1800, max_repairs: 1,
+        idempotency_identity: { spec_id: request.generation_spec.spec_id, public_hash: contentHash(publicPayload), phase: "public-file-fixtures" },
+        validate: patch => { try { applyPublicFileFixtures(publicPayload, patch.fixtures); return [] } catch (error) { return [error instanceof Error ? error.message : "invalid_public_fixtures"] } },
+      })
+      publicPayload = applyPublicFileFixtures(publicPayload, patch.fixtures)
+      return { public_draft: { payload: publicPayload }, secure_draft: draft.secure_draft }
+    }
     const needsSecureRepair = trustedReferenceFailed(feedback)
     const expectedOnlyCodes = expectedOnlyReferenceFailureCodes(feedback)
     if (needsSecureRepair && expectedOnlyCodes.length > 0 && isExpectedOnlyReferenceFailure(expectedOnlyCodes)) {
@@ -1071,10 +1094,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           // lesson summaries span several fact slots and previously leaked a
           // non-cited fact back into an otherwise isolated question.
           objective_summaries: [],
+          code_lab_summary: undefined,
           misconceptions: modelInput.upstream.misconceptions.filter((entry) =>
             entry.objective_id === itemPlan.objective_id
-            && (entry.citations.length === 0 || entry.citations.some((citation) =>
-              factKeys.has(`${citation.source_id}:${citation.fact_id}`)))),
+            && entry.citations.length > 0 && entry.citations.every((citation) =>
+              factKeys.has(`${citation.source_id}:${citation.fact_id}`))),
           // The shared semantic plan may legitimately coordinate the whole
           // form, but it must not inject another objective's facts into one
           // item's authoring surface.
@@ -1084,7 +1108,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
                 ...modelInput.upstream.resource_blueprint,
                 objectives: modelInput.upstream.resource_blueprint.objectives.filter(
                   (entry) => entry.objective_id === itemPlan.objective_id,
-                ),
+                ).map(entry => ({ ...entry, required_fact_ids: itemPlan.citations.filter(c => c.source_id === entry.source_id).map(c => c.fact_id), assessment: entry.assessment.filter(item => item.item_id === itemPlan.item_id) })),
                 assessment: {
                   ...modelInput.upstream.resource_blueprint.assessment,
                   item_plan: [structuredClone(itemPlan)],
@@ -1102,14 +1126,17 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           input: {
             contract: {
               ...modelInput.contract,
-              targets: itemTarget ? [structuredClone(itemTarget)] : [],
+              targets: itemTarget ? [{ ...structuredClone(itemTarget), required_fact_ids: itemPlan.citations.filter(c => c.source_id === itemTarget.source_id).map(c => c.fact_id) }] : [],
+              assessment_blueprint: { tier_1_count: itemPlan.tier === 1 ? 1 : 0, tier_2_count: itemPlan.tier === 2 ? 1 : 0, tier_3_count: itemPlan.tier === 3 ? 1 : 0, required_modalities: [itemPlan.modality] },
+              artifact_task: projectAssessmentTask(modelInput.contract.artifact_task, itemPlan),
             },
             evidence: itemEvidence,
             upstream: itemUpstream,
             learning_design: {
               ...learningDesign,
-              objectives: learningDesign.objectives.filter((entry) => entry.objective_id === itemPlan.objective_id),
-              lesson_sequence: learningDesign.lesson_sequence.filter((entry) => entry.objective_id === itemPlan.objective_id),
+              learner: { ...learningDesign.learner, misconceptions: [] },
+              objectives: learningDesign.objectives.filter((entry) => entry.objective_id === itemPlan.objective_id).map(entry => ({ ...entry, required_fact_ids: itemPlan.citations.map(c => c.fact_id) })),
+              lesson_sequence: [],
               assessment_plan: [itemPlan],
             },
             candidate_context: publicCandidateContext("assessment", variantIndex),
@@ -1215,6 +1242,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             evidence: itemEvidence,
             contract: {
               target: itemTarget,
+              artifact_task: projectAssessmentTask(modelInput.contract.artifact_task, itemPlan),
               item_plan: itemPlan,
             },
           }),
@@ -2709,6 +2737,9 @@ function sanitizeCodeLabPublicCode(
   const current = normalize(value)
   if (reference && current.includes(reference)) return fallback
   const referenceLines = referenceSolution.split(/\r?\n/u)
+    // Function/class/import declarations are the public execution ABI, not the
+    // implementation. Removing a shared signature makes every gap answer fail.
+    .filter((line) => !/^\s*(?:async\s+def|def|class|import|from)\b/u.test(line))
     .map(normalize)
     .filter((line) => line.length >= 6)
   if (!referenceLines.some((line) => current.includes(line))) return value
@@ -2814,6 +2845,13 @@ export function normalizeCodeLabPublicAuthorPayload(
     }
   }
   if (programmingProblem && normalized.programming_task) {
+    // The response action is fixed by the UI contract, not a model-authored
+    // programming requirement. State it consistently alongside the AI task.
+    if (programmingProblem.task_kind === "code_completion"
+      && typeof normalized.programming_task.statement === "string"
+      && !/(?:填|补全|完成|替换)/u.test(normalized.programming_task.statement)) {
+      normalized.programming_task.statement = `请补全程序中标出的待填写部分。${normalized.programming_task.statement}`
+    }
     const requiredAdditional = Math.max(
       0,
       programmingProblem.public_case_count - normalized.objectives.length,
@@ -3159,10 +3197,11 @@ function ensureZeroArgumentEntryPoint(
 
 function isEmptyFunctionInvocation(input: unknown): boolean {
   if (!input || typeof input !== "object" || Array.isArray(input)) return false
-  const envelope = input as { args?: unknown[]; kwargs?: Record<string, unknown> }
+  const envelope = input as { args?: unknown[]; kwargs?: Record<string, unknown>; files?: Record<string, unknown> }
   return Array.isArray(envelope.args)
     && envelope.args.length === 0
     && Object.keys(envelope.kwargs ?? {}).length === 0
+    && Object.keys(envelope.files ?? {}).length === 0
 }
 
 function normalizeCodeLabExecutionRepairPatch(
@@ -3272,6 +3311,20 @@ function escapeRegExp(value: string): string {
 
 function fragment(file: RoleCSchemaFile, pointer: string): Record<string, unknown> {
   return getRoleCModelOutputSchemaFragment(file, pointer)
+}
+
+/** Make the planned submission shape explicit before the first model call. */
+export function codeLabPublicAuthorSchema(problem?: Pick<ProgrammingProblemBlueprint, "task_kind">): Record<string, unknown> {
+  const schema = fragment("code_lab_draft.schema.json", "/$defs/public_author_payload")
+  if (!problem) return schema
+  schema.required = [...new Set([...(schema.required as string[]), "programming_task"])]
+  const task = asRecord(asRecord(schema.properties).programming_task)
+  if (problem.task_kind === "code_completion") {
+    task.required = [...new Set([...(task.required as string[]), "gap_template"])]
+  } else {
+    delete asRecord(task.properties).gap_template
+  }
+  return schema
 }
 
 function codeLabExecutionRepairSchema(

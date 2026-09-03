@@ -137,6 +137,7 @@ describe("Role C targeted public-safety repair", () => {
     expect(JSON.stringify(repaired.programming_task)).not.toContain("message = '你好，' + name")
     expect(repaired.programming_task?.gap_template?.gaps[0]?.label).toBe("待填写代码片段 1")
     expect(repaired.programming_task?.gap_template?.gaps[0]?.placeholder).toBe("# 按题目要求填写")
+    expect(repaired.programming_task?.gap_template?.template_code).toContain("def greet(name):")
   })
 
   test("compresses assessment code public fields when secure reference leaks", () => {

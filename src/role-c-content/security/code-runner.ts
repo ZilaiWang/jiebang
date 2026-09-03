@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { spawn as spawnChildProcess } from "node:child_process"
 import { isDeepStrictEqual } from "node:util"
+import { invocationFileFixtures } from "./file-fixtures"
 import type { ExecutionContract, HiddenTest } from "../contracts/artifacts"
 import { analyzePythonSource, PLATFORM_PYTHON_IMPORT_ALLOWLIST } from "./python-static-analyzer"
 
@@ -214,6 +215,13 @@ export class DockerPythonCodeRunner implements CodeRunner {
       return runnerError(this.runner_image_digest, "test_suite_unavailable", requestedTestCount)
     }
     const totalTests = suite.tests.length
+    try {
+      if (suite.execution_contract.execution_mode === "function") {
+        suite.tests.forEach((test) => invocationFileFixtures(test.input))
+      }
+    } catch {
+      return runnerError(this.runner_image_digest, "invalid_file_fixtures", totalTests)
+    }
     if (suite.execution_contract.language !== "python") {
       return runnerError(this.runner_image_digest, "unsupported_language", totalTests)
     }
@@ -267,7 +275,9 @@ export class DockerPythonCodeRunner implements CodeRunner {
       "--memory", `${memoryMb}m`,
       "--memory-swap", `${memoryMb}m`,
       "--cpus", String(this.cpuLimit),
-      "--ulimit", `cpu=${cpuSeconds}:${cpuSeconds}`,
+      // SIGXCPU identifies a CPU timeout. Equal soft/hard limits produce SIGKILL
+      // (137), which is indistinguishable from an OOM kill at this boundary.
+      "--ulimit", `cpu=${cpuSeconds}:${cpuSeconds + 1}`,
       "--ulimit", "nofile=64:64",
       "--tmpfs", `/tmp:rw,noexec,nosuid,nodev,size=${this.tmpfsMb}m`,
       "--user", "65534:65534",
@@ -299,7 +309,7 @@ export class DockerPythonCodeRunner implements CodeRunner {
       }
     }
     if (result.exit_code !== 0 || result.output_truncated) {
-      if ([124, 137, 143].includes(result.exit_code ?? -1)) {
+      if ([124, 137, 143, 152].includes(result.exit_code ?? -1)) {
         return {
           status: result.exit_code === 137 ? "failed" : "timeout",
           passed_tests: 0,

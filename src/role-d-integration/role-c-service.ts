@@ -22,6 +22,7 @@ import type {
   SubmitRoleCAssessmentInput,
 } from "./contracts"
 import { loadKnowledgeBase } from "../knowledge/loader"
+import { adaptArtifactTasks } from "../role-c-content/contracts/artifact-task"
 import type { KnowledgeBase } from "../knowledge/types"
 import { canonicalizeConcept } from "../role-b-profile/concept-canonicalizer"
 import {
@@ -408,6 +409,7 @@ export async function generateRoleCForRoleDWithRuntime(
     ? teachingChallengeForAction(profileSnapshot.level, nextRoundAction)
     : undefined
   const built = buildGenerationSpec({
+      artifact_tasks: adaptArtifactTasks(input.artifactTaskContracts, nextRoundAction),
       run_id: input.runId,
       profile_snapshot: profileSnapshot,
       path_node: pathNode,

@@ -5,8 +5,9 @@ import type { RenderBlock } from "../role-c-content/contracts/artifacts"
 import { contentHash } from "../role-c-content/contracts/common"
 import type { ModelGateway } from "../role-c-content/contracts/model-gateway"
 import type { ClaimAuditRecord, ClaimVerdict } from "./competition-metrics"
+import { publicLabTeachingSurfaces } from "./competition-artifact-view"
 
-export const COMPETITION_CLAIM_AUDIT_VERSION = "competition-claim-audit-v3"
+export const COMPETITION_CLAIM_AUDIT_VERSION = "competition-claim-audit-v5"
 
 export interface CompetitionClaimCandidate {
   claim_id: string
@@ -14,7 +15,7 @@ export interface CompetitionClaimCandidate {
   text: string
   citations: Array<{ source_id: string; fact_id: string }>
   surface: string
-  /** Same published artifact context; never includes secure answers or tests. */
+  /** Public parent surface/contract, to retain scope when splitting claims; never secure material. */
   local_context?: string
 }
 
@@ -46,7 +47,9 @@ const SYSTEM_PROMPT = `你是独立的竞赛事实声明审核器。作者和生
 9. local_context 是同一份已发布公开产物中的代码或执行合同，只能支持“这段公开代码/骨架会做什么”之类的产物自描述，不能替代专业知识证据。此时 verdict=supported、support_basis=artifact_self、supported_fact_ids=[]。
 10. support_basis=citation_fact 时 supported_fact_ids 只填写真正支持声明且同时出现在该声明 citations 中的完整 source_id:fact_id；support_basis=nonfactual 仅用于 factual=false；非 supported 的 supported_fact_ids 必须为空。
 11. 新的变量名、函数名、字符串或数字只是实例载荷，不是外部专业知识。例如 evidence 已支持“函数定义行的结构”和“调用时执行函数体”，候选用 greet、"小明" 直接演示定义与调用，应按有限实例化判断；只有示例额外声称 evidence 未给出的 API、规则、输出或边界时才是不支持。
-12. 每个 claim_index 恰好返回一次并按升序排列。只输出 Schema JSON。`
+12. surface 与 local_context 保留原文职责。段落正文只帮助理解范围和条件，不能自证专业事实。troubleshooting 的 symptom/likely_cause 描述的是待修复的错误实现，不是宣称正确程序会出错；不得因为“可能的错误现象”与正确 output_contract 不同，就判 contradicted。仍须核对错误原因能否由所引规则解释。
+13. “请检查端点/重新运行样例”等操作建议不声称已经执行成功。public_test 中的给定输入和预期行为是公开任务合同，可按有限实例检验；新的普通字符串或数字不需要证据预先枚举。若真实计算错误、规则缺引用或实际内容与合同矛盾，仍计问题。不能仅依据 local_context 中的作者自称而相信专业规则或正确答案。
+14. 每个 claim_index 恰好返回一次并按升序排列。只输出 Schema JSON。`
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -255,7 +258,7 @@ export function extractCompetitionClaimCandidates(
       `${test.description}\n预期行为：${test.expected_behavior}`,
       test.citations,
       "public_test",
-      labPublicContext(lab.payload!),
+      `公开样例输入：${JSON.stringify(test.input)}\n${labPublicContext(lab.payload!)}`,
     ))
   })
   lab.payload!.hint_ladders.forEach((ladder) => ladder.hints.forEach((hint) => {
@@ -268,6 +271,13 @@ export function extractCompetitionClaimCandidates(
       labPublicContext(lab.payload!),
     ))
   }))
+
+  for (const surface of publicLabTeachingSurfaces(lab.payload!)) {
+    const texts = surface.id === "task-code" ? [surface.text] : splitAtomicText(surface.text)
+    texts.forEach((text, index) => candidates.push(candidate("lab", `lab-${surface.id}-${index}`, text, surface.citations, surface.id, [surface.local_context ?? surface.text, labPublicContext(lab.payload!)].join("\n"))))
+  }
+  candidates.push(candidate("lab", "lab-starter", lab.payload!.starter_code, lab.payload!.used_evidence, "code", labPublicContext(lab.payload!)))
+  lab.payload!.reflection_questions.forEach((text, index) => candidates.push(candidate("lab", `lab-reflection-${index}`, text, lab.payload!.used_evidence, "reflection", labPublicContext(lab.payload!))))
 
   assessment.payload!.items.forEach((item) => {
     candidates.push(candidate(
@@ -326,7 +336,7 @@ function candidatesFromRenderBlock(
         text,
         block.claims.flatMap((claim) => claim.citations),
         `${block.block_type}_prose`,
-        localContext,
+        [prose, localContext].filter(Boolean).join("\n"),
       ))
     return [...explicit, ...additional]
   }

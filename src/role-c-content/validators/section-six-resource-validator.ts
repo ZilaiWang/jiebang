@@ -67,7 +67,9 @@ export function validatePracticalGuideForRelease(guide: PracticalGuidePublicPayl
 /**
  * The guide and the editor are one learner-facing contract.  The model may
  * describe the task in prose, but it must not expose internal JSON field names
- * or refer to a variable/placeholder that is absent from the actual starter.
+ * or claim that an absent variable/placeholder already exists in the starter.
+ * Learner-owned code may introduce locals; absence from incomplete starter code
+ * alone is not evidence that a proposed intermediate variable is invalid.
  */
 export function validatePracticalGuideAgainstLearnerSurface(input: {
   guide: PracticalGuidePublicPayload
@@ -81,6 +83,10 @@ export function validatePracticalGuideAgainstLearnerSurface(input: {
     `${input.starter_code}\n${input.gap_template_code ?? ""}`
       .match(/\b[A-Za-z_][A-Za-z0-9_]*\b/gu) ?? [],
   )
+  const extensionIdentifiers = new Set(
+    [...input.guide.extension_task.task.matchAll(/(?:新增|增加|添加|定义|创建|再设置|尝试设置)\s*(?:一个\s*)?(?:变量\s*)?([A-Za-z_][A-Za-z0-9_]*)\b/gu)]
+      .map((match) => match[1]!),
+  )
   for (const [path, value] of textEntries) {
     const internal = [...value.matchAll(INTERNAL_GUIDE_TOKEN)].map((match) => match[0]!)
     if (internal.length > 0) add(
@@ -91,9 +97,11 @@ export function validatePracticalGuideAgainstLearnerSurface(input: {
     )
     for (const match of value.matchAll(GUIDE_ASSIGNMENT_IDENTIFIER)) {
       const identifier = match[1]!
-      const explicitlyIntroducesExtensionVariable = path === "$.extension_task.task"
-        && /(?:新增|增加|添加|定义|创建|再设置|尝试设置)/u.test(value)
-      if (!knownIdentifiers.has(identifier) && !explicitlyIntroducesExtensionVariable) add(
+      const explicitlyIntroducesExtensionVariable = path.startsWith("$.extension_task.")
+        && extensionIdentifiers.has(identifier)
+      const claimsExistingVariable = /(?:等号右边|赋值行)/u.test(match[0])
+        || new RegExp(`(?:已有|原有|现有|已给出|模板中|骨架中)[^。！？；\\n]{0,24}\\b${identifier}\\b`, "u").test(value)
+      if (!knownIdentifiers.has(identifier) && claimsExistingVariable && !explicitlyIntroducesExtensionVariable) add(
         issues,
         "guide_identifier_mismatch",
         path,

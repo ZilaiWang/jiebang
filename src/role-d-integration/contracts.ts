@@ -245,6 +245,7 @@ export type RoleCForRoleDResult =
     }
 
 export interface GenerateRoleCForRoleDInput {
+  artifactTaskContracts?: import("../role-c-content/contracts/artifact-task").ArtifactTaskContractsV2
   profile: LearnerProfile
   ragResult: RagResult
   kbVersion: string

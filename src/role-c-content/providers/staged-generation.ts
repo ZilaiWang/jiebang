@@ -179,6 +179,7 @@ export interface CodeLabTestInputsAuthorPayload {
 }
 
 export interface AssessmentItemPlan {
+  task_requirements?: { boundary_or_counterexample: boolean }
   item_id: string
   family_id: string
   variant_id: string
@@ -288,6 +289,9 @@ export function splitConceptRequest(
         prerequisite_source_ids: [...prerequisiteSources],
       },
       targets: structuredClone(targets),
+    }
+    if (spec.artifact_tasks) {
+      for (const task of Object.values(spec.artifact_tasks)) task.target_count = targetSources.length
     }
     const evidencePack: RagEvidencePack = {
       ...structuredClone(request.evidence_pack),
@@ -765,7 +769,12 @@ export function buildCodeLabObjectivePlan(
       // GenerationSpec.required_fact_ids 是整轮目标的完整事实覆盖合同；代码实验
       // 只应携带足以完成当前练习的最小证据切片，否则一个简单练习会把整章事实
       // 全部堆进 instruction、公开测试和提示。讲义与测评仍负责完整覆盖。
-      citations: codeLabFactIdsForTarget(
+      // An explicit artifact task has already frozen the needed core facts.
+      // Keep supporting objectives too: their operations are part of the same
+      // program and must not lose evidence when only the primary is parameterized.
+      citations: (spec.artifact_tasks?.code_lab
+        ? target.required_fact_ids
+        : codeLabFactIdsForTarget(
         target,
         evidence,
         executionIntent?.primary_objective_id === target.objective_id
@@ -774,7 +783,7 @@ export function buildCodeLabObjectivePlan(
           : target.observable_behavior,
         executionIntent?.primary_objective_id === target.objective_id
           && executionIntent.learner_action !== "recall_fact",
-      ).map((factId) => ({
+      )).map((factId) => ({
         source_id: target.source_id,
         fact_id: factId,
         relation: "derived_from" as const,
@@ -2044,6 +2053,19 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
       })),
     }
   })
+  let boundaryItemId: string | undefined
+  if (spec.artifact_tasks?.assessment.assessment?.require_boundary_or_counterexample_item) {
+    for (const item of [...baseItems].reverse()) {
+      const objective = spec.targets.find(t => t.objective_id === item.objective_id)!
+      const fact = evidence?.results.find(s => s.source_id === objective.source_id)?.facts.find(f =>
+        objective.required_fact_ids.includes(f.fact_id) && (f.capabilities ?? []).some(c => c === "boundary" || c === "contrast"))
+      if (!fact) continue
+      if (!item.citations.some(c => c.fact_id === fact.fact_id)) item.citations.push({ source_id: objective.source_id, fact_id: fact.fact_id, relation: "derived_from" })
+      boundaryItemId = item.item_id
+      break
+    }
+    if (evidence && !boundaryItemId) throw new ModelOutputValidationError("assessment.plan", ["任务要求边界或反例题，但目标证据未提供边界或对比事实"])
+  }
   // 题目表现形式：确定性分配场景额度，避免每道题都套同一个 preferred context。
   const presentationPlan = buildAssessmentPresentationPlan(
     baseItems.map((item) => ({
@@ -2085,6 +2107,7 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
             : "analyze" as const
     return {
       ...item,
+      ...(boundaryItemId ? { task_requirements: { boundary_or_counterexample: item.item_id === boundaryItemId } } : {}),
       presentation_mode: presentation.mode,
       context_strategy: presentation.mode === "scenario_transfer" && presentation.context
         ? { kind: "preferred_context" as const, value: presentation.context }
@@ -3465,7 +3488,9 @@ function isFunctionInvocationEnvelope(value: unknown): boolean {
   const record = value as Record<string, unknown>
   const keys = Object.keys(record)
   return keys.length > 0
-    && keys.every((key) => key === "args" || key === "kwargs")
+    && keys.every((key) => key === "args" || key === "kwargs" || key === "files")
+    && (record.files === undefined || (record.files !== null && typeof record.files === "object" && !Array.isArray(record.files)
+      && Object.values(record.files as object).every((value) => typeof value === "string")))
     && Array.isArray(record.args)
     && (record.kwargs === undefined
       || (record.kwargs !== null

@@ -46,6 +46,12 @@ export interface TeachingUnitPlanSurface {
   transfer_assessment_planned: boolean
 }
 
+/** Only the lecture-owned part enters lecture authoring/critique. */
+export function conceptOwnedTeachingContract(contract: TeachingUnitContract): TeachingUnitContract {
+  return { ...structuredClone(contract), slots: contract.slots.filter(slot =>
+    !["independent_practice", "transfer_task", "prerequisite_checkpoint"].includes(slot.kind)).map(slot => structuredClone(slot)) }
+}
+
 /**
  * Deterministic pre-generation check that every required teaching function has
  * an owning artifact. It checks structure only; factual correctness remains in

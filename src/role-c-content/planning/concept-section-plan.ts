@@ -70,11 +70,14 @@ export interface ConceptSectionSlot {
   allowed_block_types: Array<"paragraph" | "code" | "callout" | "comparison">
   /** A grounded code example exists in the current fact closure. */
   requires_executable_code?: boolean
+  /** The actual incorrect belief, distinct from diagnostic signals or teaching advice. */
+  misconception_belief?: string
 }
 
 export interface ConceptSectionPlan {
   objective_id: string
   mode: ConceptAuthoringMode
+  terminology?: { max_new_terms_before_gloss: number; explain_on_first_use: true }
   slots: ConceptSectionSlot[]
   micro_check: {
     mode: "recognition" | "guided_application" | "transfer"
@@ -132,8 +135,10 @@ export function buildConceptSectionPlan(input: {
   learner_level?: "beginner" | "basic" | "intermediate" | "integrated"
   micro_check_fact_ids?: string[]
   executable_example_fact_ids?: string[]
+  misconception?: { incorrect_belief: string; fact_ids: string[] }
   pedagogy_contract?: RoleCPedagogyContract
   teaching_unit_contract?: TeachingUnitContract
+  artifact_lesson?: import("../contracts/artifact-task").ArtifactTaskContractV2["lesson"]
   has_boundary_support?: boolean
 }): ConceptSectionPlan {
   const { fact_ids } = input
@@ -195,7 +200,7 @@ export function buildConceptSectionPlan(input: {
           ...(requiresExecutableCode ? { requires_executable_code: true } : {}),
         })]
 
-  const requestedExamples = input.pedagogy_contract?.lesson.worked_example_count ?? 1
+  const requestedExamples = Math.max(input.artifact_lesson?.worked_example_count ?? 1, input.pedagogy_contract?.lesson.worked_example_count ?? 1)
   const modeSlots: ConceptSectionSlot[] = Array.from({ length: requestedExamples }, (_, index) => {
     const base = primaryModeSlots[index === 0 ? 0 : primaryModeSlots.length - 1]!
     // definition/guided objectives may have only one grounded executable
@@ -230,7 +235,7 @@ export function buildConceptSectionPlan(input: {
       min_sentences: index === 0 ? base.min_sentences : Math.max(1, base.min_sentences - 1),
     }
   })
-  const traceSlot = input.pedagogy_contract?.lesson.require_step_trace
+  const traceSlot = (input.artifact_lesson?.require_step_trace || input.pedagogy_contract?.lesson.require_step_trace)
     && mode !== "procedural"
     && (input.support.supported_behaviors.includes("trace") || executableExampleFactIds.length > 0)
     ? [slot("procedure_steps", {
@@ -242,7 +247,7 @@ export function buildConceptSectionPlan(input: {
         allowed_block_types: ["paragraph"],
       })]
     : []
-  const debuggingSlot = input.pedagogy_contract?.lesson.require_debugging_clinic
+  const debuggingSlot = (input.artifact_lesson?.require_debugging_clinic || input.pedagogy_contract?.lesson.require_debugging_clinic)
     && input.has_boundary_support
     ? [slot("boundary", {
         slot_id: stableId("CONCEPT-SLOT", { objective_id: input.objective_id, kind: "debugging_clinic" }),
@@ -255,7 +260,10 @@ export function buildConceptSectionPlan(input: {
     : []
 
   const misconceptionSlot = slot("misconception", {
-    fact_ids: fact_ids.slice(0, 1),
+    fact_ids: input.misconception?.fact_ids.length
+      ? input.misconception.fact_ids.filter((id) => fact_ids.includes(id))
+      : fact_ids.slice(0, 1),
+    ...(input.misconception ? { misconception_belief: input.misconception.incorrect_belief } : {}),
     allowed_moves: ["fact_negation"],
     min_sentences: 2,
     max_sentences: 4,
@@ -275,19 +283,30 @@ export function buildConceptSectionPlan(input: {
   const plannedMicroCheckFacts = input.micro_check_fact_ids?.length
     ? input.micro_check_fact_ids
     : primaryFactGroup
+  const designSlots = input.artifact_lesson?.require_design_tradeoff
+    ? [slot("comparison", {
+        slot_id: stableId("CONCEPT-SLOT", { objective_id: input.objective_id, kind: "design_tradeoff" }),
+        fact_ids,
+        allowed_moves: ["direct_instance", "plain_language_explanation"],
+        min_sentences: 2,
+        max_sentences: 6,
+        allowed_block_types: ["paragraph"],
+      })]
+    : []
   const orderedSlots = input.pedagogy_contract?.lesson.opening === "example_then_rule"
     || input.pedagogy_contract?.lesson.opening === "task_then_explanation"
-    ? [commonSlots[0]!, ...modeSlots, ...commonSlots.slice(1), ...traceSlot, ...debuggingSlot, misconceptionSlot, recapSlot]
-    : [...commonSlots, ...modeSlots, ...traceSlot, ...debuggingSlot, misconceptionSlot, recapSlot]
+    ? [commonSlots[0]!, ...modeSlots, ...commonSlots.slice(1), ...traceSlot, ...debuggingSlot, ...designSlots, misconceptionSlot, recapSlot]
+    : [...commonSlots, ...modeSlots, ...traceSlot, ...debuggingSlot, ...designSlots, misconceptionSlot, recapSlot]
   return {
     objective_id: input.objective_id,
     mode,
+    ...(input.artifact_lesson ? { terminology: { max_new_terms_before_gloss: input.artifact_lesson.max_new_terms_before_gloss, explain_on_first_use: true as const } } : {}),
     slots: orderedSlots,
     micro_check: input.learner_level === "beginner"
       ? { mode: "recognition", fact_ids: primaryFactGroup, minimum_reasoning_steps: 1 }
       : input.observable_behavior === "create"
-        ? { mode: "transfer", fact_ids: plannedMicroCheckFacts.slice(0, 4), minimum_reasoning_steps: 3 }
-        : { mode: "guided_application", fact_ids: plannedMicroCheckFacts.slice(0, 4), minimum_reasoning_steps: 2 },
+        ? { mode: "transfer", fact_ids: [...plannedMicroCheckFacts], minimum_reasoning_steps: 3 }
+        : { mode: "guided_application", fact_ids: [...plannedMicroCheckFacts], minimum_reasoning_steps: 2 },
     ...(input.teaching_unit_contract
       ? { teaching_unit_contract: structuredClone(input.teaching_unit_contract) }
       : {}),
@@ -298,6 +317,8 @@ export function buildConceptSectionPlan(input: {
 
 export interface AuthoredSection {
   slot_id: string
+  /** Additional facts from this frozen objective actually used in the section. */
+  used_fact_ids?: string[]
   heading: string
   body: string
   steps: string[]
@@ -386,7 +407,11 @@ export function materializeConceptObjectiveV2(input: {
       }
       continue
     }
-    const claims: Claim[] = slot.fact_ids.map((factId, index) => {
+    const allowedFactIds = new Set(citations.filter((entry) => entry.source_id === source_id).map((entry) => entry.fact_id))
+    for (const factId of section.used_fact_ids ?? []) {
+      if (!allowedFactIds.has(factId)) throw new Error(`CONCEPT_SECTION_FACT_OUT_OF_SCOPE:${factId}`)
+    }
+    const claims: Claim[] = [...new Set([...slot.fact_ids, ...(section.used_fact_ids ?? [])])].map((factId, index) => {
       const citation = citations.find((entry) =>
         entry.source_id === source_id && entry.fact_id === factId)
       return {
@@ -424,6 +449,10 @@ export function validateConceptSectionStructure(input: {
     if (!planned) {
       issues.push(`计划外 section ${section.slot_id} 不得出现`)
       continue
+    }
+    const objectiveFacts = new Set(plan.slots.flatMap((entry) => entry.fact_ids))
+    for (const factId of section.used_fact_ids ?? []) {
+      if (!objectiveFacts.has(factId)) issues.push(`section ${section.slot_id} 引用了当前目标之外的事实 ${factId}`)
     }
     if (section.code && !planned.allowed_block_types.includes("code")) {
       issues.push(`section ${section.slot_id} 不允许生成 code`)
@@ -576,7 +605,9 @@ export function anchorConceptFactsInVisibleText(input: {
         ? section.steps.map(normalizeLearnerVisibleAuditLanguage)
         : []
       section.code = typeof section.code === "string" && section.code.trim()
-        ? normalizeLearnerVisibleAuditLanguage(section.code)
+        // Code is executable data: prose whitespace/token cleanup changes
+        // Python indentation and can even alter string-literal values.
+        ? section.code.replace(/\r\n?/gu, "\n").trimEnd()
         : null
     }
     objective.micro_check.prompt = normalizeLearnerVisibleAuditLanguage(objective.micro_check.prompt)
@@ -608,44 +639,10 @@ export function anchorConceptFactsInVisibleText(input: {
       if (anchors.length > 0) section.body = `${anchors.join("。")}。${section.body}`
     }
 
-    const microFacts = plan.micro_check.fact_ids
-      .map((factId) => factsByKey.get(`${target.source_id}:${factId}`)?.trim() ?? "")
-      .filter(Boolean)
-    if (microFacts.length > 0 && conceptMicroCheckNeedsFactProjection(objective.micro_check, microFacts)) {
-      const answer = microFacts[0]!
-      const focusHeading = plan.slots
-        .map((slot) => sectionBySlot.get(slot.slot_id)?.heading?.trim())
-        .find(Boolean) ?? "本节核心关系"
-      objective.micro_check = {
-        prompt: `关于“${focusHeading}”，以下哪项符合本节讲解？`,
-        options: [answer, plausibleConceptFactNegation(answer)],
-        answer,
-        explanation: `本题检验的是“${focusHeading}”中的核心关系：${answer}`,
-      }
-    }
+    // Keep the authored question and its reasoning demand. Unsupported content
+    // is returned to authoring through validation, never replaced by a recall quiz.
   }
   return payload
-}
-
-function plausibleConceptFactNegation(fact: string): string {
-  if (/新值会覆盖旧绑定/u.test(fact)) return "重新赋值后，旧绑定不会被新值覆盖。"
-  const replacements: Array<[RegExp, string]> = [
-    [/按书写顺序依次执行/u, "不会按书写顺序依次执行"],
-    [/可以被/u, "不能被"],
-    [/可以/u, "不可以"],
-    [/通常由/u, "并非通常由"],
-    [/常用于/u, "不常用于"],
-    [/用于/u, "不用于"],
-    [/使用/u, "不使用"],
-    [/会/u, "不会"],
-    [/属于/u, "不属于"],
-    [/表示/u, "不表示"],
-    [/是/u, "不是"],
-  ]
-  for (const [pattern, replacement] of replacements) {
-    if (pattern.test(fact)) return fact.replace(pattern, replacement)
-  }
-  return `以下说法不成立：${fact}`
 }
 
 /**
@@ -667,18 +664,6 @@ function ensureTeachingSentenceDensity(body: string, minimum: number): string {
     normalized = `${normalized}${/[。！？]$/u.test(normalized) ? "" : "。"}请在本节示例中核对这一关系。`
   }
   return normalized
-}
-
-function conceptMicroCheckNeedsFactProjection(
-  microCheck: ConceptSegmentAuthorPayloadV2["objectives"][number]["micro_check"],
-  facts: string[],
-): boolean {
-  if (!conceptSurfaceIsDirectlyGrounded(microCheck.answer, facts)) return true
-  if (!microCheck.options.some((option) => option.trim() === microCheck.answer.trim())) return true
-  return microCheck.options.some((option) =>
-    option !== microCheck.answer
-      && !CONCEPT_DIRECT_NEGATION.test(option)
-      && !conceptSurfaceIsDirectlyGrounded(option, facts))
 }
 
 function normalizeLearnerVisibleAuditLanguage(value: string): string {
@@ -779,10 +764,13 @@ export function validateConceptMicroCheckEvidenceDiscipline(
         issues.push(`objective ${objective.objective_id} 的 micro_check.${index === 0 ? "prompt" : `options[${index - 1}]`} 引入当前事实未授权的绝对限定：${[...new Set(unauthorized)].join("、")}`)
       }
     })
-    if (!conceptSurfaceIsDirectlyGrounded(objective.micro_check.answer, facts)) {
+    if (plan.micro_check.mode === "recognition" && !conceptSurfaceIsDirectlyGrounded(objective.micro_check.answer, facts)) {
       issues.push(`objective ${objective.objective_id} 的 micro_check.answer 未直接得到当前事实支持`)
     }
     objective.micro_check.options.forEach((option, index) => {
+      // Computed outputs and state transitions are evaluated by semantic audit
+      // against the bound facts; literal overlap only applies to recognition.
+      if (plan.micro_check.mode !== "recognition") return
       if (option === objective.micro_check.answer
         || CONCEPT_DIRECT_NEGATION.test(option)
         || conceptSurfaceIsDirectlyGrounded(option, facts)) return
@@ -899,9 +887,14 @@ export function materializeConceptSegmentAuthorPayloadV2(input: {
     slot: ConceptSectionSlot,
     section: AuthoredSection,
   ): string[] => {
+    const allowed = new Set(citations.filter((citation) => citation.source_id === source_id).map((citation) => citation.fact_id))
+    for (const factId of section.used_fact_ids ?? []) {
+      if (!allowed.has(factId)) throw new Error(`CONCEPT_SECTION_FACT_OUT_OF_SCOPE:${factId}`)
+    }
     const visible = [section.heading, section.body, ...section.steps, section.code ?? ""].join("\n")
     return [...new Set([
       ...slot.fact_ids,
+      ...(section.used_fact_ids ?? []),
       ...citations.flatMap((citation) => {
         const fact = factTextByFactId.get(factKey({ source_id, fact_id: citation.fact_id }))
           ?? factTextByFactId.get(citation.fact_id)
@@ -1078,9 +1071,11 @@ export function buildConceptSectionPlansForSegment(
     const prerequisiteFactIds = request.evidence_pack.results
       .filter((entry) => request.generation_spec.path_node.prerequisite_source_ids.includes(entry.source_id))
       .flatMap((entry) => entry.facts.map((fact) => `${entry.source_id}:${fact.fact_id}`))
-    const misconceptionFactIds = (evidenceItem?.misconceptions ?? [])
+    const supportedMisconceptions = (evidenceItem?.misconceptions ?? []).filter((entry) =>
+      entry.factRefs.length > 0 && entry.factRefs.every((ref) =>
+        ref.sourceId === target.source_id && targetFactSet.has(ref.factId)))
+    const misconceptionFactIds = supportedMisconceptions
       .flatMap((entry) => entry.factRefs)
-      .filter((ref) => ref.sourceId === target.source_id && targetFactSet.has(ref.factId))
       .map((ref) => ref.factId)
     const procedureFactIds = facts.flatMap((fact) => {
       const capabilities = fact.capabilities?.length
@@ -1119,15 +1114,20 @@ export function buildConceptSectionPlansForSegment(
       learner_level: request.generation_spec.learner_adaptation.level,
       micro_check_fact_ids: microCheckFactIds,
       executable_example_fact_ids: codeSupportFactIds,
+      ...(supportedMisconceptions[0] ? { misconception: {
+        incorrect_belief: supportedMisconceptions[0].incorrectBelief,
+        fact_ids: [...new Set(supportedMisconceptions[0].factRefs.map((ref) => ref.factId))],
+      } } : {}),
       ...(pedagogy ? { pedagogy_contract: pedagogy } : {}),
       ...(teachingUnit ? { teaching_unit_contract: teachingUnit } : {}),
+      artifact_lesson: request.generation_spec.artifact_tasks?.concept_lesson.lesson,
       has_boundary_support: hasBoundarySupport,
     })
     if (teachingUnit) {
       const issues = validateTeachingUnitPlan(teachingUnit, {
         section_kinds: plan.slots.map((entry) => entry.kind),
         worked_example_count: plan.slots.filter((entry) =>
-          entry.kind === "guided_example" || entry.kind === "procedure_steps").length,
+          entry.kind === "guided_example" || entry.kind === "procedure_steps" || (entry.kind === "comparison" && entry.allowed_moves.includes("direct_instance"))).length,
         has_micro_check: true,
         hint_levels: pedagogy?.practice.hint_levels ?? 3,
         independent_practice_planned: true,

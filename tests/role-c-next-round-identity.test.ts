@@ -34,7 +34,8 @@ async function realSpec() {
   const rag = await retrieveKnowledge({
     query: "循环 列表 成绩统计 变量 条件判断",
     learnerLevel: profile.level,
-    topK: 5,
+    topK: kb.items.length,
+    knowledgeBase: kb,
   })
   const evidence = adaptRagResult(rag, {
     kb_version: kb.version,

@@ -123,6 +123,9 @@ export function buildPracticalGuidePlan(input: {
   )]
   const supporting = objectiveIds.filter((id) => id !== input.primary_objective_id)
   const allTestIds = input.public_tests.map((test) => test.test_id)
+  // Troubleshooting and transfer inspect the whole executable task, including
+  // supporting objectives. The pedagogical owner is not the evidence boundary.
+  const taskFacts = objectiveIds.flatMap((id) => input.objective_fact_refs[id] ?? [])
   const steps = Array.from({ length: count }, (_, index) => {
     const objectiveId = index === 0 || index === count - 1
       ? input.primary_objective_id
@@ -149,6 +152,7 @@ export function buildPracticalGuidePlan(input: {
       input.primary_objective_id,
       index === 0 ? ["execution.output_contract", "public_tests"] : ["execution.input_contract"],
       index === 0 ? allTestIds : [],
+      taskFacts,
     ))
   const extension = binding(
     "extension",
@@ -156,6 +160,7 @@ export function buildPracticalGuidePlan(input: {
     input.primary_objective_id,
     ["execution.output_contract", "public_tests"],
     allTestIds,
+    taskFacts,
   )
   const identity = {
     lab_id: input.lab_id,

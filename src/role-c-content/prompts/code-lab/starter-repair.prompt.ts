@@ -25,5 +25,5 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 2. starter 必须可解析、可安全启动，但不得直接完成任务。用 pass、明确 TODO 或局部未完成分支留下实质工作，不能只删注释、改变量名或写一个仍等价于完整答案的实现。
 3. 不接收也不得猜测参考答案、隐藏输入、expected、评分组或 mutation；不得在 starter 中写入答案或测试材料。
 4. 不得使用网络、宿主文件、shell、进程、动态执行或内省；不得动态访问双下划线属性，普通类的 __init__ 定义可用；import 只能来自 public_payload.execution_contract.allowed_imports。
-5. 文件类任务仍使用文本参数或 io.StringIO 的内存合同，不得调用 open 或访问宿主路径。
+5. 文件类任务在每个测试独立的临时目录内使用 open；初始文件来自冻结输入的 files 夹具或题面给定的 stdin 建文件流程，不得访问宿主路径。
 6. ${JSON_ONLY}`

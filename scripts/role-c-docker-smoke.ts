@@ -20,6 +20,12 @@ assertResult(
 results.wrong = await execute("def solve(value):\n    return value")
 assertResult(results.wrong.status === "failed", "错误实现必须被 Docker 隐藏测试识别")
 
+results.file_roundtrip = await execute('def solve(value):\n    with open("value.txt", "w", encoding="utf-8") as f:\n        f.write(str(value * 2))\n    with open("value.txt", encoding="utf-8") as f:\n        return int(f.read())')
+assertResult(results.file_roundtrip.status === "passed", "相对临时文件读写必须实际执行通过")
+
+results.file_escape = await execute('def solve(value):\n    return open("/etc/passwd").read()')
+assertResult(results.file_escape.status === "failed" && results.file_escape.failure_codes.some(code => code.includes("PermissionError")), "容器系统文件必须对学习者代码不可读")
+
 results.forbidden_import = await execute("import os\ndef solve(value):\n    return value * 2")
 assertResult(
   results.forbidden_import.status === "failed" &&
@@ -64,7 +70,7 @@ assertResult(
 results.timeout = await execute("def solve(value):\n    while True:\n        pass", {
   timeout_ms: 300,
 })
-assertResult(results.timeout.status === "timeout", "无限循环必须被 Docker 超时终止")
+assertResult(results.timeout.status === "timeout", `无限循环必须被 Docker 超时终止：${JSON.stringify(results.timeout)}`)
 
 results.memory_limit = await execute(
   "def solve(value):\n    data = bytearray(256 * 1024 * 1024)\n    return value * 2",

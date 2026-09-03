@@ -37,7 +37,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 6. programming_problem.require_secondary_oracle=true 时必须返回 secondary_reference_solution，并采用不同算法组织实现同一合同；否则省略。可信层会逐输入比较两份实现。
 7. mutation_variants 数量、顺序与计划一致；每项只植入对应 misconception_id 的一个真实错误，不得用语法错误、异常、删除实现或固定公开答案凑数。
 8. reference 和 mutation 不访问网络、宿主文件、进程或环境变量；import 仅可来自 execution_contract.allowed_imports；allowed_imports=[] 时不得出现任何 import。
-9. 禁止 eval、exec、compile、open、breakpoint、__import__、globals、locals、vars、getattr、setattr、delattr、memoryview 和动态双下划线属性。
+9. 禁止 eval、exec、compile、breakpoint、__import__、globals、locals、vars、getattr、setattr、delattr、memoryview 和动态双下划线属性。
 10. 不返回任何 lab_id、test_id、objective_id、weight、expected、comparison、评分组、隐藏答案或内部推理。
 
 测试输入必须能被参考实现正常执行。不要自行验算或猜测 expected。`

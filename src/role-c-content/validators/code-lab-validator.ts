@@ -17,8 +17,9 @@ import {
   validatePracticalGuideForRelease,
 } from "./section-six-resource-validator"
 import { classifyExpectedValue, classifyOutputContract } from "../contracts/output-contract"
-import { validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
+import { failClosedStarterCode, validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
 import { validateInputCandidates } from "../programming/test-plan"
+import { executePublicLabInputs } from "../security/public-lab-inputs"
 
 export interface CodeLabDraftValidationReport {
   ok: boolean
@@ -57,6 +58,8 @@ export function validateCodeLabPublicStage(
       } else {
         validateGapTemplate(programmingTask.gap_template).forEach((message) =>
           issues.push(issue("invalid_gap_template", "$.programming_task.gap_template", message)))
+        analyzePythonSource(failClosedStarterCode(programmingTask.gap_template), publicPayload.execution_contract).forEach((entry) =>
+          issues.push(issue(entry.code, "$.programming_task.gap_template.template_code", entry.message)))
         validateGapLearnerContract({ ...programmingTask, gap_template: programmingTask.gap_template }).forEach((message) =>
           issues.push(issue("unclear_gap_task", "$.programming_task", message)))
       }
@@ -487,6 +490,7 @@ export function classifyCodeLabVerificationFailure(input: CodeLabVerificationDia
     const empty = (value: unknown) => Boolean(value && typeof value === "object" && !Array.isArray(value)
       && Array.isArray((value as { args?: unknown }).args)
       && (value as { args: unknown[] }).args.length === 0
+      && Object.keys(((value as { files?: unknown }).files ?? {}) as object).length === 0
       && Object.keys(((value as { kwargs?: unknown }).kwargs ?? {}) as object).length === 0)
     return !((input.public_payload?.public_tests ?? []).every((test) => empty(test.input))
       && (input.secure_payload?.hidden_tests ?? []).every((test) => empty(test.input)))
@@ -603,6 +607,13 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
 
     const publicPayload = draft.public_draft.payload
     const securePayload = draft.secure_draft.payload
+    if (publicPayload.programming_task) {
+      const publicProbe = await executePublicLabInputs(this.runner, publicPayload, securePayload.reference_solution)
+      if (publicProbe.status !== "passed") return {
+        ...result(false, [`PUBLIC_REFERENCE_INPUT_FAILED:${publicProbe.failure_codes.join("、") || publicProbe.status}`], this.runner.runner_image_digest, 0, 0, report.objective_coverage),
+        ...(materializedDraft ? { materialized_draft: materializedDraft } : {}),
+      }
+    }
     const suite: RunnerTestSuite = {
       test_suite_id: securePayload.test_suite_id,
       execution_contract: publicPayload.execution_contract,

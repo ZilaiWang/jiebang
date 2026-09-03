@@ -200,7 +200,7 @@ export function buildResourceBlueprint(
     throw new Error("RESOURCE_BLUEPRINT_EVIDENCE_IDENTITY_MISMATCH")
   }
   const identity = buildLabIdentity(spec)
-  const taskContract = decideCodeLabTaskContract(spec, evidence)
+  const taskContract = parameterizeArtifactTask(decideCodeLabTaskContract(spec, evidence), spec.artifact_tasks?.code_lab.lab)
   const codeObjectivePlan = buildCodeLabObjectivePlan(spec, evidence, taskContract)
   const misconceptionIdsByObjective = Object.fromEntries(spec.targets.map((target) => {
     const evidenceItem = evidence.results.find((item) => item.source_id === target.source_id)
@@ -246,7 +246,13 @@ export function buildResourceBlueprint(
     entry.source_id === primaryTarget.source_id)
   const goalProfile = spec.personalization_policy?.goal_profile ?? "general_learning"
   const learnerLevel = spec.learner_adaptation.level ?? evidence.learner_level ?? "basic"
-  const preferredProgrammingKind = taskContract.learner_action === "recall_fact"
+  const preferredProgrammingKind = spec.artifact_tasks?.code_lab.lab?.require_faulty_starter
+    ? "debugging_repair" as const
+    : spec.artifact_tasks?.code_lab.behavior === "create"
+      ? (taskContract.execution_mode === "function" ? "function_implementation" as const : "stdin_stdout_program" as const)
+    : spec.artifact_tasks
+      ? "code_completion" as const
+    : taskContract.learner_action === "recall_fact"
     ? "code_completion" as const
     : selectProgrammingTaskKind(goalProfile, learnerLevel, primarySkill.progress_band)
   const programmingProblem = buildProgrammingProblemBlueprint({
@@ -267,6 +273,14 @@ export function buildResourceBlueprint(
     learner_owned_behavior: primaryTarget.observable_behavior,
     execution_contract: plannedProgrammingExecutionContract(taskContract),
   })
+  const labTask = spec.artifact_tasks?.code_lab.lab
+  if (labTask) {
+    programmingProblem.public_case_count = Math.max(programmingProblem.public_case_count, labTask.public_test_minimum)
+    const boundary = programmingProblem.test_partitions.find(p => p.kind === "boundary")
+    if (boundary) boundary.minimum_cases = Math.max(boundary.minimum_cases, labTask.boundary_case_minimum)
+    programmingProblem.hidden_case_count = Math.max(programmingProblem.hidden_case_count, labTask.hidden_test_minimum, spec.targets.length, programmingProblem.test_partitions.reduce((n,p) => n+p.minimum_cases,0))
+    programmingProblem.blueprint_id = stableId("PROGRAMMING", programmingProblem)
+  }
   const codeSecurePlan = buildCodeLabSecurePlan(
     spec,
     identity.test_suite_id,
@@ -453,6 +467,12 @@ export function buildDifficultyPlan(
   spec: GenerationSpec,
   options: { assessment_plan?: AssessmentItemPlan[] } = {},
 ): ResourceDifficultyPlan {
+  if (spec.artifact_tasks) {
+    return Object.fromEntries(Object.entries(spec.artifact_tasks).map(([kind, task]) => {
+      const { challenge, support } = splitDifficultyVector(task.difficulty_vector)
+      return [kind, { challenge_target: challenge, support_target: { ...support, ...(kind === "code_lab" ? { starter_support: (task.lab?.starter_completion_ratio_ceiling ?? 0) * 5 } : { starter_support: 0 }) } }]
+    })) as ResourceDifficultyPlan
+  }
   const difficulty = spec.difficulty
     ?? adaptationDefaults(spec.learner_adaptation?.level ?? "basic").difficulty
   const { challenge, support } = splitDifficultyVector(difficulty)
@@ -829,6 +849,21 @@ function decideCodeLabTaskContract(
   }
 }
 
+/** A varied test plan requires variable inputs, even when I/O is not the taught topic. */
+export function parameterizeArtifactTask(
+  task: CodeLabTaskContract,
+  lab: import("../contracts/artifact-task").ArtifactTaskContractV2["lab"],
+): CodeLabTaskContract {
+  if (!lab || task.input_form !== "none" || Math.max(lab.public_test_minimum, lab.hidden_test_minimum) <= 1) return task
+  return {
+    ...task,
+    task_kind: "callable_function", learner_action: "implement_function", learner_owned_region: "function_body",
+    execution_mode: "function", program_entry: "平台向 solve 函数传入任务数据；函数签名与非目标胶水由 starter 提供",
+    input_form: "function_arguments", stdin_layout: "none", output_form: "return_value", grading_invocation: "call_entry_function", entry_point: "solve",
+    output_constraint: "判题器向 solve 传入不同参数并比较返回值；starter 提供函数外壳与旁支胶水，只由学习者完成冻结目标对应的核心操作",
+  }
+}
+
 function plannedProgrammingExecutionContract(task: CodeLabTaskContract) {
   return {
     language: "python" as const,
@@ -840,7 +875,9 @@ function plannedProgrammingExecutionContract(task: CodeLabTaskContract) {
       constraints: [task.program_entry],
     },
     output_contract: {
-      kind: task.execution_mode === "stdin_stdout" ? "string" as const : "object" as const,
+      // Function ABI does not imply a dictionary result. The public task author
+      // defines the concrete return type together with the task, then freezes it.
+      ...(task.execution_mode === "stdin_stdout" ? { kind: "string" as const } : {}),
       type: task.output_form,
       constraints: [task.output_constraint],
     },

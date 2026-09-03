@@ -58,6 +58,13 @@ const K009 = { source_id: "K009", title: "列表", fact: "列表可用于保存�
 const K002 = { source_id: "K002", title: "变量与赋值", fact: "Python 使用 = 进行变量赋值。" }
 
 describe("CodeLabTaskContract：planning 层决定执行接口（不再用证据关键词猜）", () => {
+  test("显式资源合同保留主目标和配套目标的全部冻结事实", () => {
+    const { spec, evidence } = makeSpec([K002, K009], "basic", "K002")
+    spec.artifact_tasks = { code_lab: { behavior: "apply" } }
+    for (const target of spec.targets) target.required_fact_ids = ["F1", "F2", "F3", "F4", "F5", "F6", "F7"]
+    const plan = buildCodeLabObjectivePlan(spec, evidence, { primary_objective_id: "OBJ-K002", learner_action: "implement_function" })
+    for (const entry of plan) expect(entry.citations.map(c => c.fact_id)).toEqual(spec.targets[0].required_fact_ids)
+  })
   test("识别型代码实验只投影完成练习所需的一条事实，不重复整章内容", () => {
     const plan = buildCodeLabObjectivePlan({
       spec_id: "S-FOCUS",

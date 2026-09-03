@@ -1,3 +1,4 @@
+import { artifactDifficulty, type ArtifactTaskContractV2 } from "../contracts/artifact-task"
 import type { CodeLabRequest } from "../agents/types"
 import type { CitationRef } from "../contracts/common"
 import type { EvidenceFact } from "../contracts/evidence-pack"
@@ -5,6 +6,7 @@ import { projectNextRoundContext } from "./next-round-context"
 
 export interface CodeLabModelInput {
   contract: {
+    artifact_task?: ArtifactTaskContractV2
     spec_id: string
     run_id: string
     path_node: CodeLabRequest["generation_spec"]["path_node"]
@@ -109,7 +111,8 @@ export function buildCodeLabModelInput(request: CodeLabRequest): CodeLabModelInp
       path_node: structuredClone(request.generation_spec.path_node),
       targets: structuredClone(request.generation_spec.targets),
       learner_adaptation: structuredClone(request.generation_spec.learner_adaptation),
-      difficulty: structuredClone(request.generation_spec.difficulty),
+      difficulty: artifactDifficulty(request.generation_spec, "code_lab"),
+      ...(request.generation_spec.artifact_tasks ? { artifact_task: structuredClone(request.generation_spec.artifact_tasks.code_lab) } : {}),
       policies: structuredClone(request.generation_spec.policies),
     },
     evidence,

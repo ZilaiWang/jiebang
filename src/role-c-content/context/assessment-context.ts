@@ -1,3 +1,4 @@
+import { artifactDifficulty, type ArtifactTaskContractV2 } from "../contracts/artifact-task"
 import type { TieredEvaluatorRequest } from "../agents/types"
 import type { CitationRef } from "../contracts/common"
 import type { EvidenceFact } from "../contracts/evidence-pack"
@@ -6,6 +7,7 @@ import { effectiveAssessmentBlueprint } from "../planning/resource-blueprint"
 
 export interface AssessmentAuthorModelInput {
   contract: {
+    artifact_task?: ArtifactTaskContractV2
     spec_id: string
     run_id: string
     path_node: TieredEvaluatorRequest["generation_spec"]["path_node"]
@@ -105,7 +107,8 @@ export function buildAssessmentAuthorModelInput(
       path_node: structuredClone(request.generation_spec.path_node),
       targets: structuredClone(request.generation_spec.targets),
       learner_adaptation: structuredClone(request.generation_spec.learner_adaptation),
-      difficulty: structuredClone(request.generation_spec.difficulty),
+      difficulty: artifactDifficulty(request.generation_spec, "assessment"),
+      ...(request.generation_spec.artifact_tasks ? { artifact_task: structuredClone(request.generation_spec.artifact_tasks.assessment) } : {}),
       assessment_blueprint: effectiveAssessmentBlueprint(
         request.generation_spec,
         request.resource_blueprint,

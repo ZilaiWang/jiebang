@@ -5,6 +5,26 @@ import {
 } from "../src/role-c-content/security/code-runner"
 
 describe("docker runner failure codes preserve assertion diffs", () => {
+  test("explicit timeout signals remain distinct from memory/SIGKILL termination", async () => {
+    for (const exitCode of [124, 152, 137]) {
+      let args: string[] = []
+      const runner = new DockerPythonCodeRunner({
+        image_id: "sha256:" + "a".repeat(64),
+        executor: { async run(request) {
+          args = request.args
+          return { exit_code: exitCode, stdout: "", stderr: "", timed_out: false, output_truncated: false }
+        } },
+      })
+      const limits = { timeout_ms: 300, memory_mb: 64, max_output_bytes: 4096 }
+      const result = await runner.execute({ language: "python", code: "while True: pass", test_suite_id: "timeout", test_suite: {
+        test_suite_id: "timeout", execution_contract: { language: "python", execution_mode: "stdin_stdout", allowed_imports: [], input_contract: { type: "none", constraints: [] }, output_contract: { type: "string" }, resource_limits: limits },
+        tests: [{ test_id: "t", input: "", expected: "", objective_id: "o", weight: 1, comparison: { kind: "exact" } }],
+      }, ...limits, network_allowed: false })
+      expect(args).toContain("cpu=1:2")
+      expect(result.status).toBe(exitCode === 137 ? "failed" : "timeout")
+      expect(result.failure_codes).toEqual([exitCode === 137 ? "resource_limit_exceeded" : "execution_timeout"])
+    }
+  })
   test("Docker 启动开销不挤占学习者程序的执行时限", async () => {
     let outerTimeout = 0
     const runner = new DockerPythonCodeRunner({

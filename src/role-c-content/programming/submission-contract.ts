@@ -1,6 +1,7 @@
 import type { ExecutionContract } from "../contracts/artifacts"
 import type { CodeGapTemplate, ProgrammingSubmissionMode } from "./contracts"
 import { materializeGapCode } from "./gap-template"
+import { invocationFileFixtures } from "../security/file-fixtures"
 
 export interface ProgrammingTaskSubmissionContract {
   task_id: string
@@ -52,11 +53,13 @@ export function normalizeCustomDebugInput(contract: ProgrammingTaskSubmissionCon
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error('function 调试输入必须是 {"args": [], "kwargs": {}}')
   }
-  const envelope = parsed as { args?: unknown; kwargs?: unknown }
+  if (Buffer.byteLength(JSON.stringify(parsed), "utf8") > maxBytes) throw new Error(`自定义输入超过 ${maxBytes} 字节`)
+  const envelope = parsed as { args?: unknown; kwargs?: unknown; files?: unknown }
   if (!Array.isArray(envelope.args) || !envelope.kwargs || typeof envelope.kwargs !== "object" || Array.isArray(envelope.kwargs)) {
     throw new Error('function 调试输入必须是 {"args": [], "kwargs": {}}')
   }
-  return { args: envelope.args, kwargs: envelope.kwargs as Record<string, unknown> }
+  const files = invocationFileFixtures(envelope)
+  return { args: envelope.args, kwargs: envelope.kwargs as Record<string, unknown>, ...(files ? { files } : {}) }
 }
 
 function normalizeSource(value: string): string {

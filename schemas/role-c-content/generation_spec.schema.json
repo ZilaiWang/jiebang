@@ -5,6 +5,341 @@
   "type": "object",
   "required": ["schema_version", "spec_id", "run_id", "evidence_ref", "evidence_content_hash", "versions", "profile_ref", "path_node", "targets", "learner_adaptation", "difficulty", "assessment_blueprint", "policies"],
   "properties": {
+    "artifact_tasks": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "concept_lesson": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "contract_version": {
+              "const": "artifact-task.v2"
+            },
+            "artifact_kind": {
+              "const": "concept_lesson"
+            },
+            "task_shape": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "behavior": {
+              "enum": [
+                "explain",
+                "apply",
+                "trace",
+                "debug",
+                "create"
+              ]
+            },
+            "target_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30
+            },
+            "difficulty_vector": { "$ref": "#/properties/difficulty" },
+            "common": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preserve_locked_facts": {
+                  "const": true
+                },
+                "preserve_objectives": {
+                  "const": true
+                },
+                "require_direct_core_measurement": {
+                  "const": true
+                },
+                "forbid_expected_difficulty_label": {
+                  "const": true
+                }
+              },
+              "required": [
+                "preserve_locked_facts",
+                "preserve_objectives",
+                "require_direct_core_measurement",
+                "forbid_expected_difficulty_label"
+              ]
+            },
+            "lesson": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "worked_example_count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 3
+                },
+                "max_new_terms_before_gloss": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                },
+                "require_step_trace": {
+                  "type": "boolean"
+                },
+                "require_debugging_clinic": {
+                  "type": "boolean"
+                },
+                "require_design_tradeoff": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "worked_example_count",
+                "max_new_terms_before_gloss",
+                "require_step_trace",
+                "require_debugging_clinic",
+                "require_design_tradeoff"
+              ]
+            }
+          },
+          "required": [
+            "contract_version",
+            "artifact_kind",
+            "task_shape",
+            "behavior",
+            "target_count",
+            "difficulty_vector",
+            "common",
+            "lesson"
+          ]
+        },
+        "code_lab": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "contract_version": {
+              "const": "artifact-task.v2"
+            },
+            "artifact_kind": {
+              "const": "code_lab"
+            },
+            "task_shape": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "behavior": {
+              "enum": [
+                "explain",
+                "apply",
+                "trace",
+                "debug",
+                "create"
+              ]
+            },
+            "target_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30
+            },
+            "difficulty_vector": { "$ref": "#/properties/difficulty" },
+            "common": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preserve_locked_facts": {
+                  "const": true
+                },
+                "preserve_objectives": {
+                  "const": true
+                },
+                "require_direct_core_measurement": {
+                  "const": true
+                },
+                "forbid_expected_difficulty_label": {
+                  "const": true
+                }
+              },
+              "required": [
+                "preserve_locked_facts",
+                "preserve_objectives",
+                "require_direct_core_measurement",
+                "forbid_expected_difficulty_label"
+              ]
+            },
+            "lab": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "learner_owned_dependent_steps": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                },
+                "starter_completion_ratio_ceiling": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "public_test_minimum": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 30
+                },
+                "hidden_test_minimum": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "boundary_case_minimum": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "require_faulty_starter": {
+                  "type": "boolean"
+                },
+                "require_open_acceptance_criteria": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "learner_owned_dependent_steps",
+                "starter_completion_ratio_ceiling",
+                "public_test_minimum",
+                "hidden_test_minimum",
+                "boundary_case_minimum",
+                "require_faulty_starter",
+                "require_open_acceptance_criteria"
+              ]
+            }
+          },
+          "required": [
+            "contract_version",
+            "artifact_kind",
+            "task_shape",
+            "behavior",
+            "target_count",
+            "difficulty_vector",
+            "common",
+            "lab"
+          ]
+        },
+        "assessment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "contract_version": {
+              "const": "artifact-task.v2"
+            },
+            "artifact_kind": {
+              "const": "assessment"
+            },
+            "task_shape": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "behavior": {
+              "enum": [
+                "explain",
+                "apply",
+                "trace",
+                "debug",
+                "create"
+              ]
+            },
+            "target_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30
+            },
+            "difficulty_vector": { "$ref": "#/properties/difficulty" },
+            "common": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preserve_locked_facts": {
+                  "const": true
+                },
+                "preserve_objectives": {
+                  "const": true
+                },
+                "require_direct_core_measurement": {
+                  "const": true
+                },
+                "forbid_expected_difficulty_label": {
+                  "const": true
+                }
+              },
+              "required": [
+                "preserve_locked_facts",
+                "preserve_objectives",
+                "require_direct_core_measurement",
+                "forbid_expected_difficulty_label"
+              ]
+            },
+            "assessment": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tier_1_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 20
+                },
+                "tier_2_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 20
+                },
+                "tier_3_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 20
+                },
+                "required_modalities": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "mcq",
+                      "true_false",
+                      "trace",
+                      "short_answer",
+                      "code"
+                    ]
+                  }
+                },
+                "require_independent_code_item": {
+                  "type": "boolean"
+                },
+                "require_boundary_or_counterexample_item": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "tier_1_count",
+                "tier_2_count",
+                "tier_3_count",
+                "required_modalities",
+                "require_independent_code_item",
+                "require_boundary_or_counterexample_item"
+              ]
+            }
+          },
+          "required": [
+            "contract_version",
+            "artifact_kind",
+            "task_shape",
+            "behavior",
+            "target_count",
+            "difficulty_vector",
+            "common",
+            "assessment"
+          ]
+        }
+      },
+      "required": [
+        "concept_lesson",
+        "code_lab",
+        "assessment"
+      ]
+    },
     "schema_version": { "const": "1.0" },
     "spec_id": { "type": "string", "minLength": 1 },
     "run_id": { "type": "string", "minLength": 1 },

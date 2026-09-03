@@ -1,0 +1,47 @@
+{
+  "total_cases": 60,
+  "profile_distribution": {
+    "P01": 10,
+    "P02": 10,
+    "P03": 10,
+    "P04": 10,
+    "P05": 10,
+    "P06": 10
+  },
+  "behavior_distribution": {
+    "explain": 12,
+    "apply": 22,
+    "trace": 10,
+    "debug": 8,
+    "create": 8
+  },
+  "difficulty_distribution": {
+    "beginner": 36,
+    "basic": 76,
+    "intermediate": 52,
+    "integrated": 16
+  },
+  "query_style_distribution": {
+    "structured": 10,
+    "colloquial": 10,
+    "goal_oriented": 10,
+    "fragmentary": 10,
+    "mixed_language": 10,
+    "typo_noisy": 10
+  },
+  "manual_review_focus_distribution": {
+    "lesson": 20,
+    "lab": 20,
+    "assessment": 20
+  },
+  "single_target_cases": 40,
+  "multi_target_cases": 20,
+  "counterfactual_groups": 18,
+  "dynamic_distribution": {
+    "reinforce": 3,
+    "advance": 4,
+    "reprofile": 2,
+    "remediate": 3
+  },
+  "review_rows": 180
+}

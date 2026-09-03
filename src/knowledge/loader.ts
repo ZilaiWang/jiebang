@@ -11,8 +11,8 @@ export async function loadKnowledgeBase(): Promise<KnowledgeBase> {
   if (canonicalKnowledgeBase) return structuredClone(canonicalKnowledgeBase)
   const merged: KnowledgeBase = {
     module: "KnowBalance课程知识库",
-    version: "0.12.0",
-    updatedAt: "2026-09-01",
+    version: "0.12.2",
+    updatedAt: "2026-09-03",
     sources: unique([
       ...PYTHON_BASIC_KNOWLEDGE_BASE.sources,
       ...PYTHON_PROGRAMMING_KNOWLEDGE_BASE.sources,

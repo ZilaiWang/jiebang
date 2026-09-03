@@ -36,6 +36,24 @@ export function bindObjectiveEvidence(
     (factId): factId is string => typeof factId === "string" && factId.length > 0,
   ))
   const sourceCoreFactIds = (source.coreFactIds ?? []).filter((factId) => availableFactIds.has(factId))
+  // A sufficient frozen bundle is already authoritative. Re-ranking all facts
+  // must not add a different explanatory anchor each time the same objective
+  // crosses the A/B/C boundary.
+  if (objective.required_fact_ids.length > 0
+    && objective.required_fact_ids.every((id) => availableFactIds.has(id))) {
+    const requested = new Set(objective.required_fact_ids)
+    const frozen = selectEvidenceBundle({
+      behavior: objective.observable_behavior,
+      facts: facts.filter((fact) => requested.has((fact.fact_id ?? fact.factId)!)),
+      max_facts: 5,
+    })
+    if (frozen.sufficient) return {
+      required_fact_ids: [...new Set(objective.required_fact_ids)],
+      capabilities: frozen.capabilities,
+      missing_capabilities: [],
+      sufficient: true,
+    }
+  }
   const selection = selectEvidenceBundle({
     behavior: objective.observable_behavior,
     facts,

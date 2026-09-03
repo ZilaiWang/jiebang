@@ -96,7 +96,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 【难度控制】
 - Tier 1：直接考查核心概念的基本理解，不需要推理
 - Tier 2：是本卷内的第二层，不自动代表全局 basic。以 item_plan.cognitive_demand 为准：understand 仍只检查单条事实的辨析或原意解释，不拼接两条规则；apply 才要求在典型任务中完成简单应用
-- Tier 3：需要综合多个概念或处理边界情况
+- Tier 3：仅在冻结行为与当前引用支持时综合概念或处理边界；recognize/explain 仍测量原意解释，不能擅自改为多步执行追踪
 
 【题目表现形式】
 1. staged_contract.item_plan 中每道题的 presentation_mode 是冻结表现形式，必须严格遵守。
@@ -148,7 +148,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 5. code 题一律使用 function execution_mode，不得使用 stdin_stdout；entry_point、参数形态与 learner-owned 区域必须严格来自 public starter_code 的函数签名。reference 与隐藏测试遵守该冻结任务合同；hidden_tests.input 统一使用 {"args": [...], "kwargs": {...}}；每个隐藏输入必须与公开题干、示例和 starter 中出现的输入值不同，并同步计算 expected。评分只能覆盖 item_plan 对应 objective/facts；starter 已提供的旁支输入/转换胶水不得被改成评分要求。
 6. function 模式的 expected 与 output_contract 必须对应函数返回值，不能把 print/标准输出当作函数返回值；若题面场景原本是纯打印任务，也必须改写成返回可 JSON 序列化结果的函数题，不得使用 stdin_stdout。
 7. code suite 的 reference 不得动态访问双下划线属性或使用动态执行/内省/文件/进程能力；普通类的 __init__ 定义可用；import 只能来自 execution_contract.allowed_imports。
-8. evidence 涉及文件读写时，代码题必须使用文本参数或 io.StringIO 的内存文件合同，不能访问宿主文件。
+8. evidence 涉及文件读写时，代码题使用独立临时目录内的 open/read/write/with；function 测试可带 files 初始文本夹具，按公共策略声明文件和输入约定。不能访问宿主文件。
 9. 不得把私有答案或测试材料复制到任何公开字段，不得声称已经验证。
 10. ${JSON_ONLY}`
 

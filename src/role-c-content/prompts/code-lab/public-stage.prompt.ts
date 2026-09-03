@@ -46,9 +46,10 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - practice_goal 写当前真实任务的实践目标；deliverable 写学习者最终可提交、可运行、可验证的具体产物。
 - readiness_checks 每项写“检查什么、何时算就绪”；steps 每项必须同时写 action、input、expected_result、verification，形成可执行闭环，不能只写概念说明。
 - 程序填空题可以在指南中明确提到题面可见的 TODO 或待填写区域；这类文字是在说明学习者操作，不是未完成的占位正文。
-- 指南最终会原样显示给学习者，只能使用“完整代码预览”“待填写位置”“公开样例”“预期输出”等界面用语。不得写 starter_code、expected_behavior、public_test、TODO_FILL_FACT 等内部字段或占位标记；引用变量名时必须与本次实际 starter_code / gap_template 完全一致，不能把 fact_text 写成 message 等另一个变量。
+- 指南最终会原样显示给学习者，只能使用“完整代码预览”“待填写位置”“公开样例”“预期输出”等界面用语。不得写 starter_code、expected_behavior、public_test、TODO_FILL_FACT 等内部字段或占位标记；指向已给代码时，变量名必须与本次实际 starter_code / gap_template 一致。学习者需要自行定义的中间变量要先说明“定义/保存为”，后续步骤使用同一名称，不得假称已在骨架中提供。
 - troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。
 - extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。若扩展任务要新增变量，必须明确写“新增/定义变量”，不得把新变量写成当前代码已存在的变量。
+- 扩展任务仍使用当前任务已经引用的操作规则。输入值或数量变化不等于新增操作规则：新的参数语义、运算符、反向执行、异常路径需要各自的当前证据；没有相应事实时，通过组合已有操作或更换合法数据形成变式。不能仅引用一般定义来支持新的边界行为。
 - extension_task、troubleshooting 和提示中的事实反例只能直接否定当前 cited fact，不得另造具体行业用途、API、语法或运行机制。程序填空的学习者区域称为“填写框”或“空位”，不得称为“空格”，避免与空格字符混淆。
 - learner_action=recall_fact 时，填写目标始终是 cited fact 的完整句子，不是事实中的单个符号、关键词或对象名；三级提示必须围绕“识别完整事实→确认整句边界→核对完整填写”逐级展开，不得把局部关键词误写成最终提交内容。
 - 验收条件由编排器根据 public_tests 确定性生成，模型不得另造测试 ID 或期望值。
@@ -68,6 +69,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - execution_mode 已由编排器根据当前学习目标确定性冻结，取值就是 staged_contract.execution_mode；你**不得自行判断或更改模式**，只在这个已冻结的模式下创作其余字段（文字、starter、测试、input/output 合同描述）
 - 冻结为 stdin_stdout：不设置 entry_point；input_form=stdin_lines 时从标准输入读取，input_form=none 时不读取输入；两者都向标准输出写出结果，input_contract/output_contract 与之一致
 - 冻结为 function：设置与 starter 函数签名一致的 entry_point；任务描述为实现并返回结果，不把 print 或标准输出作为答案；input_contract/output_contract 描述参数类型与返回值类型
+- function 的 return_value 表示判题使用返回值，并不表示必须返回字典。按当前题目选用证据支持的数值、字符串、列表、布尔或字典结果，在 output_contract 中填写明确 kind/type；此具体类型随题面冻结，参考实现与全部测试保持一致。不得为符合接口而引入目标证据之外的数据结构。
 - execution_contract 里的 execution_mode 直接抄写 staged_contract.execution_mode，不要写成另一个值
 
 【task_contract 完整任务契约（存在时强制遵循）】
@@ -123,7 +125,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 5. 每个 objective 写一条 instruction、一个公开测试、恰好三级提示和一个反思问题；不得返回 lab_id、objective_id、block_id、test_id、citation、Claim、coverage 或 used_evidence。
 6. 教学文字只使用 evidence.facts；输入中不存在事实身份的示例和练习不会作为可发表知识提供。编排器会把冻结事实作为 Claim 附加到 instruction。
 7. starter 不得直接完成任务，不得使用网络、宿主文件、shell、包安装或环境变量。
-8. starter 不得动态访问双下划线属性，不得调用 eval/exec/compile/open/breakpoint/__import__/globals/locals/vars/getattr/setattr/delattr；普通类的 __init__ 定义可用；import 只能来自 execution_contract.allowed_imports。
+8. starter 不得动态访问双下划线属性，不得调用 eval/exec/compile/breakpoint/__import__/globals/locals/vars/getattr/setattr/delattr；普通类的 __init__ 定义可用；import 只能来自 execution_contract.allowed_imports。open 按公共文件沙箱策略使用，只能操作本次测试的相对文件名。
 9. execution_contract.allowed_imports 只可从平台白名单 bisect、collections、datetime、decimal、enum、fractions、functools、heapq、itertools、io、json、math、operator、random、re、statistics、string 中选择，并须覆盖 starter、参考实现与隐藏测试实际使用的模块；基础任务优先使用内置语法并返回空数组。不得使用 sys、os、pathlib、subprocess 等平台外模块。secure 阶段不会也无法扩大 allowed_imports。
-10. evidence 涉及文件读写时，公开实验须明确采用安全等价环境：把文件文本作为函数参数，或使用 io.StringIO 这类内存文件对象；不得调用 open、访问宿主路径或声称已改写真实文件。
+10. evidence 涉及文件读写时，使用公共策略规定的独立临时文件环境，明确初始 files 夹具或 stdin 建文件流程、文件名和观察结果；学习者须实际完成目标文件操作。若要求先读取已有文件，每个 objectives[].public_test.input 和 additional_public_examples[].input 都须写全 files 初始内容，例如 {"args":["data.txt","新内容"],"kwargs":{},"files":{"data.txt":"原有内容"}}。仅在题面说“平台会创建文件”而不给出 files，判题器不会自动猜测文件内容。
 11. ${JSON_ONLY}`

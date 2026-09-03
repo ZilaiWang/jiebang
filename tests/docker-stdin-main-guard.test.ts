@@ -17,6 +17,7 @@ test.skipIf(!python)("stdin/stdout runner executes a normal Python __main__ guar
       language: "python",
       execution_mode: "stdin_stdout",
       allowed_imports: [],
+      resource_limits: { timeout_ms: 1000, memory_mb: 64, max_output_bytes: 4096 },
     },
     test_inputs: ["1 2 3\n"],
     max_output_bytes: 4096,

@@ -933,6 +933,7 @@ function buildReadyNextRound(input: {
   }
   const built = buildGenerationSpec({
     run_id: followUpRunId(input.identity),
+    artifact_tasks: tasksForNextPath(input.input.parent_spec, input.path.objectives, input.path.assessment_blueprint, input.profile.level, generationAction),
     profile_snapshot: input.profile,
     path_node: input.path,
     evidence_pack: input.evidence,
@@ -1284,3 +1285,4 @@ const defaultNextRoundSingleFlight = new KeyedSingleFlight()
 /** Shared only by callers in this process; inject a durable journal for restarts or multiple hosts. */
 const defaultNextRoundExecutionJournal =
   new InMemoryNextRoundExecutionJournal()
+import { tasksForNextPath } from "../contracts/artifact-task"

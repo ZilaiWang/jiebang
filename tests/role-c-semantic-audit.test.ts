@@ -6,6 +6,8 @@ import {
   ModelContentSemanticAuditPort,
   ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT,
 } from "../src/role-c-content/review/model-semantic-audit-port"
+import { ROLE_C_COMMON_SYSTEM_POLICY, ROLE_C_SCENARIO_EVIDENCE_POLICY } from "../src/role-c-content/prompts/common-policy"
+import { CONCEPT_SEGMENT_SYSTEM_PROMPT_V2 } from "../src/role-c-content/prompts/concept-tutor/staged.prompt"
 
 class AuditGateway implements ModelGateway {
   readonly model_id = "semantic-audit-test-model"
@@ -42,6 +44,13 @@ function auditInput() {
 }
 
 describe("Role C model semantic fact audit", () => {
+  test("作者与审核共享虚构情境边界，段落允许显式引用同目标的支持事实", () => {
+    expect(ROLE_C_COMMON_SYSTEM_POLICY).toContain(ROLE_C_SCENARIO_EVIDENCE_POLICY)
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain(ROLE_C_SCENARIO_EVIDENCE_POLICY)
+    expect(ROLE_C_SCENARIO_EVIDENCE_POLICY).toContain("虚构标签不能豁免这些专业规则")
+    expect(CONCEPT_SEGMENT_SYSTEM_PROMPT_V2).toContain("slot.fact_ids 与 used_fact_ids 的并集")
+    expect(CONCEPT_SEGMENT_SYSTEM_PROMPT_V2).not.toContain("也不得提前借用或挪到当前 slot")
+  })
   test("reviews a choice question and its distractors as one semantic unit", () => {
     const blocks = extractAssessmentBlocks({
       payload: {
