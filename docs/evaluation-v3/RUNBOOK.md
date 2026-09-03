@@ -20,7 +20,7 @@ bun scripts/competition-evaluation-v2.ts run --dev --gate=balanced12 --self-audi
 
 # Gate 3：同一干净提交上的 60×1；先完成 manifest 复核冻结和评审校准
 bun run eval:v2:final -- --self-audit --gate-evidence=.tmp/eval-v3-balanced12/latest.json \
-  --calibration-evidence=.tmp/eval-v3-calibration/judge-calibration.json \
+  --calibration-evidence=evaluation/judge-calibration.v1.json \
   --output-dir=.tmp/eval-v3-formal60
 ```
 
@@ -56,5 +56,7 @@ bun scripts/competition-evaluation-v2.ts robustness --output-dir=.tmp/eval-v3-ro
 已有冻结的校准资源正文时，使用 `calibration-run --input=/path/to/resources.json --self-audit --env-file=/path/to/local.env --output-dir=.tmp/eval-v3-calibration` 直接调用真实评审模型。输入是资源数组，在上述复核字段基础上提供 `title/content`，不提供预测值；标准难度不传给模型。每份结果单独保存，中断后加 `--resume`，保留已经完成的负面判断。
 
 校准总体准确率要求至少 85%。只有带模型与 rubric 绑定信息的校准结果可用于正式运行；只传行数组可检查数据，但不能代替正式资格证据。使用一名明确记录的复核者即可。
+
+仓库内的 `evaluation/judge-calibration.v1.json` 是已通过复核并绑定 `glm-5.2`、当前评审配置与当前 rubric 的正式校准证据。更换评审模型、评审配置或 rubric 后必须重新运行校准并更新该文件，不能沿用旧资格证据。
 
 Query 鲁棒性和现有 12 条动态轨迹独立输出，不并入首轮 180 份资源的指标分母。

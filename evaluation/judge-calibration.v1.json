@@ -1,0 +1,549 @@
+{
+  "rows": [
+    {
+      "resource_id": "CAL26-01",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "beginner",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:3a4865a0fa2dba954c358e54a3d2a718fbf0ac5e89cc6169cb313e2aa5d7b18f",
+      "predicted_difficulty": "beginner",
+      "reasons": [
+        "教学过程为单步识别：按示例找到等号右边的值，再选择输出，无需多步操作。",
+        "提示明确说明“只读取一次变量，没有修改或计算”，认知要求仅为直接代入/识别。",
+        "理解检查为选择题，脚手架充分，学习者只需直接模仿示例即可完成。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-02",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "beginner",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:bf424df7944e22d3577868237d69ebe3437c6d4ee890f56fc29593331d1c28ef",
+      "predicted_difficulty": "beginner",
+      "reasons": [
+        "资源仅要求学习者完成单步比较操作（8 > 2），不涉及多步骤依赖或数据构造。",
+        "提供了充分脚手架，先给出 3 < 5 和 5 < 3 的完整示例，学习者可直接模仿。",
+        "认知要求为单次大小判断与符号识别，无需调试、边界处理或综合多知识点。",
+        "明确说明只需判断一次大小，不涉及分支、循环或其他综合应用。"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-03",
+      "artifact_kind": "lab",
+      "expected_difficulty": "beginner",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:6fbfea4d0660bfe599c02357acc2685fd1ab929be55eac39164e1324dc4ca360",
+      "predicted_difficulty": "beginner",
+      "reasons": [
+        "任务为单步操作：在已提供的 print 调用中填入带引号的字符串 '你好'，无需构造数据、索引或转换。",
+        "脚手架充分：print 调用已给出，示例展示了填写形式，学习者只需直接模仿并替换为规定文字。",
+        "认知要求低：仅涉及单一概念（字符串字面量），无多步骤依赖、无调试或边界处理。"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-04",
+      "artifact_kind": "lab",
+      "expected_difficulty": "beginner",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:74954153038430edfa3b4bdba26927715364a32549e9b17b29c5badd78fdd37b",
+      "predicted_difficulty": "beginner",
+      "reasons": [
+        "任务为单步直接代入：学习者只需在已给出的加法表达式中填写数字 1。",
+        "脚手架充分：函数定义、返回语句、加号均已提供，学习者无需构造任何额外逻辑。",
+        "认知要求极低：只需识别“增加一”对应数字 1 并填入空格，无需多步骤或状态跟踪。",
+        "无调试、无边界处理、无开放设计，属于直接模仿级别的单一概念练习。"
+      ],
+      "confidence": 0.98
+    },
+    {
+      "resource_id": "CAL26-05",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "beginner",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:88584d47eb1fb437c56a2b4f0194f3ae6a23ee5e80ddf823a808304c41efad3a",
+      "predicted_difficulty": "beginner",
+      "reasons": [
+        "每道题均为单步识别：识别赋值结果、字面量类型或print输出，不涉及多步状态跟踪",
+        "题目明确说明只需识别一条赋值或一个字面量，认知要求为直接代入或单步识别",
+        "选项设计直接对应单一概念，无需调试、边界处理或多知识点综合",
+        "无TODO或学习者需完成的多步依赖操作，脚手架虽少但任务本身为直接模仿级别"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-06",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "beginner",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:9c8686d244ef6a7b29fe4360014e391aa20895eed9cbfb2500b6700b3d5a6762",
+      "predicted_difficulty": "beginner",
+      "reasons": [
+        "每道题均为单步识别或直接代入：2+1求值、6>2判断、len('猫')求长度、列表元素计数、9==9判断，各题只需执行一个已示范操作即可得出答案",
+        "全部数据已在题面给出，无需构造数据、无需多步依赖操作或状态跟踪",
+        "每题仅涉及单一概念（算术运算、比较运算、len函数、列表元素计数、相等判断），无知识点综合",
+        "二选一单选形式提供充分脚手架，学习者只需直接模仿已示范操作即可作答",
+        "无调试、无边界处理、无开放设计，认知要求为最低层级的单步识别"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-07",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "basic",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:4f503a2c5387aaa2e8d5a7f5b61197fffdfa0617af0ccefb607986cee9ae2119",
+      "predicted_difficulty": "basic",
+      "reasons": [
+        "学习者需完成两个相互依赖的操作：先按索引更新列表元素（values[1]-=2），再对更新后的列表求和（sum(values)），属于两到三步应用。",
+        "提示仅提供索引从零开始这一事实，更新表达式和汇总语句均由学习者自行完成，脚手架有限。",
+        "练习还要求说明先汇总再更新会导致结果不同，需要跟踪列表状态变化并做简单迁移检查，符合 basic 的认知要求。",
+        "不涉及多步骤调试、边界处理或开放项目设计，未达到 intermediate 或 integrated。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-08",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "basic",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:e778e21942ee9265201202c97b1f01c1669f62afd229e8b23c2780d46aa95f92",
+      "predicted_difficulty": "basic",
+      "reasons": [
+        "学习者需自行写出三条相互依赖的语句（strip、int转换、算术运算），属于两到三步应用而非单步直接代入。",
+        "任务要求简单迁移：示例展示了 raw=' 12 ' 的清理与转换流程，学习者需将其迁移到 raw=' 8 ' 并额外完成加法运算。",
+        "需联系多条事实并跟踪状态变化：文本经 strip 变为干净文本、再经 int 变为数值、最后才能进行数值相加，存在两到三步状态跟踪。",
+        "除执行操作外还要求解释 raw*2 为何得不到 16，涉及对文本重复与数值运算差异的简单迁移检查，认知要求高于直接模仿。",
+        "无需调试或边界处理，且输入保证合法，未达到 intermediate 级别的调试与边界要求。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-09",
+      "artifact_kind": "lab",
+      "expected_difficulty": "basic",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:87c542a84a713b70835afa11a07801d629de5363bc0b20306d4965e0b4fdfb87",
+      "predicted_difficulty": "basic",
+      "reasons": [
+        "学习者需完成两个相互依赖的操作：先在循环中按条件筛选数据并追加到列表，再计算筛选结果的平均值。",
+        "骨架提供了函数定义和遍历框架，属于部分脚手架，但核心逻辑（条件判断、追加、平均值表达式）需学习者自行填写。",
+        "认知要求为两到三步应用与简单迁移，符合 basic 档位标准。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-10",
+      "artifact_kind": "lab",
+      "expected_difficulty": "basic",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:26714250269cdfd3f0cbebc539357ffed843112f3b1eed9161204988da8f8979",
+      "predicted_difficulty": "basic",
+      "reasons": [
+        "学习者需完成三个相互依赖的操作：清理名称（strip）、将两个字符串转换为整数、计算总价并格式化输出",
+        "starter仅提供了输入和分割，核心逻辑区域为TODO，需学习者自行实现转换与计算",
+        "任务为两到三步应用，涉及字符串清理、类型转换和算术运算的简单迁移",
+        "无需异常处理或边界处理，且输入格式固定，认知要求适中"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-11",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "basic",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:c6440110739e2c727f3a11338d29ce37e561503c011cd02f73dc2bf749778a3b",
+      "predicted_difficulty": "basic",
+      "reasons": [
+        "题目包含五道小题，每题需完成两到三步相互依赖的操作，如先 append 再求和、先赋值再索引计算、先筛选偶数再累加，符合 basic 的多步应用要求。",
+        "第3题要求补全循环条件和累加语句，属于部分脚手架下的简单迁移，学习者需自行写出筛选与累加逻辑而非直接模仿。",
+        "第4、5题要求链式操作（清理转换后计算、切片后求均值），需跟踪中间状态变化并组合多个已学操作。",
+        "题目明确不要求异常处理或边界调试，认知要求未达到 intermediate 的调试与边界处理层级。",
+        "整体为两到三步应用、部分脚手架、简单迁移，符合 basic 分级标准。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-12",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "basic",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:bb51338844927d32914063d4c8518c0b837da37dc3c5fe8a0d7b3af9f74c41e5",
+      "predicted_difficulty": "basic",
+      "reasons": [
+        "每题需两到三步相互依赖操作：如 split 后再转换求和、读取值翻倍后写回字典再输出，超出单步直接代入。",
+        "部分脚手架：第3题给出循环框架、第4题给出两行待补全，学习者只需补全核心操作行而非从零构造。",
+        "认知要求为简单迁移：将字典添加、split/类型转换、strip、值更新等单一概念应用到具体数据上，无需调试或边界处理。",
+        "题目明确不要求处理键缺失或错误数据，排除了 intermediate 级别的边界处理与调试要求。",
+        "多题独立但各自步骤有限，未达到多知识点综合开放设计的 integrated 水平。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-13",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "intermediate",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:dc00036d30c9ff72f618aae3ca9fde117ee12403ae4b9d8408c2996420cc8d01",
+      "predicted_difficulty": "intermediate",
+      "reasons": [
+        "需要多步骤调试与状态跟踪：理解默认参数在跨次调用间的共享行为，画出两次调用中 items 指向的对象并解释状态累积原因。",
+        "要求修复代码并将默认参数改为 None，同时处理函数内部列表创建位置，属于相互依赖的多步操作。",
+        "需要编写覆盖连续调用、显式传入空列表、显式传入非空列表三类场景的测试，涉及边界处理。",
+        "要求明确函数应原地修改传入列表还是返回副本，属于设计决策与多知识点综合判断。",
+        "脚手架程度较低：只给对象身份和可变默认值两条分析线索，不给出最终实现，学习者需独立完成修复与测试设计。"
+      ],
+      "confidence": 0.88
+    },
+    {
+      "resource_id": "CAL26-14",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "intermediate",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:2b54674774c11fa5d912ad1cb3b19e108661e839c6ac0edf1d0a663cf5056e47",
+      "predicted_difficulty": "intermediate",
+      "reasons": [
+        "需要多步骤调试与修复：学习者必须处理空行、缺分数、非数值分数及无有效记录四类异常，涉及结构解析、数值转换、聚合、输出多个阶段。",
+        "要求建立故障表并决定错误处理策略（跳过、记录或终止），认知要求高，脚手架较少。",
+        "需提交至少四个能区分修复前后行为的测试输入，涉及边界处理与测试设计。",
+        "需解释宽泛 except 为何掩盖程序错误，要求对异常机制有较深理解，非简单迁移。"
+      ],
+      "confidence": 0.85
+    },
+    {
+      "resource_id": "CAL26-15",
+      "artifact_kind": "lab",
+      "expected_difficulty": "intermediate",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:7bf70864ad18077effc1f931992c27ff0b974c85bcfbe680dcfa0e0dcd470297",
+      "predicted_difficulty": "intermediate",
+      "reasons": [
+        "需诊断遍历中删除导致相邻负数漏删的迭代器行为，以及原地修改导致调用方数据被破坏的副作用问题，属于多步调试与根因分析",
+        "不给循环骨架或修复位置提示，脚手架极少，学习者须独立定位并重写实现",
+        "验收覆盖空列表、全负数、连续负数、零、重复元素及原输入不变等边界条件，要求边界处理",
+        "需自拟至少两条回归测试，存在开放性测试设计要求",
+        "修复需同时满足'返回新列表'与'原列表不变'，涉及构造新结构而非单步替换，认知要求高于简单迁移"
+      ],
+      "confidence": 0.88
+    },
+    {
+      "resource_id": "CAL26-16",
+      "artifact_kind": "lab",
+      "expected_difficulty": "intermediate",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:97585ec62be72ffaf0fe5b6f212411d1c1f3c90a251fc81ec6b11a5ae653e860",
+      "predicted_difficulty": "intermediate",
+      "reasons": [
+        "学习者需独立完成多步骤实现：逐行解析、校验编号非空与数量为非负整数、按编号累加到字典、收集错误信息并按输入顺序记录行号与错误代码，操作相互依赖",
+        "仅给出函数签名，无内部骨架或代码模板，脚手架程度低",
+        "需处理多种边界情况：空输入、连续逗号、空白字段、负数、重复编号、超大合法数量，并保证非法行不影响其他合法行的处理",
+        "要求说明校验顺序，不得用宽泛异常吞掉错误，不得修改输入，认知要求包含调试与边界处理",
+        "涉及校验逻辑、状态跟踪（累加字典与错误列表的并行维护）及错误分类，综合度高于简单两到三步应用"
+      ],
+      "confidence": 0.88
+    },
+    {
+      "resource_id": "CAL26-17",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "intermediate",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:7f8998bbf23b8dd3a04571bf3b2c051489666c059f73932517e2b861a74f0bf0",
+      "predicted_difficulty": "intermediate",
+      "reasons": [
+        "五道题均要求学习者独立完成根因分析、代码修复和边界输入构造，属于多步骤调试与边界处理任务。",
+        "每题要求区分原实现与修复的边界输入，需识别索引0、空列表、浅拷贝、稳定排序等边界条件，认知要求高。",
+        "无逐级提示或脚手架，学习者须自行定位故障并设计回归测试，脚手架程度低。",
+        "涉及迭代索引、除零、浅拷贝污染、排序稳定性、索引0假值等多知识点综合判断，但题目逐题独立而非开放项目设计，故判为 intermediate 而非 integrated。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-18",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "intermediate",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:b7d4766f07f3852a84fbecf9bf1b8376a82d4efaad386ca4d1e519dadc87fd53",
+      "predicted_difficulty": "intermediate",
+      "reasons": [
+        "五道题均要求多步骤操作：设计边界测试用例、修复二分查找循环条件并证明退出条件、分析控制路径中文件未关闭问题、修复分组程序初始化与累加逻辑、区分排序行为并改写代码，属于多步骤调试与边界处理。",
+        "题目明确要求状态或控制路径分析，不能只写输出值，认知要求高于简单应用，需要跟踪程序执行状态和异常路径。",
+        "涉及异常处理、上下文管理、循环不变量证明、初始化修复等多个知识点的综合分析，但题目本身有明确指向性而非开放设计，故不判为 integrated。",
+        "无脚手架或逐级提示，学习者需独立完成调试、修复和证明，符合 intermediate 的较少提示与多步骤要求。"
+      ],
+      "confidence": 0.9
+    },
+    {
+      "resource_id": "CAL26-19",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "integrated",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:a12e180f3bd24b67037cd1157e39d2d620a633e2bdc3467b289ef26aa5c4b380",
+      "predicted_difficulty": "integrated",
+      "reasons": [
+        "要求学习者自行选择数据结构和模块边界，属于开放设计而非按步骤模仿",
+        "需综合读取解析、校验、汇总、报告输出等多职责，体现多知识点综合",
+        "需自定错误报告格式并说明理由，无唯一架构，开放程度高",
+        "需实现多文件处理、重复运行一致性、单元测试与使用说明，独立完成项目级任务",
+        "以数据溯源、异常隔离与复现结果验收，认知要求达到综合设计与验证层面"
+      ],
+      "confidence": 0.92
+    },
+    {
+      "resource_id": "CAL26-20",
+      "artifact_kind": "lesson",
+      "expected_difficulty": "integrated",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:95fead2ff64afd2c67b90525a436160296fb6c60960fcf8bcb37c7f5352ff4e1",
+      "predicted_difficulty": "integrated",
+      "reasons": [
+        "多知识点综合：需同时建模图书、读者、借阅记录三个领域对象，并区分当前库存与历史事件，涉及实体关系与状态重建等综合概念。",
+        "开放设计：课程不提供函数清单或完整骨架，学习者需自行设计命令接口、持久化格式和校验责任，允许替代设计方案。",
+        "独立完成项目：任务要求完整实现借出、归还、查询、重启恢复四大功能，属于端到端项目交付而非片段练习。",
+        "边界处理与调试：需分析重复归还、库存为零、读者不存在、文件中断写入等异常路径，并选择一致性保存方案。",
+        "多步骤状态跟踪与测试：要求为跨多次操作的状态序列编写测试，学习者须跟踪多步状态变化并验证一致性。",
+        "脚手架程度低：仅提供概念图和验收条件，无函数清单或骨架代码，认知要求高。"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-21",
+      "artifact_kind": "lab",
+      "expected_difficulty": "integrated",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:ba0c62c70674edbdd32891f2b714dcd51245eef793eec22618be38b55f482d90",
+      "predicted_difficulty": "integrated",
+      "reasons": [
+        "无 starter code，要求从零独立设计并实现完整命令行项目，需自行决定类/函数结构、持久化粒度与命令语法，开放程度高",
+        "需综合运用多知识点：数据建模、JSON 持久化与恢复、借还状态流转、按读者查询未归还记录等，属于多知识点综合应用",
+        "要求处理重复编号、库存不足、无效归还、损坏文件等边界与异常情况，且错误不能破坏已有合法数据，涉及调试与边界处理",
+        "验收标准要求多轮借还、重启和非法输入下库存与历史一致，需独立完成包含连续操作与中断恢复的测试，认知要求高",
+        "需说明至少一项设计取舍，禁止用特制输出代替实现，要求独立完成项目并交付源码、使用说明与测试"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-22",
+      "artifact_kind": "lab",
+      "expected_difficulty": "integrated",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:ec2ba369d9e1e37dd5f23a135e07902f61677dcf1faba437408df4adac33c98b",
+      "predicted_difficulty": "integrated",
+      "reasons": [
+        "要求实现独立 Python 项目，涵盖模块划分、命令入口、测试和一页设计说明，属于多知识点综合与开放设计",
+        "需读取多份 CSV、统一格式、拒绝非法记录、处理跨文件重复编号并按商品和日期汇总，存在多个相互依赖的操作步骤",
+        "要求自行设计重复冲突策略并记录来源，且支持重新运行得到一致结果，认知要求高且开放程度大",
+        "验收条件覆盖空目录、大量记录、部分文件损坏、格式混杂、跨文件冲突与重复运行，需要健壮的错误处理与边界处理",
+        "明确不给解析/聚合骨架、允许不同正确设计，脚手架程度极低，需独立完成项目",
+        "涉及文件 I/O、数据清洗、聚合统计、冲突策略、模块化工程与测试等多知识点综合应用"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-23",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "integrated",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:11479703f3a462d17bcd25a6345e5b48eb88e67a52ef7d1f90efefab9d6fd2bc",
+      "predicted_difficulty": "integrated",
+      "reasons": [
+        "任务要求综合运用数据结构设计、不变量声明、核心服务实现、持久化恢复和测试序列构造等多个知识点，属于多知识点综合应用。",
+        "没有提供代码骨架或固定模块划分，学习者需独立完成从设计到实现的完整项目，开放程度高。",
+        "五项任务相互依赖：数据结构设计约束服务实现，服务实现影响取消候补逻辑，持久化格式决定重启恢复行为，测试序列需覆盖跨报名、取消、重启的完整流程。",
+        "要求处理容量限制、重复报名、候补递补顺序、写入失败等边界条件和错误场景，认知要求远超简单应用。",
+        "最终提交需可运行实现并附设计理由，单个函数通过不足以完成测评，要求独立完成项目级别的综合交付物。"
+      ],
+      "confidence": 0.95
+    },
+    {
+      "resource_id": "CAL26-24",
+      "artifact_kind": "assessment",
+      "expected_difficulty": "integrated",
+      "reviewer": "Codex",
+      "holdout": true,
+      "resource_hash": "sha256:18e0808f4bd93e1f85bc35fd4ccb518a40af0ab23b6bb268d39d2356800c1296",
+      "predicted_difficulty": "integrated",
+      "reasons": [
+        "任务要求多知识点综合：数据结构设计、文件导入与校验、冲突处理、两级统计、原子保存与自动测试，跨越数据建模、异常处理、文件I/O和测试工程多个领域。",
+        "未提供starter代码，学习者需独立完成完整程序与设计说明，脚手架程度极低。",
+        "任务为开放设计：允许不同方案满足验收标准，学习者需自行决定记录结构、规范化方案和模块划分。",
+        "认知要求高：需处理跨文件重复、缺失字段、空数据及部分失败等边界情况，并解释模块可扩展性。",
+        "涉及多步骤相互依赖操作：导入后校验、校验后统计、统计后原子保存，且需保证重跑一致性。"
+      ],
+      "confidence": 0.95
+    }
+  ],
+  "version": "difficulty-judge-calibration.v3",
+  "resources": 24,
+  "correct": 24,
+  "accuracy": 1,
+  "confusion_matrix": {
+    "beginner": {
+      "beginner": 6,
+      "basic": 0,
+      "intermediate": 0,
+      "integrated": 0,
+      "not_audited": 0
+    },
+    "basic": {
+      "beginner": 0,
+      "basic": 6,
+      "intermediate": 0,
+      "integrated": 0,
+      "not_audited": 0
+    },
+    "intermediate": {
+      "beginner": 0,
+      "basic": 0,
+      "intermediate": 6,
+      "integrated": 0,
+      "not_audited": 0
+    },
+    "integrated": {
+      "beginner": 0,
+      "basic": 0,
+      "intermediate": 0,
+      "integrated": 6,
+      "not_audited": 0
+    }
+  },
+  "errors": [],
+  "by_artifact": {
+    "lesson": {
+      "resources": 8,
+      "correct": 8,
+      "accuracy": 1,
+      "confusion_matrix": {
+        "beginner": {
+          "beginner": 2,
+          "basic": 0,
+          "intermediate": 0,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "basic": {
+          "beginner": 0,
+          "basic": 2,
+          "intermediate": 0,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "intermediate": {
+          "beginner": 0,
+          "basic": 0,
+          "intermediate": 2,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "integrated": {
+          "beginner": 0,
+          "basic": 0,
+          "intermediate": 0,
+          "integrated": 2,
+          "not_audited": 0
+        }
+      }
+    },
+    "lab": {
+      "resources": 8,
+      "correct": 8,
+      "accuracy": 1,
+      "confusion_matrix": {
+        "beginner": {
+          "beginner": 2,
+          "basic": 0,
+          "intermediate": 0,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "basic": {
+          "beginner": 0,
+          "basic": 2,
+          "intermediate": 0,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "intermediate": {
+          "beginner": 0,
+          "basic": 0,
+          "intermediate": 2,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "integrated": {
+          "beginner": 0,
+          "basic": 0,
+          "intermediate": 0,
+          "integrated": 2,
+          "not_audited": 0
+        }
+      }
+    },
+    "assessment": {
+      "resources": 8,
+      "correct": 8,
+      "accuracy": 1,
+      "confusion_matrix": {
+        "beginner": {
+          "beginner": 2,
+          "basic": 0,
+          "intermediate": 0,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "basic": {
+          "beginner": 0,
+          "basic": 2,
+          "intermediate": 0,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "intermediate": {
+          "beginner": 0,
+          "basic": 0,
+          "intermediate": 2,
+          "integrated": 0,
+          "not_audited": 0
+        },
+        "integrated": {
+          "beginner": 0,
+          "basic": 0,
+          "intermediate": 0,
+          "integrated": 2,
+          "not_audited": 0
+        }
+      }
+    }
+  },
+  "passed": true,
+  "qualification": {
+    "judge_model": "glm-5.2",
+    "judge_config": "MODEL-7d8507d4be1dcb64b82774ed68b31bf9a7b804d7e11ee4fbe5e2895c7d05f84e",
+    "rubric_hash": "sha256:aac9c8de3d0b971154dc0018843c65f355752127f17ba0f8a8a882da28c57fbc"
+  },
+  "rows_hash": "sha256:50128cf6ad46d8bcae38fa3207233f5ebc152cf70645266b063a095dda661637"
+}
