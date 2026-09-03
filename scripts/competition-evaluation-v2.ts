@@ -378,7 +378,7 @@ async function run() {
     const gateEvidence = option("--gate-evidence")
     if (!gateEvidence) throw new Error("FORMAL_REQUIRES_BALANCED12_GATE_EVIDENCE")
     const prior = await read<{ gate?: { gate?: string; passed?: boolean }; protocol?: Partial<typeof protocolBody> }>(resolve(gateEvidence))
-    const evidenceKeys = ["manifest_hash", "source_tree_hash", "runner_image_digest", "generation_model", "generation_config", "generation_runtime_config", "judge_model", "judge_config", "difficulty_judge_version", "rubric_hash", "prompt_version"] as const
+    const evidenceKeys = ["manifest_hash", "source_tree_hash", "git_commit", "dirty_workspace", "runner_image_digest", "generation_model", "generation_config", "generation_runtime_config", "judge_model", "judge_config", "difficulty_judge_version", "rubric_hash", "prompt_version"] as const
     if (prior.gate?.gate !== "balanced12" || prior.gate.passed !== true
       || evidenceKeys.some((key) => prior.protocol?.[key] !== protocol[key])) {
       throw new Error("FORMAL_GATE_EVIDENCE_MISMATCH")
