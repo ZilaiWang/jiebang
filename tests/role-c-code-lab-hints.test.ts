@@ -5,6 +5,7 @@ import {
 } from "../src/role-c-content/providers/model-backed-provider"
 import {
   materializeCodeLabPublicAuthorPayload,
+  projectDebuggingRepairPublicGuidance,
   validateCodeLabPublicAuthorAgainstPlan,
   type CodeLabObjectivePlan,
   type CodeLabPublicAuthorPayload,
@@ -146,6 +147,92 @@ describe("code lab content-specific hint ladders", () => {
       undefined,
       evidence,
     ).some((issue) => issue.includes("至少两级必须点明"))).toBe(false)
+  })
+
+  test("debugging_repair 不允许题面逐项公布缺陷并在提示中给齐源码替换", () => {
+    const author = payload([
+      "观察公开样例，定位循环端点。",
+      "需要使用 range(1, 5) 才能包含编号 4。",
+      "将 logs[i] 改为 logs[i-1]，再重新运行。",
+    ])
+    author.programming_task = {
+      statement: "当前 starter 代码中存在两个缺陷：条件分支缺陷、循环端点缺陷。",
+      input_description: "传入日志列表。",
+      output_description: "返回分类结果。",
+      constraints: ["按顺序处理", "不得遗漏元素"],
+      additional_public_examples: [],
+    }
+    const issues = validateCodeLabPublicAuthorAgainstPlan(
+      author,
+      plan,
+      undefined,
+      undefined,
+      {
+        task_kind: "debugging_repair",
+        submission_mode: "full_code",
+        public_case_count: 1,
+        required_mutation_count: 2,
+      } as any,
+      evidence,
+    )
+    expect(issues.some((issue) => issue.includes("源码级缺陷"))).toBe(true)
+    expect(issues.some((issue) => issue.includes("前两级提示"))).toBe(true)
+  })
+
+  test("debugging_repair 拒绝 TODO 骨架和在注释中公布缺陷", () => {
+    const author = payload([
+      "先运行公开样例观察结果。",
+      "记录循环中每轮访问的位置。",
+      "根据观察定位边界。",
+    ])
+    author.starter_code = "def solve(values):\n    # 缺陷1：range 起点错误，请修复\n    # TODO: 补全循环\n    return []"
+    author.programming_task = {
+      statement: "starter 代码中存在三类问题：请逐项处理。",
+      input_description: "传入值列表。",
+      output_description: "返回处理结果。",
+      constraints: ["保留函数签名", "使用公开样例复现"],
+      additional_public_examples: [],
+    }
+    const issues = validateCodeLabPublicAuthorAgainstPlan(
+      author,
+      plan,
+      undefined,
+      undefined,
+      {
+        task_kind: "debugging_repair",
+        submission_mode: "full_code",
+        public_case_count: 1,
+        required_mutation_count: 1,
+      } as any,
+      evidence,
+    )
+    expect(issues.some((issue) => issue.includes("starter 必须是完整可运行") && issue.includes("starter_code"))).toBe(true)
+    expect(issues.some((issue) => issue.includes("starter 注释不得公布") && issue.includes("starter_code"))).toBe(true)
+    expect(issues.some((issue) => issue.includes("题面只能描述预期行为") && issue.includes("programming_task.statement"))).toBe(true)
+  })
+
+  test("debugging repair guidance is projected to observation-first public layers", () => {
+    const author = payload([
+      "请使用 range(0, len(values)) 遍历。",
+      "应将 values[1] 改为 values[0]。",
+      "把边界表达式改为 range(0, len(values))。",
+    ])
+    author.starter_code = "def solve(values):\n    result = []\n    for i in range(1, len(values)):\n        result.append(values[i])\n    return result\n"
+    author.objectives[0]!.instruction_text = "请使用 range(0, len(values)) 修复循环。"
+    author.programming_task = {
+      statement: "starter 代码中存在一处故障：range 起点错误，应使用 range(0, len(values))。",
+      input_description: "传入值列表。",
+      output_description: "返回全部值。",
+      constraints: ["保留函数签名", "保持输出顺序"],
+      additional_public_examples: [],
+    }
+    projectDebuggingRepairPublicGuidance(author)
+    expect(author.programming_task.statement).toContain("故障定位与修复任务")
+    expect(author.programming_task.statement).not.toContain("range(0")
+    expect(author.objectives[0]!.instruction_text).toContain("比较实际结果")
+    expect(author.objectives[0]!.hints.slice(0, 2).join(" ")).not.toContain("range(0")
+    expect(author.objectives[0]!.hints[2]).toContain("range(0")
+    expect(author.starter_code).toContain("range(1")
   })
 
   test("normalization projects extra guide slots and duplicate public examples to the frozen plan", () => {

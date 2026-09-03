@@ -3,6 +3,7 @@ import type {
   CodeLabPublicArtifact,
   ConceptLessonArtifact,
   RenderBlock,
+  QuizBlock,
 } from "../contracts/artifacts"
 import type { CitationRef } from "../contracts/common"
 import type {
@@ -54,7 +55,7 @@ export function extractConceptBlocks(artifact: ConceptLessonArtifact): ReviewCon
     ...payload.micro_checks.map((block) => makeBlock(
       "concept",
       { field: "quiz", ref_id: block.item_id, parent_block_id: block.block_id, objective_id: objectiveByBlock.get(block.block_id) },
-      promptWithOptions(block.prompt, block.options),
+      quizWithFeedback(block),
       block.citations,
       "citation_only",
       block.options?.length ? "choice_assessment" : "open_assessment",
@@ -234,7 +235,7 @@ function reviewRenderBlock(
     return [makeBlock(
       kind,
       { field: "quiz", ref_id: block.item_id, parent_block_id: block.block_id, objective_id: objectiveId },
-      promptWithOptions(block.prompt, block.options),
+      quizWithFeedback(block),
       block.citations,
       "citation_only",
       block.options?.length ? "choice_assessment" : "open_assessment",
@@ -251,6 +252,15 @@ function reviewRenderBlock(
     )]
   }
   return []
+}
+
+function quizWithFeedback(block: QuizBlock): string {
+  const answer = block.options?.find((option) => option.option_id === block.answer_option_id)
+  return [
+    promptWithOptions(block.prompt, block.options),
+    answer ? `即时反馈指定答案：${answer.label}：${answer.text}` : "",
+    block.answer_explanation ? `即时反馈解释：${block.answer_explanation}` : "",
+  ].filter(Boolean).join("\n")
 }
 
 function renderedBlockText(block: RenderBlock): string | undefined {

@@ -108,8 +108,10 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       body: "for 可遍历序列。依次处理其中的元素。", steps: [], code,
     }))
     const normalized = anchorConceptFactsInVisibleText({ payload, request, plans })
-    expect(normalized.objectives[0]!.sections[0]!.code).toBe(code)
-    const run = Bun.spawnSync(["python3", "-c", normalized.objectives[0]!.sections[0]!.code!])
+    const executable = normalized.objectives[0]!.sections.find((section: any) => section.code)
+    expect(executable?.code).toBe(code)
+    expect(normalized.objectives[0]!.sections.filter((section: any) => !plans[0]!.slots.find((slot) => slot.slot_id === section.slot_id)!.allowed_block_types.includes("code")).every((section: any) => section.code === null)).toBe(true)
+    const run = Bun.spawnSync(["python3", "-c", executable!.code!])
     expect(run.exitCode).toBe(0)
     expect(run.stdout.toString()).toBe("RAG  example\n")
   })
@@ -187,7 +189,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       Array.isArray(section.steps) && section.code === null)).toBe(true)
   })
 
-  test("规范讲解保留模型题目：越界即时检查交还作者修复，不替换成事实背诵题", () => {
+  test("规范讲解保留模型题目与答案，交由完整语义审核而不替换成事实背诵题", () => {
     const request = segmentRequest(
       [{ objective_id: "O1", source_id: "K002", fact_ids: ["F001", "F002"], behavior: "explain" }],
       [
@@ -226,7 +228,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       normalized,
       plans,
       new Map([["O1", ["Python 使用 = 进行变量赋值。", "变量名用于引用程序中的数据。"]]]),
-    ).join("\n")).toContain("未直接得到当前事实支持")
+    )).toEqual([])
   })
 
   test("应用型即时检查保留可复算的推理答案，不要求答案逐字存在于事实中", () => {
@@ -272,7 +274,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
     )
   })
 
-  test("讲义即时检查不能用未引用的绝对用途制造干扰项", () => {
+  test("干扰项交给语义辨析，指定正确项仍不能无依据绝对化", () => {
     const plan = {
       objective_id: "O1", mode: "definition_only", slots: [],
       micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
@@ -295,10 +297,12 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       [plan],
       new Map([["O1", ["Python 是一种通用编程语言。"]]]),
     )
-    expect(issues.join("\n")).toContain("未授权的绝对限定：仅限")
+    expect(issues).toEqual([])
+    payload.objectives[0].micro_check.answer = "Python 仅限用于网页设计"
+    expect(validateConceptMicroCheckEvidenceDiscipline(payload, [plan], new Map([["O1", ["Python 是一种通用编程语言。"]]])).join("\n")).toContain("未授权的绝对限定：仅限")
   })
 
-  test("讲义即时检查不能用未引用的编译器机制制造干扰项", () => {
+  test("讲义即时检查的干扰项交给 choice_assessment 语义审核，不用字面相似度误判", () => {
     const plan = {
       objective_id: "O1", mode: "definition_only", slots: [],
       micro_check: { mode: "recognition", fact_ids: ["F1"], minimum_reasoning_steps: 1 },
@@ -321,10 +325,10 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       [plan],
       new Map([["O1", ["Python 程序通常由解释器执行。"]]]),
     )
-    expect(issues.join("\n")).toContain("不是事实复述或直接否定")
+    expect(issues).toEqual([])
   })
 
-  test("普通讲解不能把解释器事实扩写成未引用的否定性机制", () => {
+  test("普通讲解不因出现否定连词直接失败，完整命题由语义审核判断", () => {
     const plan = {
       objective_id: "O1", mode: "definition_only",
       slots: [{ slot_id: "S1", kind: "fact_explanation" }],
@@ -347,7 +351,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       [plan],
       new Map([["O1", ["Python 程序通常由解释器执行。"]]]),
     )
-    expect(issues.join("\n")).toContain("否定性机制说明：而不是")
+    expect(issues).toEqual([])
   })
 
   test("赋值事实允许用新变量名和值作直接实例，不误判为替代机制", () => {
@@ -384,7 +388,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
     expect(issues.join("\n")).not.toContain("具体替代说法")
   })
 
-  test("分步示例不能用未引用的编译器或大括号制造具体反例", () => {
+  test("分步示例的具体反例不由关键词门禁裁决，避免误杀上下文中的待辨析命题", () => {
     const plan = {
       objective_id: "O1", mode: "guided_explanation",
       slots: [{ slot_id: "S1", kind: "guided_example" }],
@@ -415,12 +419,10 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       [plan],
       new Map([["O1", ["Python 程序通常由解释器执行。", "Python 用缩进表示代码块。"]]]),
     )
-    expect(issues.join("\n")).toContain("事实未提供的具体替代说法")
-    expect(issues.join("\n")).toContain("编译器直接转换为硬件指令")
-    expect(issues.join("\n")).toContain("大括号表示代码块")
+    expect(issues).toEqual([])
   })
 
-  test("误区不能用知识库未提供的具体领域缩小事实范围", () => {
+  test("误区假设与纠正作为语义单元审核，不按单个范围词直接拒绝", () => {
     const plan = {
       objective_id: "O1", mode: "definition_only",
       slots: [{ slot_id: "S1", kind: "misconception" }],
@@ -448,7 +450,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
       [plan],
       new Map([["O1", ["Python 是一种通用编程语言。"]]]),
     )
-    expect(issues.join("\n")).toContain("misconception S1 引入事实未授权的绝对限定：仅用于")
+    expect(issues).toEqual([])
   })
 
   test("buildConceptSectionPlansForSegment 为每个 objective 生成 section plan", () => {
@@ -738,7 +740,7 @@ describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
     expect(lesson.explanation_blocks.length).toBeGreaterThanOrEqual(2)
     expect(lesson.explanation_blocks[0]).toEqual(expect.objectContaining({
       block_type: "heading",
-      text: "x（O1）",
+      text: "x",
     }))
     expect(lesson.worked_examples.length).toBeGreaterThanOrEqual(1)
     expect(lesson.misconceptions.length).toBe(1)

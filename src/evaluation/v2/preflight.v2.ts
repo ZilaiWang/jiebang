@@ -8,6 +8,7 @@ import { buildRoleCProfileSnapshotOptions } from "../../role-b-profile/learner-p
 import { validateRoleCSchema } from "../../role-c-content/validators/runtime-schema-validator"
 import { buildResourceBlueprint } from "../../role-c-content/planning/resource-blueprint"
 import { buildConceptSectionPlansForSegment } from "../../role-c-content/planning/concept-section-plan"
+import { planAssessmentCapacityForPipeline } from "../../role-c-content/orchestrator/content-pipeline"
 import { COMPETITION_CASES_V2 } from "./competition-cases.v2"
 import { assertDynamicTrajectoryCatalogV2 } from "./competition-dynamic-trajectories.v2"
 import {
@@ -56,6 +57,8 @@ export async function preflightCompetitionV2(
       )
       if (!schema.ok) throw new Error(JSON.stringify(schema.issues))
       const blueprint = buildResourceBlueprint(built.spec, evidence_pack)
+      const capacity = planAssessmentCapacityForPipeline({ generation_spec: built.spec, evidence_pack })
+      if (capacity.decision !== "FULL") throw new Error(`PREFLIGHT_FROZEN_ASSESSMENT_CAPACITY:${capacity.feasible_items}/${capacity.requested_items}`)
       if (
         blueprint.code_lab.task_contract.input_form === "none" &&
         blueprint.code_lab.programming_problem.public_case_count > 1

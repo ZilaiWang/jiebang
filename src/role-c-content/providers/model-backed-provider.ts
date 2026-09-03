@@ -1,4 +1,11 @@
 import { projectAssessmentTask } from "../contracts/artifact-task"
+import { planCodeLabTextRevision, applyCodeLabTextRevision, type LabTextRevisionField } from "../review/code-lab-text-revision"
+import { CODE_LAB_REVIEW_TEXT_PROMPT, CONCEPT_REVIEW_TEXT_PROMPT } from "../prompts/code-lab/review-text.prompt"
+import {
+  planConceptTextRevision,
+  applyConceptTextRevision,
+  validateConceptTextRevision,
+} from "../review/concept-text-revision"
 import { applyPublicFileFixtures, publicLabInputCases } from "../security/public-lab-inputs"
 import { conceptOwnedTeachingContract } from "../planning/teaching-unit-contract"
 import type {
@@ -46,6 +53,7 @@ import {
   ASSESSMENT_EXECUTION_REPAIR_SYSTEM_PROMPT,
   ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT,
+  CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT,
   CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT,
   CODE_LAB_REFERENCE_STAGE_SYSTEM_PROMPT,
   CODE_LAB_TEST_INPUT_STAGE_SYSTEM_PROMPT,
@@ -87,6 +95,7 @@ import {
   materializeAssessmentPublicAuthorPayload,
   projectAssessmentPublicAuthorPayload,
   materializeCodeLabPublicAuthorPayload,
+  projectDebuggingRepairPublicGuidance,
   materializeCodeLabSecureAuthorPayload,
   materializeRecallFactSecureAuthorPayload,
   mapWithConcurrency,
@@ -135,12 +144,17 @@ import {
 import type { CandidateSelectionResult, PublicArtifactKind, PublicCandidateEvaluation } from "../quality/contracts"
 import { reviewPublicCandidatesWithModel } from "../quality/model-candidate-critic"
 import {
+  buildAssessmentEvidenceAuthoringBoundaries,
   type AssessmentEvidenceFactView,
   validateAssessmentAuthorEvidenceDiscipline,
   validateAssessmentPairValidity,
   validateAssessmentPublicValidity,
 } from "../quality/assessment-validity"
 import { validateInputCandidates } from "../programming/test-plan"
+import {
+  describePythonEntryPoint,
+  validateFunctionInvocationAgainstInterface,
+} from "../programming/python-function-interface"
 import type { ProgrammingProblemBlueprint } from "../programming/contracts"
 
 export interface ModelBackedProviderOptions {
@@ -349,7 +363,11 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     options: ModelBackedProviderOptions = {},
   ) {
     this.generationStrategy = options.generation_strategy ?? "staged"
-    this.maxRepairAttempts = options.max_repair_attempts ?? 1
+    // Two bounded, validator-guided passes let a structurally valid candidate
+    // remove a final localized defect after the first pass has demonstrably
+    // reduced the issue set. NO_REPAIR_PROGRESS still terminates immediately,
+    // and every repaired output traverses the full validator/critic path.
+    this.maxRepairAttempts = options.max_repair_attempts ?? 2
     this.conceptTemperature = options.concept_temperature ?? 0.2
     this.conceptMaxTokens = options.concept_max_tokens ?? 4_500
     this.conceptGroupSize = positiveInteger(options.concept_group_size, 1, "concept_group_size")
@@ -373,6 +391,44 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
   ): Promise<ArtifactDraft<ConceptLessonPayload>> {
     assertVersionCompatibility(request, this.gateway)
     assertGenerationSpecProviderInput(request.generation_spec)
+    const prior = request.prior_review_candidate
+    if (prior && (request.external_revision_round ?? 0) > 0 && prior.spec_id === request.generation_spec.spec_id
+      && prior.evidence_hash === contentHash(request.evidence_pack)) {
+      const fields = planConceptTextRevision(prior.payload, request.revision_objections ?? [])
+      if (fields?.length) {
+        const modelInput = buildConceptTutorModelInput(request)
+        const patch = await this.generateStage<{ replacements: LabTextRevisionField[] }>({
+          task: "role-c.concept-tutor.review-text", system_prompt: CONCEPT_REVIEW_TEXT_PROMPT,
+          input: { contract: modelInput.contract, evidence: modelInput.evidence, public_context: prior.payload,
+            editable_fields: fields, review_objections: request.revision_objections },
+          output_schema_id: "role_c_concept_review_text_v1", output_schema: { type: "object", additionalProperties: false,
+            required: ["replacements"], properties: { replacements: { type: "array", minItems: fields.length, maxItems: fields.length,
+              items: { type: "object", additionalProperties: false, required: ["path", "value"], properties: {
+                path: { enum: fields.map((f) => f.path) }, value: { type: "string", minLength: 1, maxLength: 6000 },
+              } } } } }, temperature: 0.1, max_tokens: Math.min(4000, 500 + fields.length * 400),
+          idempotency_identity: { spec_id: prior.spec_id, prior_hash: contentHash(prior.payload), objections: contentHash(request.revision_objections), round: request.external_revision_round },
+          max_repairs: boundedRepairs(this.maxRepairAttempts, request), diagnostic_sink: this.stageFailureDiagnosticSink,
+          validate: (value) => {
+            const revised = applyConceptTextRevision(prior.payload, fields, value.replacements)
+            return [
+              ...validationIssues(validateConceptLesson({
+                payload: revised,
+                spec: request.generation_spec,
+                evidence: request.evidence_pack,
+              })),
+              ...validateConceptTextRevision({
+                before: prior.payload,
+                after: revised,
+                fields,
+                objections: request.revision_objections ?? [],
+                evidence: request.evidence_pack,
+              }),
+            ]
+          },
+        })
+        return { payload: applyConceptTextRevision(prior.payload, fields, patch.replacements) }
+      }
+    }
     if (this.generationStrategy === "monolithic") return this.generateConceptLessonMonolithic(request)
 
     const maxRepairs = boundedRepairs(this.maxRepairAttempts, request)
@@ -528,6 +584,43 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
   async generateCodeLab(request: CodeLabRequest): Promise<CodeLabDraft> {
     assertVersionCompatibility(request, this.gateway, CODE_LAB_PROMPT_VERSION)
     assertGenerationSpecProviderInput(request.generation_spec)
+    const prior = request.prior_review_candidate
+    if (prior && (request.external_revision_round ?? 0) > 0
+      && prior.spec_id === request.generation_spec.spec_id
+      && prior.evidence_hash === contentHash(request.evidence_pack)
+      && prior.concept_artifact_id === request.concept_artifact.artifact_id) {
+      const fields = planCodeLabTextRevision(prior.draft.public_draft.payload, request.revision_objections ?? [])
+      if (fields?.length) {
+        const modelInput = buildCodeLabModelInput(request)
+        const patch = await this.generateStage<{ replacements: LabTextRevisionField[] }>({
+          task: "role-c.code-lab.review-text",
+          system_prompt: CODE_LAB_REVIEW_TEXT_PROMPT,
+          input: { contract: modelInput.contract, evidence: modelInput.evidence,
+            public_context: prior.draft.public_draft.payload, editable_fields: fields,
+            review_objections: request.revision_objections },
+          output_schema_id: "role_c_code_lab_review_text_v1",
+          output_schema: { type: "object", additionalProperties: false, required: ["replacements"], properties: {
+            replacements: { type: "array", minItems: fields.length, maxItems: fields.length, items: {
+              type: "object", additionalProperties: false, required: ["path", "value"], properties: {
+                path: { enum: fields.map((field) => field.path) }, value: { type: "string", minLength: 1, maxLength: 6000 },
+              },
+            } },
+          } },
+          temperature: 0.1, max_tokens: Math.min(4000, 500 + fields.length * 400),
+          idempotency_identity: { spec_id: prior.spec_id, prior_hash: contentHash(prior.draft.public_draft.payload),
+            objections: contentHash(request.revision_objections), round: request.external_revision_round },
+          max_repairs: boundedRepairs(this.maxRepairAttempts, request), diagnostic_sink: this.stageFailureDiagnosticSink,
+          validate: (value) => {
+            try {
+              const payload = applyCodeLabTextRevision(prior.draft.public_draft.payload, fields, value.replacements)
+              return validationIssues(validateCodeLabDraftStructure(request, { public_draft: { payload }, secure_draft: prior.draft.secure_draft }))
+            } catch (error) { return [error instanceof Error ? error.message : String(error)] }
+          },
+        })
+        return { public_draft: { payload: applyCodeLabTextRevision(prior.draft.public_draft.payload, fields, patch.replacements) },
+          secure_draft: structuredClone(prior.draft.secure_draft) }
+      }
+    }
     if (this.generationStrategy === "monolithic") {
       // monolithic 是兼容/基准路径（非生产入口），不走 staged_contract；
       // 生产入口（content-pipeline / worker-adapters）一律 staged + blueprint。
@@ -564,12 +657,29 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         objectivePlan,
         request.evidence_pack,
       )
-      normalized.execution_contract = freezeCodeLabExecutionContract(
-        normalized.execution_contract,
-        executionMode,
-        taskContract,
-      )
+      const executionContract = normalized.execution_contract as unknown
+      if (executionContract && typeof executionContract === "object" && !Array.isArray(executionContract)) {
+        const record = executionContract as Record<string, unknown>
+        if (record.input_contract && typeof record.input_contract === "object"
+          && record.output_contract && typeof record.output_contract === "object"
+          && record.resource_limits && typeof record.resource_limits === "object") {
+          normalized.execution_contract = freezeCodeLabExecutionContract(
+            normalized.execution_contract,
+            executionMode,
+            taskContract,
+          )
+        }
+      }
       return normalized
+    }
+    const publicStagedContract = {
+      lab_id: identity.lab_id,
+      objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
+      objective_plan: objectivePlan,
+      execution_mode: executionMode,
+      ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
+      ...(practicalGuidePlan ? { practical_guide_plan: structuredClone(practicalGuidePlan) } : {}),
+      ...(programmingProblem ? { programming_problem: structuredClone(programmingProblem) } : {}),
     }
     const publicTournament = await runPublicCandidateTournament<CodeLabPublicAuthorPayload>({
       candidate_count: this.publicCandidateCount,
@@ -580,15 +690,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         ...publicModelInput,
         learning_design: learningDesign,
         candidate_context: publicCandidateContext("code_lab", variantIndex),
-        staged_contract: {
-          lab_id: identity.lab_id,
-          objective_ids: request.generation_spec.targets.map((target) => target.objective_id),
-          objective_plan: objectivePlan,
-          execution_mode: executionMode,
-          ...(taskContract ? { task_contract: structuredClone(taskContract) } : {}),
-          ...(practicalGuidePlan ? { practical_guide_plan: structuredClone(practicalGuidePlan) } : {}),
-          ...(programmingProblem ? { programming_problem: structuredClone(programmingProblem) } : {}),
-        },
+        staged_contract: publicStagedContract,
       },
       output_schema_id: "role_c_code_lab_public_author_payload_v1",
       output_schema: codeLabPublicAuthorSchema(programmingProblem),
@@ -642,6 +744,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         payload,
         learning_design: learningDesign,
         expression_context: request.generation_spec.learner_adaptation.expression_context,
+        code_lab_task_kind: programmingProblem?.task_kind,
         minimum_score: learningDesign.candidate_policy.minimum_quality_score - 0.05,
       }),
       review: (entries) => reviewPublicCandidatesWithModel({
@@ -656,6 +759,61 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           task_contract: taskContract,
           programming_problem: programmingProblem,
           objective_plan: objectivePlan,
+        },
+      }),
+      revise_rejected: ({ candidate, variant_index, evaluation }) => this.generateStage<CodeLabPublicAuthorPayload>({
+        task: "role-c.code-lab.public.review-revision",
+        system_prompt: CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT,
+        input: {
+          ...publicModelInput,
+          learning_design: learningDesign,
+          candidate_context: publicCandidateContext("code_lab", variant_index),
+          staged_contract: publicStagedContract,
+          prior_candidate: candidate,
+          reviewer_findings: evaluation.critical_findings,
+        },
+        output_schema_id: "role_c_code_lab_public_author_payload_v1",
+        output_schema: codeLabPublicAuthorSchema(programmingProblem),
+        temperature: 0.1,
+        max_tokens: this.codeLabPublicMaxTokens,
+        idempotency_identity: {
+          spec_id: request.generation_spec.spec_id,
+          concept_artifact_id: request.concept_artifact.artifact_id,
+          stage: "public-review-revision",
+          prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+          prior_candidate_hash: contentHash(candidate),
+          findings_hash: contentHash(evaluation.critical_findings),
+        },
+        max_repairs: maxRepairs,
+        normalize_output: normalizePublicAuthor,
+        diagnostic_sink: this.stageFailureDiagnosticSink,
+        validate: (payload) => {
+          const schema = validateRoleCSchemaFragment(
+            "code_lab_draft.schema.json",
+            "/$defs/public_author_payload",
+            payload,
+          )
+          if (!schema.ok) return validationIssues(schema)
+          const planIssues = validateCodeLabPublicAuthorAgainstPlan(
+            payload,
+            objectivePlan,
+            taskContract,
+            practicalGuidePlan,
+            programmingProblem,
+            request.evidence_pack,
+          )
+          if (planIssues.length > 0) return planIssues
+          return validationIssues(validateCodeLabPublicStage(
+            request,
+            materializeCodeLabPublicAuthorPayload(
+              request,
+              payload,
+              identity.lab_id,
+              objectivePlan,
+              practicalGuidePlan,
+              programmingProblem,
+            ),
+          ))
         },
       }),
       on_rejected: (evaluations, rejectedGenerationCount) => this.recordRejectedCandidates(
@@ -742,7 +900,18 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           const inputs = await this.generateStage<CodeLabTestInputsAuthorPayload>({
             task: "role-c.code-lab.test-inputs",
             system_prompt: CODE_LAB_TEST_INPUT_STAGE_SYSTEM_PROMPT,
-            input: { ...secureStageInput, reference_contract: { reference_hash: contentHash(reference.reference_solution) } },
+            input: {
+              ...secureStageInput,
+              reference_contract: {
+                reference_hash: contentHash(reference.reference_solution),
+                ...(normalizedPublic.execution_contract.execution_mode === "function"
+                  ? { function_interface: describePythonEntryPoint(
+                      reference.reference_solution,
+                      normalizedPublic.execution_contract.entry_point,
+                    ) }
+                  : {}),
+              },
+            },
             output_schema_id: "role_c_code_lab_secure_test_inputs_author_payload_v1",
             output_schema: fragment("code_lab_draft.schema.json", "/$defs/secure_test_inputs_author_payload"),
             temperature: 0.15,
@@ -764,9 +933,18 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
                 normalizedPublic.execution_contract.execution_mode,
                 programmingProblem,
               )
+              const functionInterface = normalizedPublic.execution_contract.execution_mode === "function"
+                ? describePythonEntryPoint(reference.reference_solution, normalizedPublic.execution_contract.entry_point)
+                : undefined
+              const invocationIssues = functionInterface
+                ? normalized.hidden_tests.flatMap((test, index) =>
+                    validateFunctionInvocationAgainstInterface(test.input, functionInterface)
+                      .map((message) => `hidden_tests[${index}].input：${message}`))
+                : []
               if (!programmingProblem) return planIssues
               return [
                 ...planIssues,
+                ...invocationIssues,
                 ...validateInputCandidates(
                   programmingProblem,
                   publicInputRecords,
@@ -777,6 +955,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
                     note: test.note ?? "",
                     ...(test.misconception_tag ? { misconception_tag: test.misconception_tag } : {}),
                   })),
+                  functionInterface,
                 ).issues,
               ]
             },
@@ -1088,70 +1267,93 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         })
         const itemTarget = modelInput.contract.targets.find((target) =>
           target.objective_id === itemPlan.objective_id)
+        const itemFacts = itemEvidence.flatMap((source) => source.facts.map((fact) => ({
+          source_id: source.source_id,
+          fact_id: fact.fact_id,
+          content: fact.content,
+        })))
         const itemUpstream = {
-          ...modelInput.upstream,
-          // The item evidence is the complete authoring surface.  Aggregated
-          // lesson summaries span several fact slots and previously leaked a
-          // non-cited fact back into an otherwise isolated question.
-          objective_summaries: [],
-          code_lab_summary: undefined,
+          // Only state that can change this question crosses the authoring
+          // boundary. Full lesson prose, code-lab summaries and whole-form
+          // blueprints previously added thousands of irrelevant tokens and
+          // made the model overlook the two or three cited facts.
+          next_round_context: modelInput.upstream.next_round_context,
+          revision_objections: modelInput.upstream.revision_objections,
+          external_revision_round: modelInput.upstream.external_revision_round,
+          generation_recovery: modelInput.upstream.generation_recovery,
           misconceptions: modelInput.upstream.misconceptions.filter((entry) =>
             entry.objective_id === itemPlan.objective_id
             && entry.citations.length > 0 && entry.citations.every((citation) =>
               factKeys.has(`${citation.source_id}:${citation.fact_id}`))),
-          // The shared semantic plan may legitimately coordinate the whole
-          // form, but it must not inject another objective's facts into one
-          // item's authoring surface.
-          round_semantic_plan: undefined,
-          resource_blueprint: modelInput.upstream.resource_blueprint
-            ? {
-                ...modelInput.upstream.resource_blueprint,
-                objectives: modelInput.upstream.resource_blueprint.objectives.filter(
-                  (entry) => entry.objective_id === itemPlan.objective_id,
-                ).map(entry => ({ ...entry, required_fact_ids: itemPlan.citations.filter(c => c.source_id === entry.source_id).map(c => c.fact_id), assessment: entry.assessment.filter(item => item.item_id === itemPlan.item_id) })),
-                assessment: {
-                  ...modelInput.upstream.resource_blueprint.assessment,
-                  item_plan: [structuredClone(itemPlan)],
-                  total_items: 1,
-                  total_score: itemPlan.max_score,
-                },
-              }
-            : undefined,
         }
+        const itemAuthoringInput = (variantIndex: number) => ({
+          contract: {
+            spec_id: modelInput.contract.spec_id,
+            path_goal: modelInput.contract.path_node.goal,
+            targets: itemTarget ? [{
+              ...structuredClone(itemTarget),
+              required_fact_ids: itemPlan.citations
+                .filter((citation) => citation.source_id === itemTarget.source_id)
+                .map((citation) => citation.fact_id),
+            }] : [],
+            difficulty: modelInput.contract.difficulty,
+            assessment_blueprint: {
+              tier_1_count: itemPlan.tier === 1 ? 1 : 0,
+              tier_2_count: itemPlan.tier === 2 ? 1 : 0,
+              tier_3_count: itemPlan.tier === 3 ? 1 : 0,
+              required_modalities: [itemPlan.modality],
+            },
+            artifact_task: projectAssessmentTask(modelInput.contract.artifact_task, itemPlan),
+            learner_adaptation: {
+              level: modelInput.contract.learner_adaptation.level,
+              preferred_contexts: modelInput.contract.learner_adaptation.preferred_contexts,
+              scaffold_level: modelInput.contract.learner_adaptation.scaffold_level,
+              reading_density: modelInput.contract.learner_adaptation.reading_density,
+              expression_context: modelInput.contract.learner_adaptation.expression_context,
+            },
+          },
+          evidence: itemEvidence,
+          upstream: itemUpstream,
+          learning_design: {
+            learner: {
+              level: learningDesign.learner.level,
+              skills: learningDesign.learner.skills.filter((entry) =>
+                entry.objective_id === itemPlan.objective_id),
+              misconceptions: [],
+            },
+            objectives: learningDesign.objectives
+              .filter((entry) => entry.objective_id === itemPlan.objective_id)
+              .map((entry) => ({
+                ...entry,
+                required_fact_ids: itemPlan.citations.map((citation) => citation.fact_id),
+              })),
+            pedagogy_contract: learningDesign.pedagogy_contract ? {
+              assessment: learningDesign.pedagogy_contract.assessment,
+              practice: learningDesign.pedagogy_contract.practice,
+            } : undefined,
+            assessment_plan: [itemPlan],
+          },
+          candidate_context: publicCandidateContext("assessment", variantIndex),
+          staged_contract: {
+            form_id: formId,
+            objective_ids: [itemPlan.objective_id],
+            item_plan: [itemPlan],
+            evidence_authoring_boundary: buildAssessmentEvidenceAuthoringBoundaries(
+              [itemPlan],
+              itemFacts,
+            ),
+            novelty_design_brief: {
+              history_count: noveltyBrief.history_count,
+              items: [{ ...noveltyBrief.items[itemIndex]!, index: 0 }],
+            },
+          },
+        })
         const itemTournament = await runPublicCandidateTournament<AssessmentPublicAuthorPayload>({
           candidate_count: this.publicCandidateCount,
           generate: (variantIndex) => this.generateStage<AssessmentPublicAuthorPayload>({
           task: "role-c.tiered-evaluator.public-item",
           system_prompt: ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT,
-          input: {
-            contract: {
-              ...modelInput.contract,
-              targets: itemTarget ? [{ ...structuredClone(itemTarget), required_fact_ids: itemPlan.citations.filter(c => c.source_id === itemTarget.source_id).map(c => c.fact_id) }] : [],
-              assessment_blueprint: { tier_1_count: itemPlan.tier === 1 ? 1 : 0, tier_2_count: itemPlan.tier === 2 ? 1 : 0, tier_3_count: itemPlan.tier === 3 ? 1 : 0, required_modalities: [itemPlan.modality] },
-              artifact_task: projectAssessmentTask(modelInput.contract.artifact_task, itemPlan),
-            },
-            evidence: itemEvidence,
-            upstream: itemUpstream,
-            learning_design: {
-              ...learningDesign,
-              learner: { ...learningDesign.learner, misconceptions: [] },
-              objectives: learningDesign.objectives.filter((entry) => entry.objective_id === itemPlan.objective_id).map(entry => ({ ...entry, required_fact_ids: itemPlan.citations.map(c => c.fact_id) })),
-              lesson_sequence: [],
-              assessment_plan: [itemPlan],
-            },
-            candidate_context: publicCandidateContext("assessment", variantIndex),
-            staged_contract: {
-              form_id: formId,
-              objective_ids: [itemPlan.objective_id],
-              item_plan: [itemPlan],
-              novelty_design_brief: {
-                history_count: noveltyBrief.history_count,
-                // 单题作者看到的是局部 items[0]。将全卷下标重映射为 0，
-                // 避免修订指令要求替换 items[0]，而设计说明却仍指向 items[2/3]。
-                items: [{ ...noveltyBrief.items[itemIndex]!, index: 0 }],
-              },
-            },
-          },
+          input: itemAuthoringInput(variantIndex),
           output_schema_id: "role_c_assessment_public_author_payload_v1",
           output_schema: assessmentPublicAuthorOutputSchema([itemPlan]),
           temperature: (request.prior_assessment_items?.length ?? 0) > 0
@@ -1170,11 +1372,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalize_output: (payload) => normalizeEvidenceBoundedAssessmentChoices(
             projectAssessmentPublicAuthorPayload(payload),
             [itemPlan],
-            itemEvidence.flatMap((source) => source.facts.map((fact) => ({
-              source_id: source.source_id,
-              fact_id: fact.fact_id,
-              content: fact.content,
-            }))),
+            itemFacts,
           ),
           diagnostic_sink: this.stageFailureDiagnosticSink,
           validate: (payload) => {
@@ -1194,11 +1392,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             const evidenceIssues = validateAssessmentAuthorEvidenceDiscipline(
               authored,
               [itemPlan],
-              modelInput.evidence.flatMap((source) => source.facts.map((fact) => ({
-                source_id: source.source_id,
-                fact_id: fact.fact_id,
-                content: fact.content,
-              }))),
+              itemFacts,
             )
             if (evidenceIssues.length > 0) {
               return evidenceIssues.map((issue) =>
@@ -1244,6 +1438,69 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               target: itemTarget,
               artifact_task: projectAssessmentTask(modelInput.contract.artifact_task, itemPlan),
               item_plan: itemPlan,
+            },
+          }),
+          revise_rejected: ({ candidate, variant_index, evaluation }) => this.generateStage<AssessmentPublicAuthorPayload>({
+            task: "role-c.tiered-evaluator.public-item.review-revision",
+            system_prompt: `${ASSESSMENT_PUBLIC_STAGE_SYSTEM_PROMPT}
+
+当前职责：根据 reviewer_findings 重新设计 prior_candidate 中这一道题，输出完整的单题 public author payload。保持 item_plan 的 objective、tier、modality、construct、引用边界和 starter 函数接口不变，但必须实质解决全部审查问题。
+
+如果题目使用阈值、标签、编号或其他实例数据，必须在题干中明确写成“本题规定”的完整任务合同，并给出覆盖全部合法输入的唯一映射；不得把自拟阈值冒充 evidence 中的专业事实。调试题必须让 starter 中的错误真实存在且可由题干规则唯一修复，不能存在两种在未说明输入上行为不同的合理答案。删除 source_id、fact_id、RAG、内部审核等任何内部元数据。只输出修订后的完整 Schema JSON。`,
+            input: {
+              ...itemAuthoringInput(variant_index),
+              prior_candidate: candidate,
+              reviewer_findings: evaluation.critical_findings,
+            },
+            output_schema_id: "role_c_assessment_public_author_payload_v1",
+            output_schema: assessmentPublicAuthorOutputSchema([itemPlan]),
+            temperature: 0.1,
+            max_tokens: Math.min(this.assessmentPublicMaxTokens, 2_400),
+            idempotency_identity: {
+              spec_id: request.generation_spec.spec_id,
+              concept_artifact_id: request.concept_artifact.artifact_id,
+              stage: "public-item-review-revision",
+              item_id: itemPlan.item_id,
+              prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+              prior_candidate_hash: contentHash(candidate),
+              findings_hash: contentHash(evaluation.critical_findings),
+            },
+            max_repairs: maxRepairs,
+            normalize_output: (payload) => normalizeEvidenceBoundedAssessmentChoices(
+              projectAssessmentPublicAuthorPayload(payload),
+              [itemPlan],
+              itemFacts,
+            ),
+            diagnostic_sink: this.stageFailureDiagnosticSink,
+            validate: (payload) => {
+              const authored = projectAssessmentPublicAuthorPayload(payload)
+              normalizeAssessmentAuthorFields(authored, [itemPlan])
+              const schema = validateRoleCSchemaFragment(
+                "assessment_draft.schema.json",
+                "/$defs/public_author_payload",
+                authored,
+              )
+              if (!schema.ok) return validationIssues(schema)
+              const planIssues = validateAssessmentPublicAuthorAgainstPlan(authored, [itemPlan])
+              if (planIssues.length > 0) return planIssues
+              const evidenceIssues = validateAssessmentAuthorEvidenceDiscipline(
+                authored,
+                [itemPlan],
+                itemFacts,
+              )
+              if (evidenceIssues.length > 0) return evidenceIssues.map((issue) =>
+                `[${issue.code}] ${issue.path}: ${issue.message}`)
+              const materialized = materializeAssessmentPublicAuthorPayload(
+                request.generation_spec,
+                authored,
+                [itemPlan],
+                formId,
+              )
+              return [
+                ...validateAssessmentNovelty(materialized, request.prior_assessment_items ?? []),
+                ...validateAssessmentPublicValidity(materialized, [itemPlan])
+                  .map((issue) => `[${issue.code}] ${issue.path}: ${issue.message}`),
+              ]
             },
           }),
           on_rejected: (evaluations, rejectedGenerationCount) => this.recordRejectedCandidates(
@@ -1420,11 +1677,19 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
           normalizedAuthor,
         )
         const normalized = normalizeAssessmentPair(request.generation_spec, normalizedPublic, secure)
-        return [
-          ...validationIssues(validateAssessmentDraftStructure(request, {
+        const structure = validateAssessmentDraftStructure(request, {
           public_draft: { payload: normalized.public_payload },
           secure_draft: { payload: normalized.secure_payload },
-          })),
+        })
+        return [
+          ...validationIssueStrings({
+            // A reference can only be compared after the secure author exists.
+            // It is repaired on the public side below; asking the secure model
+            // to keep changing a correct oracle cannot remove a leak already
+            // present in the frozen public starter/prompt.
+            issues: structure.issues.filter((issue) =>
+              !REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES.has(issue.code)),
+          }),
           ...validateAssessmentPairValidity(
             normalized.public_payload,
             normalized.secure_payload,
@@ -1450,13 +1715,26 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       secure_draft: { payload: normalized.secure_payload },
     })
     if (separation.issues.some((issue) => REPAIRABLE_PUBLIC_ANSWER_LEAK_CODES.has(issue.code))) {
-      const sanitizedPublic = conservativeAssessmentPublicSafetyRepair(normalized.public_payload)
+      const sanitizedPublic = conservativeAssessmentPublicSafetyRepair(
+        normalized.public_payload,
+        normalized.secure_payload,
+      )
       securePayload = materializeAssessmentSecureAuthorPayload(
         request.generation_spec,
         sanitizedPublic,
         normalizedSecureAuthorPayload,
       )
       normalized = normalizeAssessmentPair(request.generation_spec, sanitizedPublic, securePayload)
+    }
+    const finalReport = validateAssessmentDraftStructure(request, {
+      public_draft: { payload: normalized.public_payload },
+      secure_draft: { payload: normalized.secure_payload },
+    })
+    if (!finalReport.ok) {
+      throw new ModelOutputValidationError(
+        "role-c.tiered-evaluator.compose",
+        validationIssues(finalReport),
+      )
     }
     return {
       public_draft: { payload: normalized.public_payload },
@@ -1964,7 +2242,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         structure_meta: AssessmentStructureMeta
       }>
     }>({
-      task: "role-c.tiered-evaluator.public.novelty-repair",
+      task: "role-c.tiered-evaluator.public-item.repair",
       system_prompt: ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT,
       input: {
         ...asRecord(stage.input),
@@ -1982,7 +2260,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       }),
       idempotency_key: idempotencyKey({
         ...stage.idempotency_identity,
-        task: "role-c.tiered-evaluator.public.novelty-repair",
+        task: "role-c.tiered-evaluator.public-item.repair",
         model_config_hash: this.gateway.model_config_hash,
         repair_directive: repairDirective,
       }),
@@ -2550,17 +2828,72 @@ export function shouldUseDeterministicPublicSafetyRepair(issueCodes: string[]): 
 
 export function conservativeAssessmentPublicSafetyRepair(
   prior: AssessmentPublicPayload,
+  secure?: AssessmentSecurePayload,
 ): AssessmentPublicPayload {
   const repaired = structuredClone(prior)
   repaired.items = repaired.items.map((item) => {
     if (item.modality !== "code") return item
+    if (!secure) {
+      return {
+        ...item,
+        prompt: "根据题目要求完成函数中的 TODO 部分，保持给定函数名、参数和返回值形式。不要打印答案，返回可 JSON 序列化的结果。",
+        starter_code: deterministicAssessmentStarterRepair(item.starter_code, item.prompt),
+      }
+    }
+    const secureItem = secure?.items.find((entry) => entry.item_id === item.item_id)
+    const testSuiteId = secureItem?.answer_spec.kind === "code"
+      ? secureItem.answer_spec.test_suite_id
+      : undefined
+    const suite = testSuiteId
+      ? secure.code_test_suites.find((entry) =>
+          entry.test_suite_id === testSuiteId)
+      : undefined
+    const starter = deterministicAssessmentStarterRepair(item.starter_code, item.prompt)
+    const prompt = suite
+      ? removeReferenceImplementationFromAssessmentPrompt(
+          item.prompt,
+          suite.reference_solution,
+          starter,
+        )
+      : item.prompt
     return {
       ...item,
-      prompt: "根据题目要求完成函数中的 TODO 部分，保持给定函数名、参数和返回值形式。不要打印答案，返回可 JSON 序列化的结果。",
-      starter_code: deterministicAssessmentStarterRepair(item.starter_code),
+      prompt,
+      starter_code: starter,
     }
   })
   return repaired
+}
+
+function removeReferenceImplementationFromAssessmentPrompt(
+  prompt: string,
+  referenceSolution: string,
+  safeStarter: string,
+): string {
+  const normalize = (text: string) => text
+    .replace(/#[^\n]*/gu, "")
+    .replace(/\s+/gu, "")
+    .trim()
+  const starterLines = new Set(safeStarter.split(/\r?\n/gu)
+    .map(normalize)
+    .filter((line) => line.length >= 6))
+  const implementationLines = [...new Set(referenceSolution.split(/\r?\n/gu)
+    .map((line) => ({ raw: line.trim(), normalized: normalize(line) }))
+    .filter((line) => line.normalized.length >= 6 && !starterLines.has(line.normalized)))]
+  if (implementationLines.length === 0) return prompt
+
+  let removed = false
+  const lines = prompt.split(/\r?\n/gu).filter((line) => {
+    const normalized = normalize(line)
+    const exposesImplementation = implementationLines.some((candidate) =>
+      normalized.includes(candidate.normalized))
+    if (exposesImplementation) removed = true
+    return !exposesImplementation
+  })
+  if (!removed) return prompt
+  const preserved = lines.join("\n").replace(/\n{3,}/gu, "\n\n").trim()
+  const instruction = "请在给定函数的 TODO 区域实现题目要求的行为；保持函数签名和返回值约定不变。"
+  return preserved ? `${preserved}\n\n${instruction}` : instruction
 }
 
 export function conservativeCodeLabPublicSafetyPatch(
@@ -2650,6 +2983,7 @@ export function conservativeCodeLabPublicSafetyRepair(
         task.starter_code,
         referenceSolution,
         repaired.starter_code,
+        repaired.starter_code,
       )
     }
     if (task.gap_template) {
@@ -2657,6 +2991,7 @@ export function conservativeCodeLabPublicSafetyRepair(
         task.gap_template.template_code,
         referenceSolution,
         task.gap_template.template_code,
+        repaired.starter_code,
       )
       task.gap_template.gaps = task.gap_template.gaps.map((gap, index) => ({
         ...gap,
@@ -2731,17 +3066,19 @@ function sanitizeCodeLabPublicCode(
   value: string,
   referenceSolution: string,
   fallback: string,
+  publicStarter: string,
 ): string {
   const normalize = (text: string) => text.replace(/#[^\n]*/g, "").replace(/\s+/g, "").trim()
   const reference = normalize(referenceSolution)
   const current = normalize(value)
-  if (reference && current.includes(reference)) return fallback
+  if (reference && current.includes(reference) && !/\{\{gap:/u.test(value)) return fallback
+  const publicLines = new Set(publicStarter.split(/\r?\n/u).map(normalize).filter(Boolean))
   const referenceLines = referenceSolution.split(/\r?\n/u)
     // Function/class/import declarations are the public execution ABI, not the
     // implementation. Removing a shared signature makes every gap answer fail.
     .filter((line) => !/^\s*(?:async\s+def|def|class|import|from)\b/u.test(line))
     .map(normalize)
-    .filter((line) => line.length >= 6)
+    .filter((line) => line.length >= 6 && !publicLines.has(line))
   if (!referenceLines.some((line) => current.includes(line))) return value
   return value.split(/\r?\n/u).map((line) => {
     const normalized = normalize(line)
@@ -2820,7 +3157,8 @@ export function normalizeCodeLabPublicAuthorPayload(
   // rewrite the actual starter. Silently replacing it with a one-line TODO
   // produces a schema-valid but instructionally unusable lab.
   const normalized = structuredClone(payload)
-  if (taskContract?.learner_action !== "recall_fact" && objectivePlan && evidence) {
+  if (taskContract?.learner_action !== "recall_fact" && objectivePlan && evidence
+    && Array.isArray(normalized.objectives)) {
     normalizeCodeLabHintsToEvidence(normalized, objectivePlan, evidence)
   }
   if (practicalGuidePlan && normalized.practical_guide) {
@@ -2845,6 +3183,9 @@ export function normalizeCodeLabPublicAuthorPayload(
     }
   }
   if (programmingProblem && normalized.programming_task) {
+    if (programmingProblem.task_kind === "debugging_repair") {
+      projectDebuggingRepairPublicGuidance(normalized)
+    }
     // The response action is fixed by the UI contract, not a model-authored
     // programming requirement. State it consistently alongside the AI task.
     if (programmingProblem.task_kind === "code_completion"
@@ -2852,11 +3193,12 @@ export function normalizeCodeLabPublicAuthorPayload(
       && !/(?:填|补全|完成|替换)/u.test(normalized.programming_task.statement)) {
       normalized.programming_task.statement = `请补全程序中标出的待填写部分。${normalized.programming_task.statement}`
     }
+    const authoredObjectives = Array.isArray(normalized.objectives) ? normalized.objectives : []
     const requiredAdditional = Math.max(
       0,
-      programmingProblem.public_case_count - normalized.objectives.length,
+      programmingProblem.public_case_count - authoredObjectives.length,
     )
-    const seen = new Set(normalized.objectives.map((objective) =>
+    const seen = new Set(authoredObjectives.map((objective) =>
       contentHash(objective.public_test.input)))
     normalized.programming_task.additional_public_examples =
       (normalized.programming_task.additional_public_examples ?? []).filter((example) => {
@@ -2876,7 +3218,7 @@ export function normalizeCodeLabPublicAuthorPayload(
       "print(fact_text)",
       "",
     ].join("\n")
-    for (const objective of normalized.objectives) {
+    for (const objective of Array.isArray(normalized.objectives) ? normalized.objectives : []) {
       objective.instruction_text = "阅读本目标给出的事实，在 starter_code 的 TODO 字符串中填写对应事实文本，然后运行程序核对标准输出。"
       objective.public_test.input = ""
       objective.public_test.description = "运行程序，检查事实文本是否按题目要求输出。"
@@ -2938,6 +3280,7 @@ export function normalizeCodeLabHintsToEvidence(
     .normalize("NFKC")
     .toLocaleLowerCase()
     .replace(/[\s，。！？；：、,.!?;:'"“”‘’`()（）\[\]【】_-]+/gu, "") : ""
+  if (!Array.isArray(payload.objectives)) return
   payload.objectives.forEach((objective, index) => {
     const objectivePlan = plan[index]
     if (!objectivePlan || !Array.isArray(objective.hints)

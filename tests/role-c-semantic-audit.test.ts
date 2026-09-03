@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ModelGateway, StructuredModelRequest } from "../src/role-c-content/contracts/model-gateway"
 import type { AssessmentPublicArtifact } from "../src/role-c-content/contracts/artifacts"
-import { extractAssessmentBlocks } from "../src/role-c-content/review/extract-review-blocks"
+import { extractAssessmentBlocks, extractConceptBlocks } from "../src/role-c-content/review/extract-review-blocks"
 import {
   ModelContentSemanticAuditPort,
   ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT,
@@ -44,6 +44,26 @@ function auditInput() {
 }
 
 describe("Role C model semantic fact audit", () => {
+  test("即时检查把指定答案和反馈解释一同交给语义审核", () => {
+    const blocks = extractConceptBlocks({ payload: {
+      objective_coverage: [], prerequisite_bridge: [], explanation_blocks: [], summary: [],
+      worked_examples: [], misconceptions: [], hint_ladders: [],
+      micro_checks: [{
+        block_id: "CHECK", item_id: "ITEM", prompt: "哪项正确？",
+        options: [
+          { option_id: "A", label: "A", text: "程序通常由解释器执行" },
+          { option_id: "B", label: "B", text: "程序不由解释器执行" },
+        ],
+        answer_option_id: "B", answer_explanation: "程序由编译器直接转换为硬件指令。",
+        citations: [{ source_id: "K001", fact_id: "F002", relation: "supports" }],
+      }],
+    } } as any)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]!.surface_kind).toBe("choice_assessment")
+    expect(blocks[0]!.text).toContain("即时反馈指定答案：B：程序不由解释器执行")
+    expect(blocks[0]!.text).toContain("即时反馈解释：程序由编译器直接转换为硬件指令。")
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("指定答案就是该唯一正确项")
+  })
   test("作者与审核共享虚构情境边界，段落允许显式引用同目标的支持事实", () => {
     expect(ROLE_C_COMMON_SYSTEM_POLICY).toContain(ROLE_C_SCENARIO_EVIDENCE_POLICY)
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain(ROLE_C_SCENARIO_EVIDENCE_POLICY)

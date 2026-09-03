@@ -71,6 +71,7 @@ export interface ConceptTutorRequest {
   /** Optional compact quality plan; it organizes semantics without changing the frozen blueprint. */
   round_semantic_plan?: RoundSemanticPlan
   generation_recovery?: GenerationRecoveryContext
+  prior_review_candidate?: { spec_id: string; evidence_hash: string; payload: ConceptLessonPayload }
 }
 
 export interface CodeLabRequest {
@@ -83,6 +84,13 @@ export interface CodeLabRequest {
   resource_blueprint?: ResourceBlueprint
   round_semantic_plan?: RoundSemanticPlan
   generation_recovery?: GenerationRecoveryContext
+  /** Private in-process candidate for local external-review repair; never serialize into model input. */
+  prior_review_candidate?: {
+    spec_id: string
+    evidence_hash: string
+    concept_artifact_id: string
+    draft: CodeLabDraft
+  }
 }
 
 export interface TieredEvaluatorRequest {

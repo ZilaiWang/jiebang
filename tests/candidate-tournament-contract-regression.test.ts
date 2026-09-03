@@ -47,4 +47,32 @@ describe("candidate tournament shared-contract failures", () => {
       expect((error as Error).message).toContain("candidate-1-failure")
     }
   })
+
+  test("a critic-guided revision must pass the complete evaluation path before winning", async () => {
+    const reviewed: string[] = []
+    const selected = await runPublicCandidateTournament({
+      candidate_count: 2,
+      generate: async (index) => ({ version: `draft-${index}` }),
+      evaluate: (candidate) => ({
+        ...evaluation,
+        candidate_id: candidate.version,
+        overall_score: candidate.version === "revised" ? 0.9 : 0.7,
+        release_eligible: candidate.version === "revised",
+        critical_findings: candidate.version === "revised" ? [] : ["DEBUG_FIX_DISCLOSED"],
+      }),
+      review: async (entries) => entries.map((entry) => {
+        reviewed.push(entry.candidate.version)
+        return entry.evaluation
+      }),
+      revise_rejected: async ({ candidate, evaluation: rejected }) => {
+        expect(candidate.version).toBe("draft-0")
+        expect(rejected.critical_findings).toContain("DEBUG_FIX_DISCLOSED")
+        return { version: "revised" }
+      },
+    })
+
+    expect(selected.winner).toEqual({ version: "revised" })
+    expect(reviewed).toEqual(["draft-0", "draft-1", "revised"])
+    expect(selected.evaluations).toHaveLength(3)
+  })
 })

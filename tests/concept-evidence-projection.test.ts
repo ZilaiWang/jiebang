@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { buildConceptTutorModelInput } from "../src/role-c-content/context/concept-context"
 
 function request(overrides: {
-  examples?: Array<{ title: string; code: string; explanation: string }>
+  examples?: Array<{ title: string; code: string; explanation: string; fact_refs?: Array<{ source_id: string; fact_id: string }> }>
   practice_tasks?: string[]
   facts?: Array<{ source_id: string; fact_id: string; content: string }>
 } = {}) {
@@ -28,7 +28,7 @@ function request(overrides: {
         difficulty: "beginner",
         facts,
         examples: overrides.examples ?? [
-          { title: "更新变量值", code: "age = 18\nage = age + 1", explanation: "变量先保存旧值，再通过赋值更新。" },
+          { title: "更新变量值", code: "age = 18\nage = 19", explanation: "变量先保存旧值，再通过赋值更新。", fact_refs: [{ source_id: "K001", fact_id: "F001" }, { source_id: "K001", fact_id: "F002" }] },
         ],
         practice_tasks: overrides.practice_tasks ?? ["定义 name、age 两个变量并输出"],
         quiz_seeds: [{ level: 1, type: "choice", question: "赋值符号是？", answer: "=", source_id: "K001", fact_id: "F001" }],
@@ -38,15 +38,14 @@ function request(overrides: {
 }
 
 describe("讲义 model input 证据投影（改进方案6 第六/七节）", () => {
-  test("examples / practice_tasks 被投影且带 fact_refs", () => {
+  test("examples 保留原始引用，无引用的 practice_tasks 不投影为证据", () => {
     const input = buildConceptTutorModelInput(request())
     const evidence = input.evidence[0]!
     expect(evidence.examples).toHaveLength(1)
     expect(evidence.examples[0]!.fact_refs).toEqual(
       expect.arrayContaining([{ source_id: "K001", fact_id: "F002" }]),
     )
-    expect(evidence.practice_tasks).toHaveLength(1)
-    expect(evidence.practice_tasks[0]!.fact_refs.length).toBeGreaterThan(0)
+    expect(evidence).not.toHaveProperty("practice_tasks")
   })
 
   test("quiz_seeds（含 answer）绝不进入讲义模型输入", () => {
@@ -62,7 +61,7 @@ describe("讲义 model input 证据投影（改进方案6 第六/七节）", () 
       practice_tasks: ["整理房间并打扫卫生"],
     }))
     expect(input.evidence[0]!.examples).toHaveLength(0)
-    expect(input.evidence[0]!.practice_tasks).toHaveLength(0)
+    expect(input.evidence[0]).not.toHaveProperty("practice_tasks")
   })
 
   test("facts 只保留 required_fact_ids 内的，越界事实被过滤", () => {

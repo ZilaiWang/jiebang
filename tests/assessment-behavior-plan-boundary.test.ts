@@ -40,6 +40,27 @@ describe("B observable behavior controls C assessment modalities", () => {
     expect(plan.map((item) => item.cognitive_demand)).toEqual(["understand", "understand"])
   })
 
+  test("多题测评按画像允许的题型轮换，不会每题都取第一个偏好", () => {
+    const node = {
+      schema_version: "1.0", node_id: "N2B", target_source_ids: ["K001"], prerequisite_source_ids: [], goal: "Python 概念",
+      objectives: [{ objective_id: "O2B", source_id: "K001", required_fact_ids: ["F001", "F002", "F004"], observable_behavior: "explain", importance: "core" }],
+      assessment_blueprint: { tier_1_count: 3, tier_2_count: 2, tier_3_count: 0, required_modalities: ["short_answer"] },
+    }
+    const plan = buildAssessmentItemPlan({
+      spec_id: "S2B", run_id: "R2B", path_node: node, targets: node.objectives,
+      learner_adaptation: {
+        level: "beginner", known_concepts: [], weak_concepts: ["K001"], preferred_contexts: [], scaffold_level: 3,
+        pedagogy_contract: {
+          assessment: { preferred_modalities: ["mcq", "true_false", "short_answer"], require_direct_core_measurement: true },
+        },
+      },
+      assessment_blueprint: node.assessment_blueprint, policies: { seed: 1 },
+    } as any)
+    expect(plan.map((item) => item.modality)).toEqual([
+      "mcq", "true_false", "mcq", "short_answer", "true_false",
+    ])
+  })
+
   test("recognize 的 mcq 保持理解测量，并提供两条事实设计有效对照", () => {
     const node = {
       schema_version: "1.0", node_id: "N3", target_source_ids: ["K001"], prerequisite_source_ids: [], goal: "Python 是什么",

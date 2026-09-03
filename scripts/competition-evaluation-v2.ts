@@ -6,10 +6,11 @@ import {
   unlink,
   readdir,
   cp,
+  appendFile,
 } from "node:fs/promises"
 import { resolve, join } from "node:path"
 import { resolveEvaluationJudgeEnvV2, evaluationJudgeModeV2 } from "../src/evaluation/v2/judge-configuration.v2"
-import { contentHash } from "../src/role-c-content/contracts/common"
+import { contentHash, stableId } from "../src/role-c-content/contracts/common"
 import { createRoleCModelGatewayFromEnv } from "../src/role-c-content/contracts/model-gateway"
 import { ROLE_C_PROMPT_MANIFEST_VERSION } from "../src/role-c-content/prompts/common-policy"
 import { loadKnowledgeBase } from "../src/knowledge/loader"
@@ -39,8 +40,10 @@ import {
   evidenceFactsFromDelivery,
 } from "../src/evaluation/competition-claim-auditor"
 import { ModelResourceDifficultyJudge } from "../src/evaluation/resource-difficulty-judge"
+import { runJudgeCalibration, calibrationRows, type CalibrationResource, type CalibrationResult } from "../src/evaluation/reliability/calibration-runner"
+import { writeEvaluationJson } from "../src/evaluation/reliability/atomic-json"
 import { competitionArtifactViews } from "../src/evaluation/competition-artifact-view"
-import type { RoleCForRoleDResult } from "../src/role-d-integration/contracts"
+import type { RoleCForRoleDResult, RoleCGenerationFailure, RoleDWorkflowEvent } from "../src/role-d-integration/contracts"
 import { runDynamicTrajectoryV2 } from "../src/evaluation/v2/dynamic-runner.v2"
 import {
   COMPETITION_DYNAMIC_TRAJECTORIES_V2,
@@ -61,6 +64,13 @@ import {
 } from "../src/evaluation/v2/reporting.v2"
 import { runControlledPairV2 } from "../src/evaluation/v2/counterfactual-runner.v2"
 import { createDockerPythonCodeRunnerFromEnv } from "../src/role-c-content/security/code-runner"
+import {
+  summarizeCaseReliability, isRetryableOperationalRecord, selectReliabilityCases,
+  evaluateReliabilityGate, contractSatisfiability, buildReliabilityScorecard,
+  evaluateJudgeCalibration, type JudgeCalibrationRow,
+  resumeEvaluationAudits,
+  type ReliabilityCaseSummary, type EvaluationGate,
+} from "../src/evaluation/reliability"
 
 const args = process.argv.slice(2)
 const option = (name: string) =>
@@ -71,9 +81,7 @@ const catalogDir = resolve(option("--manifest-dir") ?? "evaluation/v2")
 const kb = await loadKnowledgeBase()
 await mkdir(root, { recursive: true })
 await mkdir(catalogDir, { recursive: true })
-const write = async (path: string, value: unknown) => {
-  await writeFile(path, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 })
-}
+const write = writeEvaluationJson
 const read = async <T>(path: string): Promise<T> =>
   JSON.parse(await readFile(path, "utf8")) as T
 const candidate = buildCompetitionManifestCandidateV2(kb)
@@ -96,10 +104,8 @@ if (action === "candidate") {
       basis: c.expected_difficulty_basis[artifact_kind],
       reviewer_1: "",
       reviewer_1_decision: "",
-      reviewer_2: "",
-      reviewer_2_decision: "",
-      adjudicator: "",
-      adjudication: "",
+      review_mode: "single_agent",
+      review_status: "",
       rationale: "",
     })),
   )
@@ -141,6 +147,8 @@ if (action === "candidate") {
   )
 } else if (action === "preflight") {
   const report = await preflightCompetitionV2(kb, candidate)
+  const contracts = contractSatisfiability(candidate)
+  await write(join(root, "contract-check.json"), contracts)
   await write(join(root, "preflight.json"), report)
   console.log(
     JSON.stringify(
@@ -149,6 +157,58 @@ if (action === "candidate") {
       2,
     ),
   )
+  if (!report.passed || !contracts.passed) process.exitCode = 1
+} else if (action === "select") {
+  const selections = {
+    canary: selectReliabilityCases(candidate, "canary"),
+    balanced12: selectReliabilityCases(candidate, "balanced12"),
+  }
+  await write(join(root, "selections.json"), selections)
+  console.log(JSON.stringify(selections, null, 2))
+} else if (action === "calibration-run") {
+  const input = option("--input")
+  if (!input) throw new Error("CALIBRATION_INPUT_REQUIRED")
+  const resources = await read<CalibrationResource[]>(resolve(input))
+  calibrationRows(resources)
+  const env = { ...(await readEnv(resolve(".env.role-c.local"))),
+    ...(await readEnv(resolve(option("--env-file") ?? ".env.evaluation-v2.local"))), ...process.env }
+  const judgeEnv = resolveEvaluationJudgeEnvV2(env, { development: false, sameModel: args.includes("--self-audit") })
+  if (!judgeEnv) throw new Error("CALIBRATION_JUDGE_REQUIRED")
+  const judge = createRoleCModelGatewayFromEnv(judgeEnv)
+  const qualification = { judge_model: judge.model_id, judge_config: judge.model_config_hash,
+    rubric_hash: contentHash(await readFile("evaluation/difficulty-rubric.v1.md", "utf8")) }
+  const identity = { ...qualification, resources_hash: contentHash(resources) }
+  const identityPath = join(root, "calibration.protocol.json")
+  const rowsPath = join(root, "calibration.rows.json")
+  let prior: CalibrationResult[] = []
+  if (args.includes("--resume")) {
+    if (contentHash(await read(identityPath)) !== contentHash(identity)) throw new Error("CALIBRATION_PROTOCOL_MISMATCH")
+    if (await Bun.file(rowsPath).exists()) prior = await read(rowsPath)
+  } else {
+    await writeFile(identityPath, JSON.stringify(identity, null, 2), { flag: "wx", mode: 0o600 })
+    await write(join(root, "calibration.input.json"), resources)
+  }
+  const result = await runJudgeCalibration({ resources, judge: new ModelResourceDifficultyJudge(judge), prior,
+    checkpoint: async (rows) => {
+      await write(rowsPath, rows)
+      console.log(`[calibration] ${rows.length}/${resources.length} ${rows.at(-1)!.resource_id} ${rows.at(-1)!.predicted_difficulty ?? "incomplete"}`)
+    } })
+  await write(join(root, "judge-calibration.json"), { ...result, qualification, rows_hash: contentHash(result.rows) })
+  console.log(JSON.stringify({ passed: result.passed, accuracy: result.accuracy, errors: result.errors }))
+  if (!result.passed) process.exitCode = 1
+} else if (action === "calibration") {
+  const input = option("--input")
+  if (!input) throw new Error("CALIBRATION_INPUT_REQUIRED")
+  const data = await read<JudgeCalibrationRow[] | {
+    rows: JudgeCalibrationRow[]; judge_model: string; judge_config: string; rubric_hash: string
+  }>(resolve(input))
+  const rows = Array.isArray(data) ? data : data.rows
+  const qualification = Array.isArray(data) ? null : {
+    judge_model: data.judge_model, judge_config: data.judge_config, rubric_hash: data.rubric_hash,
+  }
+  const report = { ...evaluateJudgeCalibration(rows), rows_hash: contentHash(rows), qualification }
+  await write(join(root, "judge-calibration.json"), report)
+  console.log(JSON.stringify(report, null, 2))
   if (!report.passed) process.exitCode = 1
 } else if (action === "robustness") {
   const report = await runQueryRobustnessV2(kb)
@@ -188,7 +248,7 @@ if (action === "candidate") {
   await run()
 } else {
   throw new Error(
-    "Usage: competition-evaluation-v2.ts candidate|preflight|freeze|run [--dev --case-id=... --limit=6 --repeats=1 --resume]",
+    "Usage: competition-evaluation-v2.ts candidate|preflight|select|freeze|run [--dev --gate=canary|balanced12|formal60 --case-id=... --limit=6 --repeats=1 --resume --retry-infrastructure --retry-audits]",
   )
 }
 
@@ -215,6 +275,10 @@ interface CaseRecord {
     { status: "ready" }
   >["learningSession"]
   run_id?: string
+  generation_failure?: RoleCGenerationFailure
+  workflow?: RoleDWorkflowEvent[]
+  reliability?: ReliabilityCaseSummary
+  previous_attempts?: Array<{ status: string; errors: string[]; duration_ms: number; archived_at: string }>
 }
 async function run() {
   const dev = args.includes("--dev")
@@ -235,7 +299,7 @@ async function run() {
     throw new Error(
       "PREFLIGHT_FAILED: inspect preflight.json before spending model credits",
     )
-  const repeats = integer("--repeats", dev ? 1 : 2, 1, 10),
+  const repeats = integer("--repeats", 1, 1, 10),
     limit = integer("--limit", dev ? 6 : 60, 1, 60)
   const requested = args
     .filter((a) => a.startsWith("--case-id="))
@@ -247,11 +311,17 @@ async function run() {
   const balanced = Array.from({ length: 10 }, (_, i) =>
     COMPETITION_CASES_V2.filter((c) => Number(c.case_id.slice(-2)) === i + 1),
   ).flat()
-  const selected = requested.length
+  const gateName = option("--gate") as EvaluationGate | undefined
+  if (gateName && !["canary", "balanced12", "formal60"].includes(gateName)) throw new Error("UNKNOWN_RELIABILITY_GATE")
+  if (gateName && requested.length) throw new Error("GATE_SELECTION_IS_FROZEN")
+  if ((gateName || !dev) && repeats !== 1) throw new Error("RELIABILITY_GATE_REQUIRES_ONE_REPEAT")
+  const selectedIds = gateName ? selectReliabilityCases(manifest, gateName) : undefined
+  const selected = selectedIds ? selectedIds.map((id) => COMPETITION_CASES_V2.find((entry) => entry.case_id === id)!) : requested.length
     ? balanced.filter((c) => requested.includes(c.case_id))
     : balanced.slice(0, limit)
   if (!dev && selected.length !== 60)
     throw new Error("FORMAL_REQUIRES_60_CASES")
+  if (!dev && gateName && gateName !== "formal60") throw new Error("DEVELOPMENT_GATE_REQUIRES_DEV")
   const env = {
     ...(await readEnv(resolve(".env.role-c.local"))),
     ...(await readEnv(
@@ -262,6 +332,7 @@ async function run() {
   const generation = createRoleCModelGatewayFromEnv(env)
   const judgeEnv = resolveEvaluationJudgeEnvV2(env, { development: dev, sameModel: args.includes("--self-audit") })
   const judge = judgeEnv ? createRoleCModelGatewayFromEnv(judgeEnv) : undefined
+  if (gateName && !judge) throw new Error("RELIABILITY_GATE_REQUIRES_JUDGE")
   const gitStatus = Bun.spawnSync(["git", "status", "--porcelain"], {
     stdout: "pipe",
     stderr: "pipe",
@@ -295,8 +366,26 @@ async function run() {
     ),
     selected_case_ids: selected.map((c) => c.case_id),
     repeats,
+    reliability_gate: gateName ?? (dev ? null : "formal60"),
   }
   const protocol = { ...protocolBody, protocol_id: contentHash(protocolBody) }
+  if (!dev && !args.includes("--resume")) {
+    const gateEvidence = option("--gate-evidence")
+    if (!gateEvidence) throw new Error("FORMAL_REQUIRES_BALANCED12_GATE_EVIDENCE")
+    const prior = await read<{ gate?: { gate?: string; passed?: boolean }; protocol?: Partial<typeof protocolBody> }>(resolve(gateEvidence))
+    const evidenceKeys = ["manifest_hash", "source_tree_hash", "runner_image_digest", "generation_model", "generation_config", "judge_model", "judge_config", "rubric_hash", "prompt_version"] as const
+    if (prior.gate?.gate !== "balanced12" || prior.gate.passed !== true
+      || evidenceKeys.some((key) => prior.protocol?.[key] !== protocol[key])) {
+      throw new Error("FORMAL_GATE_EVIDENCE_MISMATCH")
+    }
+    const calibrationPath = option("--calibration-evidence")
+    if (!calibrationPath) throw new Error("FORMAL_REQUIRES_JUDGE_CALIBRATION")
+    const calibration = await read<{ passed?: boolean; qualification?: { judge_model?: string; judge_config?: string; rubric_hash?: string } }>(resolve(calibrationPath))
+    if (calibration.passed !== true || ["judge_model", "judge_config", "rubric_hash"].some((key) =>
+      calibration.qualification?.[key as "judge_model" | "judge_config" | "rubric_hash"] !== protocol[key as "judge_model" | "judge_config" | "rubric_hash"])) {
+      throw new Error("FORMAL_JUDGE_CALIBRATION_MISMATCH")
+    }
+  }
   const protocolPath = join(root, "protocol.json")
   if (args.includes("--resume")) {
     const old = await read<typeof protocol>(protocolPath)
@@ -321,6 +410,7 @@ async function run() {
       const directory = join(root, "runs", `repeat-${repeat}`)
       await mkdir(directory, { recursive: true })
       const path = join(directory, `${c.case_id}.json`)
+      let previousAttempts: CaseRecord["previous_attempts"] = []
       if (args.includes("--resume") && (await Bun.file(path).exists())) {
         const cached = await read<CaseRecord>(path)
         if (
@@ -329,16 +419,42 @@ async function run() {
           cached.repeat_index !== repeat
         )
           throw new Error("RESUME_CASE_IDENTITY_MISMATCH")
-        // Preserve failures too. Retrying them belongs to a separately named run, not cherry-picking.
-        records.push(cached)
-        continue
+        const retryAudits = (args.includes("--retry-audits") || args.includes("--retry-infrastructure"))
+          && cached.status === "ready"
+          && !summarizeRecord(cached, manifest, c.case_id).judge.complete
+        const retryInfrastructure = args.includes("--retry-infrastructure")
+          && (cached.status === "running" || isRetryableOperationalRecord(cached))
+        if (retryAudits) {
+          const auditStarted = performance.now()
+          cached.previous_attempts = [...(cached.previous_attempts ?? []), {
+            status: cached.status, errors: [...cached.errors], duration_ms: cached.duration_ms, archived_at: new Date().toISOString(),
+          }]
+          await completeIndependentAudits(cached, judgeEnv, repeat, c.case_id, path)
+          cached.duration_ms += performance.now() - auditStarted
+          cached.reliability = summarizeRecord(cached, manifest, c.case_id)
+          await write(path, cached)
+          records.push(cached)
+          if (shouldStopDevelopmentGate(gateName, cached.reliability)) break evaluation
+          continue
+        }
+        if (!retryInfrastructure) {
+          cached.reliability = summarizeRecord(cached, manifest, c.case_id)
+          records.push(cached)
+          if (shouldStopDevelopmentGate(gateName, cached.reliability)) break evaluation
+          continue
+        }
+        cached.previous_attempts = [...(cached.previous_attempts ?? []), {
+          status: cached.status, errors: [...cached.errors], duration_ms: cached.duration_ms,
+          archived_at: new Date().toISOString(),
+        }]
+        previousAttempts = cached.previous_attempts
       }
       console.log(`[v2] start r${repeat} ${c.case_id}`)
       const record: CaseRecord = {
         protocol_id: protocol.protocol_id,
         repeat_index: repeat,
         case_id: c.case_id,
-        status: "failed",
+        status: "running",
         duration_ms: 0,
         code_execution: "not_reached",
         errors: [],
@@ -350,7 +466,9 @@ async function run() {
           audited: false,
           reasons: ["resource not published"],
         })),
+        previous_attempts: previousAttempts,
       }
+      await write(path, record)
       const start = performance.now()
       try {
         const { result } = await runCompetitionV2Case({
@@ -369,7 +487,12 @@ async function run() {
           },
         })
         record.status = result.status
-        if (result.status !== "ready") record.errors.push(result.reason)
+        record.workflow = result.workflow
+        record.run_id = result.runId
+        if (result.status !== "ready") {
+          record.generation_failure = result.failure
+          record.errors.push(result.reason)
+        }
         else {
           if (!result.reviewedRelease)
             throw new Error("READY_WITHOUT_REVIEWED_RELEASE")
@@ -413,64 +536,15 @@ async function run() {
             record.errors.push("TARGET_CONTRACT_CHANGED_BY_RECOVERY")
           if (!actual?.artifact_tasks)
             record.errors.push("ARTIFACT_TASKS_NOT_PRESERVED")
-          if (judgeEnv) {
-            const gateway = createRoleCModelGatewayFromEnv(judgeEnv)
-            try {
-              record.claims = await new ModelCompetitionClaimAuditor(
-                gateway,
-              ).audit({
-                repeat_index: repeat,
-                case_id: c.case_id,
-                candidates,
-                evidence: evidenceFactsFromDelivery(
-                  result.finalContext.evidencePack,
-                ),
-              })
-            } catch (error) {
-              record.errors.push(`claim audit:${message(error)}`)
-              record.claims = candidates.map((claim) => ({
-                repeat_index: repeat,
-                case_id: c.case_id,
-                artifact_kind: claim.artifact_kind,
-                claim_id: claim.claim_id,
-                factual: true,
-                audited: false,
-                verdict: "uncertain",
-                supported_fact_ids: [],
-              }))
-            }
-            for (const view of competitionArtifactViews(
-              result.reviewedRelease,
-            )) {
-              const audit = record.difficulty.find(
-                (a) => a.artifact_kind === view.artifact_kind,
-              )!
-              try {
-                const value = await new ModelResourceDifficultyJudge(
-                  gateway,
-                ).classify({
-                  case_id: c.case_id,
-                  artifact_kind: view.artifact_kind,
-                  title: view.title,
-                  content: view.content,
-                  rubric_version: "difficulty-rubric-v1",
-                })
-                Object.assign(audit, {
-                  audited: true,
-                  predicted_difficulty: value.predicted_difficulty,
-                  reasons: value.reasons,
-                  judge_version: "model-difficulty-v1",
-                })
-              } catch (error) {
-                record.errors.push(`difficulty:${message(error)}`)
-              }
-            }
-          }
+          await write(path, record)
+          await completeIndependentAudits(record, judgeEnv, repeat, c.case_id, path)
         }
       } catch (error) {
+        record.status = "failed"
         record.errors.push(message(error))
       }
       record.duration_ms = performance.now() - start
+      record.reliability = summarizeRecord(record, manifest, c.case_id)
       await write(path, record)
       records.push(record)
       console.log(
@@ -483,6 +557,10 @@ async function run() {
         repeats,
         protocol,
       )
+      if (shouldStopDevelopmentGate(gateName, record.reliability)) {
+        console.error(`[v3] ${gateName} stopped at first incomplete case; remaining cases stay not_run.`)
+        break evaluation
+      }
       if (
         record.errors.some((error) =>
           /INSUFFICIENT_(?:BALANCE|QUOTA)|余额不足|额度不足|invalid.api.key|unauthorized|authentication.failed|MODEL_PROVIDER_CIRCUIT_(?:OPEN|HALF_OPEN)/iu.test(
@@ -505,6 +583,7 @@ async function run() {
   )
   if (
     records.some((r) => r.status !== "ready" || r.errors.length) ||
+    (final.gate !== null && !final.gate.passed) ||
     (!dev && !final.passed)
   )
     process.exitCode = 1
@@ -514,7 +593,10 @@ async function report(
   manifest: FrozenCompetitionManifestV2,
   selected: string[],
   repeats: number,
-  protocol: { mode: string; protocol_id: string; judge_mode: string; generation_model: string; judge_model: string | null },
+  protocol: {
+    mode: string; protocol_id: string; judge_mode: string; generation_model: string; judge_model: string | null
+    reliability_gate?: string | null; manifest_hash?: string; source_tree_hash?: string
+  },
 ) {
   const expectations = competitionExpectationsV2(manifest).filter((e) =>
     selected.includes(e.case_id),
@@ -548,17 +630,26 @@ async function report(
     errors: records.filter((r) => r.errors.length).length,
     publication_rate: ready.length / expected,
   }
+  const gateResult = protocol.reliability_gate ? evaluateReliabilityGate({
+    gate: protocol.reliability_gate as EvaluationGate,
+    expected,
+    records,
+    metrics: byRepeat.map((entry) => entry.metrics),
+  }) : null
   const value = {
     version: "competition-report.v2",
     protocol,
     operational,
     repeat_reports: byRepeat,
+    gate: gateResult,
+    scorecard: buildReliabilityScorecard(records, expected),
     passed:
       protocol.mode === "formal" &&
       ready.length === expected &&
       operational.artifacts === expected * 3 &&
       operational.docker_passed === expected &&
       operational.errors === 0 &&
+      gateResult?.passed === true &&
       byRepeat.every((r) => r.metrics.passed),
   }
   await write(
@@ -579,28 +670,79 @@ async function report(
   )
   const usage: Array<Record<string, unknown>> = []
   for (const r of records) {
-    const path = join(
-      root,
-      "private-runtime",
-      `r${r.repeat_index}`,
-      r.case_id,
-      "telemetry",
-      "model-calls.jsonl",
-    )
-    if (await Bun.file(path).exists())
-      for (const line of (await readFile(path, "utf8"))
-        .trim()
-        .split("\n")
-        .filter(Boolean))
-        usage.push(JSON.parse(line))
+    for (const name of ["model-calls.jsonl", "judge-calls.jsonl"]) {
+      const path = join(root, "private-runtime", `r${r.repeat_index}`, r.case_id, "telemetry", name)
+      if (await Bun.file(path).exists())
+        for (const line of (await readFile(path, "utf8")).trim().split("\n").filter(Boolean))
+          usage.push(JSON.parse(line))
+    }
   }
   await write(join(root, "model-usage.json"), summarizeModelUsageV2(usage))
   await write(join(root, "latest.json"), value)
+  await write(join(root, "reliability-scorecard.json"), value.scorecard)
   await writeFile(
     join(root, "latest.md"),
-    `# Evaluation v2\n\nMode: ${protocol.mode}\nJudge mode: ${protocol.judge_mode}\nGeneration model: ${protocol.generation_model}; judge model: ${protocol.judge_model ?? "none"}.\nSame-model separate calls are automated evaluation, not cross-model validation.\n\nPublished: ${ready.length}/${expected}; Docker verified: ${operational.docker_passed}/${expected}.\n\n${byRepeat.map((r) => `Repeat ${r.repeat_index}: ${JSON.stringify(r.metrics.metrics)}`).join("\n\n")}\n\nDevelopment runs are not formal competition results. Missing/blocked cases remain in the denominator.\n`,
+    [
+      "# 样例评测进度与结果", "",
+      `运行：${protocol.mode}；生成模型：${protocol.generation_model}；评审模型：${protocol.judge_model ?? "未配置"}；评审方式：${protocol.judge_mode}。`, "",
+      `已记录 ${records.length}/${expected}；生产链路发布 ${ready.length}/${expected}；Docker 通过 ${operational.docker_passed}/${expected}；未运行 ${operational.not_run}。`,
+      `证据完整可计分 ${value.scorecard.metric_eligible}；独立复核无问题 ${value.scorecard.publication_ready}；质量问题 ${value.scorecard.quality_fail}；基础设施未完成 ${value.scorecard.infrastructure_incomplete}。`, "",
+      `放量检查：${gateResult ? `${gateResult.gate} — ${gateResult.passed ? "通过" : "尚未通过"}` : "未指定"}。`, "",
+      "| 样例 | 生成状态 | 证据可计分 | 最早未通过阶段 | 问题说明 |",
+      "| --- | --- | --- | --- | --- |",
+      ...records.map((r) => `| ${r.case_id} | ${r.status} | ${r.reliability?.metric_eligible ? "是" : "否"} | ${r.reliability?.funnel.earliest_failure_stage ?? "无"} | ${(r.reliability?.failures.map((f) => f.summary).join("；") || r.reliability?.reasons.join("；") || "无").replace(/[|\n\r]/gu, " ")} |`), "",
+      ...byRepeat.map((r) => `第 ${r.repeat_index} 轮完整分母指标：\n\n\`\`\`json\n${JSON.stringify(r.metrics.metrics, null, 2)}\n\`\`\``), "",
+      protocol.mode === "formal" ? "正式运行，未生成、未审核与未运行项保留在完整性分母中。" : "开发验证数据，不作为正式比赛成绩；未生成、未审核与未运行项保留在完整性分母中。",
+      "同模型的分离调用不表示跨模型验证。", "",
+    ].join("\n"),
   )
   return value
+}
+
+function shouldStopDevelopmentGate(gate: EvaluationGate | undefined, summary?: ReliabilityCaseSummary): boolean {
+  return gate !== undefined && gate !== "formal60" && (!summary?.metric_eligible
+    || summary.artifact_validations.some((artifact) => !artifact.hard_pass)
+    || !summary.funnel.stages.find((stage) => stage.stage === "docker_execution")?.passed)
+}
+
+function summarizeRecord(record: CaseRecord, manifest: FrozenCompetitionManifestV2, caseId: string): ReliabilityCaseSummary {
+  const expectation = manifest.cases.find((entry) => entry.case_id === caseId)
+  if (!expectation) throw new Error(`UNKNOWN_MANIFEST_CASE:${caseId}`)
+  return summarizeCaseReliability({
+    record,
+    artifact_tasks: expectation.artifact_tasks,
+    required_objective_ids: expectation.objectives.map((objective) => stableId("OBJECTIVE-COMP-V2", {
+      source_id: objective.source_id, behavior: objective.observable_behavior,
+    })),
+    required_facts: expectation.objectives.flatMap((objective) =>
+      objective.required_fact_ids.map((fact_id) => ({ source_id: objective.source_id, fact_id }))),
+  })
+}
+
+async function completeIndependentAudits(
+  record: CaseRecord,
+  judgeEnv: Record<string, string | undefined> | undefined,
+  repeat: number,
+  caseId: string,
+  path: string,
+) {
+  if (!judgeEnv || !record.public_release || !record.evidence_pack) return
+  const telemetry = join(root, "private-runtime", `r${repeat}`, caseId, "telemetry")
+  await mkdir(telemetry, { recursive: true })
+  const gateway = createRoleCModelGatewayFromEnv(judgeEnv, {
+    on_trace: async (trace) => {
+      await appendFile(join(telemetry, "judge-calls.jsonl"), JSON.stringify({ ...trace, recorded_at: new Date().toISOString() }) + "\n", { mode: 0o600 })
+    },
+  })
+  await resumeEvaluationAudits({
+    record,
+    candidates: extractCompetitionClaimCandidates(record.public_release),
+    evidence: evidenceFactsFromDelivery(record.evidence_pack),
+    views: competitionArtifactViews(record.public_release),
+    claimAuditor: new ModelCompetitionClaimAuditor(gateway),
+    difficultyJudge: new ModelResourceDifficultyJudge(gateway),
+    checkpoint: () => write(path, record),
+  })
 }
 function integer(name: string, defaultValue: number, min: number, max: number) {
   const n = Number(option(name) ?? defaultValue)

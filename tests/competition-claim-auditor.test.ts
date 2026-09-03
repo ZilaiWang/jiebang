@@ -113,4 +113,36 @@ describe("competition claim auditor", () => {
     expect(result?.support_basis).toBe("artifact_self")
     expect(result?.supported_fact_ids).toEqual([])
   })
+
+  test("非事实教学指令统一记录为 nonfactual supported，不制造伪失败", async () => {
+    const gateway: ModelGateway = {
+      model_id: "judge",
+      model_config_hash: "MODEL-judge",
+      async generateStructured<T>(): Promise<T> {
+        return { results: [{
+          claim_index: 0,
+          factual: false,
+          verdict: "unsupported",
+          support_basis: "nonfactual",
+          supported_fact_ids: [],
+          reason: "这是学习操作指令，不表达专业事实。",
+        }] } as T
+      },
+    }
+    const [result] = await new ModelCompetitionClaimAuditor(gateway).audit({
+      repeat_index: 1,
+      case_id: "c1",
+      candidates: [{
+        claim_id: "instruction",
+        artifact_kind: "lab",
+        text: "运行公开样例并观察输出。",
+        surface: "instruction",
+        citations: [],
+      }],
+      evidence: [],
+    })
+    expect(result?.factual).toBe(false)
+    expect(result?.verdict).toBe("supported")
+    expect(result?.support_basis).toBe("nonfactual")
+  })
 })

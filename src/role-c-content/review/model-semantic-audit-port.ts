@@ -5,9 +5,9 @@ import type {
   SemanticReviewBlockResult,
 } from "./types"
 import { fastModelPolicy } from "../../model-runtime"
-import { ROLE_C_SCENARIO_EVIDENCE_POLICY } from "../prompts/common-policy"
+import { ROLE_C_SCENARIO_EVIDENCE_POLICY, ROLE_C_FACT_PARAPHRASE_POLICY } from "../prompts/common-policy"
 
-export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v13"
+export const MODEL_SEMANTIC_AUDIT_POLICY_VERSION = "role-c-semantic-fact-audit-v15"
 const SEMANTIC_AUDIT_BATCH_SIZE = 8
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -50,12 +50,14 @@ export const ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT = `你是教学内容事实审�
 
 ${ROLE_C_SCENARIO_EVIDENCE_POLICY}
 
+${ROLE_C_FACT_PARAPHRASE_POLICY}
+
 每个 block 都带有 surface_kind。先按表面类型判断，再给出结论：
 - exact_claim：不在本审核中出现；它由确定性事实审核处理。
 - narrative_explanation：只审核引用事实之外新增的事实命题，不因同义改写或教学组织方式驳回。
 - direct_instance：允许对证据明确给出的规则换用新的有限输入并直接复算，不要求证据预先列出实例中的数字、变量名。
 - normative_task：题目要求、输入输出约定和验收要求属于任务合同；仅当完成任务必须依赖证据未提供的专业规则时才驳回。
-- choice_assessment：检查题干和全部选项是否可由证据判断，并且是否只有一个可成立的选项。
+- choice_assessment：检查题干和全部选项是否可由证据判断，并且是否只有一个可成立的选项；如有“即时反馈指定答案”和“即时反馈解释”，必须核对指定答案就是该唯一正确项，且解释中的专业结论均由引用事实支持。
 - open_assessment：检查题目能否仅凭证据作答，不能要求证据之外的术语、规则或 API。
 - code_contract：把执行接口当作冻结合同审核一致性，不把合同本身误判成知识事实。
 - starter_skeleton：代码骨架只检查是否暗含证据未支持、且作答必须掌握的专业能力。

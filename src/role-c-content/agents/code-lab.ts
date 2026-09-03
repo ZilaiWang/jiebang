@@ -113,7 +113,14 @@ export function createCodeLabAgent(
             },
           ))
           structural = validateCodeLabDraftStructure(request, draft)
-          if (!structural.ok) {
+          // Programming-problem expected values are intentionally replaced by
+          // a private pending marker after an execution repair. The trusted
+          // verifier must run the repaired reference on the repaired inputs to
+          // materialize their real values. Reject every other structural issue,
+          // but do not stop between repair and that trusted derivation step.
+          const canDeriveRepairedExpectedThroughTrustedExecution = structural.issues.length > 0
+            && structural.issues.every((issue) => isTrustedExpectedDerivationIssue(issue.code))
+          if (!structural.ok && !canDeriveRepairedExpectedThroughTrustedExecution) {
             return invalidPair(
               common,
               "code-lab 执行修订稿未通过结构、引用、public/secure 或目标覆盖门禁",

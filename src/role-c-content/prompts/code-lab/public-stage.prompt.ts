@@ -37,7 +37,11 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - code_completion：programming_task 必须提供 gap_template；模板只允许 {{gap:gap_id}} 标记，每个 gap 恰好出现一次。浏览器只提交 gap_answers，外围代码不可编辑。marker 是服务端内部结构，不得在 statement、instruction、hint 或 reflection 中对学习者展示或要求其理解。每个 gap 必须用 label 和 answer_format 明确说明填写的是字符串、表达式、语句还是变量名。
 - function_implementation：学习者实现冻结 entry_point 的函数体；starter_code 保留签名并留出核心逻辑。
 - stdin_stdout_program：学习者提交完整程序，题面按标准输入/输出描述，样例与所有目标共用同一输入形状。
-- debugging_repair：starter_code 必须包含一个与当前误区相符、可由公开样例复现的缺陷；题面要求定位并修复，而不是重写成另一任务。
+- debugging_repair：starter_code 必须包含真实存在、可由公开样例复现的缺陷；缺陷数量至少达到 programming_problem.required_mutation_count。先逐行核对 starter 里的实际错误，再写题面，绝不能声称一个代码中不存在的缺陷。题面要求学习者按“复现现象→定位原因→修复→回归验证”完成相互依赖的调试步骤，而不是重写成另一任务。
+- debugging_repair 输出前执行机械自检：starter_code 中不得出现 TODO、pass、NotImplementedError、空函数或“缺陷/错误/修复/正确写法”注释；必须直接放入一份完整可运行、但会在公开样例上产生错误结果的实现。statement 只写正确目标、输入输出和可观察的错误现象，不编号列出缺陷，不解释错误源码表达式，也不写修复后的表达式。
+- debugging_repair 必须让 objective_plan 中每个 objective 对应 starter 中一个不同且真实存在的故障，该故障必须直接练习该 objective 所引用的行为或边界事实，并至少有一个公开或错误路径案例可观察到。不得用“验证空输入”“回归检查”等没有实际故障的步骤凑 objective 数量；故障总数必须达到 required_mutation_count。
+- 每处调试修复都应保留并正确使用该 objective 的目标操作；不得通过删除整段目标逻辑、绕开目标操作或改写成无关实现来“修复”。
+- debugging_repair 的公开说明只能给诊断边界：可以指出观察哪个输出、追踪哪个状态或核对哪条当前事实；不得写出修复后的完整代码，不得用“把/将某行改为/替换为……”直接给出应提交的表达式、关键字或语句。practical_guide.steps 描述调试动作与验证方法，troubleshooting 描述学习者修复后仍可能观察到的症状，不得逐项公布 starter 中全部缺陷及精确修法。
 - 题面可以采用在线评测题的清晰结构，但不得复刻或声称来自洛谷、蓝桥杯等第三方题目。
 
 【practical_guide 实操指南】
@@ -83,11 +87,12 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - 若 staged_contract 没有 task_contract（旧路径），按上方 execution_mode 规则执行。
 
 【starter_code 起始代码】
-- function 模式：提供与 entry_point 完全一致的函数签名和必要导入，用 TODO 注释标出需要完成的部分
-- stdin_stdout 模式：提供与 task_contract.input_form 一致的完整程序骨架和 TODO；input_form=stdin_lines 时读取 stdin 并写入 stdout，input_form=none 时不读取输入、只使用空 input 测试输出。不得设置 entry_point，也不得要求学习者只提交函数或把函数返回值作为评分结果。非 recall_fact 的完整程序内允许使用 def/return 定义辅助函数。
-- 核心逻辑必须留空（function 模式函数体写 pass 或 raise NotImplementedError("TODO")；stdin_stdout 模式只保留安全的读取/输出骨架或 TODO），不得包含实际答案逻辑
-- 绝对不可：写 return 语句返回计算结果、写完整的循环体或条件判断、写任何可能通过测试的代码
-- 宁可太简单被安全门禁退回，也不可写出接近答案的代码
+- debugging_repair 是唯一例外：starter 必须是一份可运行、包含真实缺陷、会在至少一个公开样例上产生错误结果的完整实现；必须保留待定位的条件、循环、索引或其他目标逻辑，不能用 TODO、pass、NotImplementedError 或空函数替代故障。它不得已经满足全部公开测试，也不得在注释中写出修法。
+- 非 debugging_repair 的 function 模式：提供与 entry_point 完全一致的函数签名和必要导入，用 TODO 注释标出需要完成的部分。
+- 非 debugging_repair 的 stdin_stdout 模式：提供与 task_contract.input_form 一致的完整程序骨架和 TODO；input_form=stdin_lines 时读取 stdin 并写入 stdout，input_form=none 时不读取输入、只使用空 input 测试输出。不得设置 entry_point，也不得要求学习者只提交函数或把函数返回值作为评分结果。非 recall_fact 的完整程序内允许使用 def/return 定义辅助函数。
+- 非 debugging_repair 的核心逻辑必须留空（function 模式函数体写 pass 或 raise NotImplementedError("TODO")；stdin_stdout 模式只保留安全的读取/输出骨架或 TODO），不得包含实际答案逻辑。
+- 非 debugging_repair 绝对不可写 return 语句返回完整计算结果、完整循环体或条件判断，以及任何可能直接通过测试的代码。调试题则相反：错误实现必须完整可运行，但不能是正确答案。
+- 普通实现题宁可留出清晰待完成区域，也不可写出接近答案的代码；调试题宁可减少场景装饰，也必须保证故障真实、可复现且未公布修复代码。
 - learner_adaptation.level=beginner 时可保留完整外围骨架并逐步提示；level=basic 时只保留输入输出胶水、必要初始化和 TODO 边界，目标行为需要的两到三个相连操作必须由学习者完成，不得把核心循环、判断、调用或索引语句逐行写好。
 
 【public_test 公开测试】
@@ -129,3 +134,17 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 9. execution_contract.allowed_imports 只可从平台白名单 bisect、collections、datetime、decimal、enum、fractions、functools、heapq、itertools、io、json、math、operator、random、re、statistics、string 中选择，并须覆盖 starter、参考实现与隐藏测试实际使用的模块；基础任务优先使用内置语法并返回空数组。不得使用 sys、os、pathlib、subprocess 等平台外模块。secure 阶段不会也无法扩大 allowed_imports。
 10. evidence 涉及文件读写时，使用公共策略规定的独立临时文件环境，明确初始 files 夹具或 stdin 建文件流程、文件名和观察结果；学习者须实际完成目标文件操作。若要求先读取已有文件，每个 objectives[].public_test.input 和 additional_public_examples[].input 都须写全 files 初始内容，例如 {"args":["data.txt","新内容"],"kwargs":{},"files":{"data.txt":"原有内容"}}。仅在题面说“平台会创建文件”而不给出 files，判题器不会自动猜测文件内容。
 11. ${JSON_ONLY}`
+
+/** Full-candidate revision after the independent critic found concrete defects. */
+export const CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT = `${CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT}
+
+当前职责：根据 reviewer_findings 修订 prior_candidate，重新输出一份完整 public author payload。逐条解决 reviewer_findings，同时保持 staged_contract 的目标、执行接口、测试形状和编程题型不变。不得只改说明文字来掩盖代码问题。
+
+若为 debugging_repair，必须完成以下一致性自检：
+1. starter_code 中确实存在 programming_problem.required_mutation_count 个可复现缺陷；
+2. 题面声称的每个缺陷都能在实际 starter 中找到，公开样例能观察到至少一个错误现象；
+3. 正确实现应同时满足所有 objectives 的统一输入输出合同，不能让某个 public_test 只描述部分实际输出；
+4. instruction、三级提示和 practical_guide 只教学习者如何复现、追踪、定位和验证，不直接给出修复后的关键代码；
+5. contract.artifact_task.lab.learner_owned_dependent_steps 个核心调试动作仍由学习者完成。
+
+只输出修订后的完整 Schema JSON。`

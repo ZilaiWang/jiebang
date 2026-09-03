@@ -27,6 +27,47 @@ export interface AssessmentValidityIssue {
   message: string
 }
 
+export interface AssessmentEvidenceAuthoringBoundary {
+  item_index: number
+  cited_fact_statements: string[]
+  allowed_mechanism_terms: string[]
+  forbidden_mechanism_terms: string[]
+  distractor_rule: string
+}
+
+/**
+ * Exposes the same lexical evidence boundary used by the deterministic
+ * validator to the authoring model.  The model can therefore design inside
+ * the contract on its first pass instead of discovering hidden validator
+ * vocabulary through repeated repair calls.
+ */
+export function buildAssessmentEvidenceAuthoringBoundaries(
+  plan: AssessmentItemPlan[],
+  evidence: AssessmentEvidenceFactView[],
+): AssessmentEvidenceAuthoringBoundary[] {
+  const factsByKey = new Map(evidence.map((fact) => [
+    `${fact.source_id}:${fact.fact_id}`,
+    fact.content,
+  ]))
+  return plan.map((item, itemIndex) => {
+    const citedFactStatements = item.citations.flatMap((citation) => {
+      const statement = factsByKey.get(`${citation.source_id}:${citation.fact_id}`)
+      return statement ? [statement] : []
+    })
+    const citedSurface = normalize(citedFactStatements.join(" "))
+    const allowed = TECHNICAL_MECHANISM_TERMS.filter((term) =>
+      citedSurface.includes(normalize(term)))
+    return {
+      item_index: itemIndex,
+      cited_fact_statements: citedFactStatements,
+      allowed_mechanism_terms: [...allowed],
+      forbidden_mechanism_terms: TECHNICAL_MECHANISM_TERMS.filter((term) =>
+        !allowed.includes(term)),
+      distractor_rule: "错误选项只能反转已引用事实中明写的对象、方向、条件或状态；不得引入 forbidden_mechanism_terms 中的新机制。",
+    }
+  })
+}
+
 export function validateAssessmentPublicValidity(
   payload: AssessmentPublicPayload,
   plan: AssessmentItemPlan[],

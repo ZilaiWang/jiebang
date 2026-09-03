@@ -1,4 +1,8 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.68.0" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.80.0" as const
+
+export const ROLE_C_FACT_PARAPHRASE_POLICY = `【可见讲解的等义边界】
+可见讲解允许不增加前提的同义展开和直接逻辑否定，审核不是逐字匹配。例如“通用编程语言”可解释为“不局限于单一特定用途的编程语言”，但不能据此列举任何具体行业能力；“用缩进表示代码块”可解释为“用缩进区分语句所属的块”，但不能据此增加固定空格数、混用 Tab 的后果或错误类型。
+若解释引入一个原命题没有的事实关系，仍须独立引用。尤其“由解释器执行”只说明执行者，不能推出逐行翻译、不编译、执行顺序或内存机制。此规则用于可见正文，Claim 元数据仍按既定事实身份与文本合同校验。`
 
 /** Shared by authors and reviewers so personalization has one evidence boundary. */
 export const ROLE_C_SCENARIO_EVIDENCE_POLICY = `【练习情境与专业声明】
@@ -22,6 +26,8 @@ export const ROLE_C_COMMON_SYSTEM_POLICY = `你是 KnowBalance 的 Role C 内容
 
 内容分层：
 ${ROLE_C_SCENARIO_EVIDENCE_POLICY}
+
+${ROLE_C_FACT_PARAPHRASE_POLICY}
 1. grounded claim 是对专业事实、规则、边界或运行结果的陈述，必须被当前引用事实直接支持；可以自然转述，也可以把证据明确给出的规则代入有限新输入形成可复算的直接实例，但不得扩大规则范围、增加因果或引入另一条未提供的专业规则。
 2. pedagogical scaffold 是过渡、提问、步骤提示、学习策略、虚构任务约定和反思要求；它可以自然表达，不需要机械复写事实，但绝不能偷偷加入新的专业结论。
 3. 先判断一句话是在“声称专业事实”还是在“帮助学习”。不要为了引用而把每个过渡句写成事实原句，也不要把额外事实伪装成类比、误区或任务说明。

@@ -237,7 +237,8 @@ export function buildConceptSectionPlan(input: {
   })
   const traceSlot = (input.artifact_lesson?.require_step_trace || input.pedagogy_contract?.lesson.require_step_trace)
     && mode !== "procedural"
-    && (input.support.supported_behaviors.includes("trace") || executableExampleFactIds.length > 0)
+    && input.support.supported_behaviors.includes("trace")
+    && input.support.allowed_content_moves.includes("procedure_trace")
     ? [slot("procedure_steps", {
         slot_id: stableId("CONCEPT-SLOT", { objective_id: input.objective_id, kind: "step_trace" }),
         fact_ids: executableExampleFactIds.length > 0 ? executableExampleFactIds : fact_ids,
@@ -609,6 +610,10 @@ export function anchorConceptFactsInVisibleText(input: {
         // Python indentation and can even alter string-literal values.
         ? section.code.replace(/\r\n?/gu, "\n").trimEnd()
         : null
+      const planned = input.plans
+        .find((plan) => plan.objective_id === objective.objective_id)
+        ?.slots.find((slot) => slot.slot_id === section.slot_id)
+      if (planned && !planned.allowed_block_types.includes("code")) section.code = null
     }
     objective.micro_check.prompt = normalizeLearnerVisibleAuditLanguage(objective.micro_check.prompt)
     objective.micro_check.options = objective.micro_check.options.map(normalizeLearnerVisibleAuditLanguage)
@@ -737,13 +742,10 @@ function normalizeCodeExample(code: string): string {
 }
 
 const CONCEPT_ABSOLUTE_SCOPE = /(?:仅仅|只能|仅能|仅限|唯一|完全|一律|必然|绝不|从不|总是|只用于|仅用于|只会|仅会)/gu
-const CONCEPT_DIRECT_NEGATION = /(?:不|未|没有|并非|不是|无法|不能)/u
-const CONCEPT_UNSUPPORTED_NEGATIVE_ASSERTION = /(?:而不是|并非|不会)/gu
-const CONCEPT_ASSERTION_CUE = /(?:[“"]([^”"\n]{4,160})[”"]|(?:认为|声称|误以为|说法是|说法为)[：:]?\s*([^。！？；\n]{4,160}))/gu
 
 /**
- * Micro-check 的错误选项同样是学习者可见内容。它可以直接否定已引事实，
- * 但不能靠证据没有出现的绝对范围制造“看起来合理”的具体用途。
+ * 对题干和指定正确项检查未经授权的绝对化断言。
+ * 干扰项与误区是待辨析的命题，由完整题目/纠错语义单元审核，不按真命题检查。
  */
 export function validateConceptMicroCheckEvidenceDiscipline(
   payload: ConceptSegmentAuthorPayloadV2,
@@ -757,104 +759,21 @@ export function validateConceptMicroCheckEvidenceDiscipline(
     const facts = factTextByObjective.get(objective.objective_id) ?? []
     const authorized = new Set(facts
       .flatMap(conceptScopeTokens))
-    const surfaces = [objective.micro_check.prompt, ...objective.micro_check.options]
+    const surfaces = [objective.micro_check.prompt, objective.micro_check.answer]
     surfaces.forEach((surface, index) => {
       const unauthorized = conceptScopeTokens(surface).filter((token) => !authorized.has(token))
       if (unauthorized.length > 0) {
-        issues.push(`objective ${objective.objective_id} 的 micro_check.${index === 0 ? "prompt" : `options[${index - 1}]`} 引入当前事实未授权的绝对限定：${[...new Set(unauthorized)].join("、")}`)
+        issues.push(`objective ${objective.objective_id} 的 micro_check.${index === 0 ? "prompt" : "answer"} 引入当前事实未授权的绝对限定：${[...new Set(unauthorized)].join("、")}`)
       }
     })
-    if (plan.micro_check.mode === "recognition" && !conceptSurfaceIsDirectlyGrounded(objective.micro_check.answer, facts)) {
-      issues.push(`objective ${objective.objective_id} 的 micro_check.answer 未直接得到当前事实支持`)
-    }
-    objective.micro_check.options.forEach((option, index) => {
-      // Computed outputs and state transitions are evaluated by semantic audit
-      // against the bound facts; literal overlap only applies to recognition.
-      if (plan.micro_check.mode !== "recognition") return
-      if (option === objective.micro_check.answer
-        || CONCEPT_DIRECT_NEGATION.test(option)
-        || conceptSurfaceIsDirectlyGrounded(option, facts)) return
-      issues.push(`objective ${objective.objective_id} 的 micro_check.options[${index}] 不是事实复述或直接否定，不能引入未引用的具体机制、用途或类别`)
-    })
-    const slotById = new Map(plan.slots.map((slot) => [slot.slot_id, slot]))
-    objective.sections.forEach((section) => {
-      const slot = slotById.get(section.slot_id)
-      if (!slot) return
-      const authoredText = [section.heading, section.body, ...section.steps].join("\n")
-      if (slot.kind !== "misconception") {
-        const unauthorized = conceptNegativeAssertionTokens(authoredText)
-          .filter((token) => !facts.some((fact) => conceptNegativeAssertionTokens(fact).includes(token)))
-        if (unauthorized.length > 0) {
-          issues.push(`objective ${objective.objective_id} 的 section ${section.slot_id} 引入事实未授权的否定性机制说明：${[...new Set(unauthorized)].join("、")}`)
-        }
-      }
-      const unsupportedAssertions = conceptAlternativeAssertions(authoredText).filter((assertion) =>
-        conceptSharesFactSubject(assertion, facts)
-        && !conceptSurfaceIsDirectlyGrounded(assertion, facts)
-        && !conceptIsDirectNegation(assertion, facts)
-        && !conceptIsEvidenceBoundDirectInstance(assertion, facts))
-      if (unsupportedAssertions.length > 0) {
-        issues.push(`objective ${objective.objective_id} 的 section ${section.slot_id} 使用了事实未提供的具体替代说法：${unsupportedAssertions.join("、")}；反例只能直接否定已引用事实`)
-      }
-      if (slot.kind === "misconception") {
-        const unauthorizedScopes = conceptScopeTokens(authoredText)
-          .filter((token) => !facts.some((fact) => conceptScopeTokens(fact).includes(token)))
-        if (unauthorizedScopes.length > 0) {
-          issues.push(`objective ${objective.objective_id} 的 misconception ${section.slot_id} 引入事实未授权的绝对限定：${[...new Set(unauthorizedScopes)].join("、")}`)
-        }
-      }
-    })
+    // 正确项的支持关系、干扰项的可反驳性统一由 choice_assessment 语义审核
+    // 判断。字面相似度不能证明命题真值，也不应拒绝正常的同义改写。
   }
   return issues
 }
 
 function conceptScopeTokens(text: string): string[] {
   return [...text.matchAll(CONCEPT_ABSOLUTE_SCOPE)].map((match) => match[0]!)
-}
-
-function conceptNegativeAssertionTokens(text: string): string[] {
-  return [...text.matchAll(CONCEPT_UNSUPPORTED_NEGATIVE_ASSERTION)].map((match) => match[0]!)
-}
-
-function conceptAlternativeAssertions(text: string): string[] {
-  return [...text.matchAll(CONCEPT_ASSERTION_CUE)]
-    .map((match) => (match[1] ?? match[2] ?? "").trim())
-    .filter(Boolean)
-}
-
-function conceptIsDirectNegation(value: string, facts: string[]): boolean {
-  if (!CONCEPT_DIRECT_NEGATION.test(value)) return false
-  const affirmative = value.replace(/(?:没有|并非|不是|无法|不能|不|未)/gu, "")
-  return conceptSurfaceIsDirectlyGrounded(affirmative, facts)
-}
-
-/** A concrete variable/value substitution is an instance of an assignment fact,
- * not a competing technical mechanism.  This keeps examples such as city = "北京"
- * teachable while API names and unrelated runtime claims remain outside the rule. */
-function conceptIsEvidenceBoundDirectInstance(value: string, facts: string[]): boolean {
-  const hasAssignmentSurface = /\b[A-Za-z_]\w*\s*=\s*(?:["'][^"'\n]*["']|-?\d+(?:\.\d+)?|\b[A-Za-z_]\w*)/u.test(value)
-  if (!hasAssignmentSurface) return false
-  return facts.some((fact) => /(?:使用\s*=\s*进行变量赋值|重新赋值|新值会覆盖旧绑定)/u.test(fact))
-}
-
-function conceptSharesFactSubject(value: string, facts: string[]): boolean {
-  const normalizedValue = normalizeGroundedClaimText(value)
-  return facts.some((fact) => {
-    const subject = fact.split(/(?:是|属于|通常|常用于|适合|表示|用|负责)/u, 1)[0]?.trim() ?? ""
-    const normalizedSubject = normalizeGroundedClaimText(subject)
-    return normalizedSubject.length >= 2 && normalizedValue.includes(normalizedSubject)
-  })
-}
-
-function conceptSurfaceIsDirectlyGrounded(value: string, facts: string[]): boolean {
-  const surface = normalizeGroundedClaimText(value)
-  if (surface.length < 2) return false
-  return facts.some((fact) => {
-    const normalizedFact = normalizeGroundedClaimText(fact)
-    return normalizedFact === surface
-      || normalizedFact.includes(surface)
-      || surface.includes(normalizedFact)
-  })
 }
 
 /**
@@ -1175,9 +1094,7 @@ export function materializeConceptSegmentV2(
       }),
       block_type: "heading",
       level: 2,
-      text: sourceTitle
-        ? `${sourceTitle}（${target.objective_id}）`
-        : target.objective_id,
+      text: sourceTitle || `学习目标 ${index + 1}`,
     })
     const result = materializeConceptSegmentAuthorPayloadV2({
       objective_id: target.objective_id,

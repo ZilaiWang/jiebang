@@ -1,0 +1,54 @@
+import { describe, expect, test } from "bun:test"
+import {
+  describePythonEntryPoint,
+  validateFunctionInvocationAgainstInterface,
+} from "../src/role-c-content/programming/python-function-interface"
+
+describe("Python function invocation contract", () => {
+  test("extracts a simple generated entry-point signature", () => {
+    expect(describePythonEntryPoint("def solve(logs):\n    return logs\n", "solve")).toEqual({
+      entry_point: "solve",
+      positional_parameters: ["logs"],
+      required_positional_count: 1,
+      maximum_positional_count: 1,
+      required_keyword_only: [],
+      accepted_keyword_parameters: ["logs"],
+      accepts_arbitrary_keywords: false,
+    })
+  })
+
+  test("rejects the real failure shape where two log groups become two positional arguments", () => {
+    const contract = describePythonEntryPoint("def solve(logs):\n    return logs\n", "solve")!
+    const issues = validateFunctionInvocationAgainstInterface({
+      args: [
+        [["ERROR", "panic"], ["INFO", "ready"]],
+        [["WARN", "slow"], ["DEBUG", "noop"]],
+      ],
+      kwargs: {},
+    }, contract)
+    expect(issues).toEqual(["solve 最多接收 1 个位置参数，当前为 2 个"])
+    expect(validateFunctionInvocationAgainstInterface({
+      args: [[
+        [["ERROR", "panic"], ["INFO", "ready"]],
+        [["WARN", "slow"], ["DEBUG", "noop"]],
+      ]],
+      kwargs: {},
+    }, contract)).toEqual([])
+  })
+
+  test("supports defaults, keyword-only arguments and variadic signatures", () => {
+    const contract = describePythonEntryPoint(
+      "def run(value: int, scale=1, *items, mode, strict=False, **extra):\n    return value\n",
+      "run",
+    )!
+    expect(contract).toMatchObject({
+      required_positional_count: 1,
+      maximum_positional_count: null,
+      required_keyword_only: ["mode"],
+      accepts_arbitrary_keywords: true,
+    })
+    expect(validateFunctionInvocationAgainstInterface({ args: [1], kwargs: {} }, contract))
+      .toEqual(["run 缺少必填关键字参数 mode"])
+    expect(validateFunctionInvocationAgainstInterface({ args: [1], kwargs: { mode: "fast" } }, contract)).toEqual([])
+  })
+})

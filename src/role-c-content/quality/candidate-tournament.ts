@@ -34,6 +34,17 @@ export async function runPublicCandidateTournament<T>(input: {
     variant_index: number
     evaluation: PublicCandidateEvaluation
   }>) => Promise<PublicCandidateEvaluation[]>
+  /**
+   * One review-guided authoring pass after every independent candidate has a
+   * concrete critic finding.  This is not a release fallback: the revised
+   * candidate is normalized, validated, scored and independently reviewed by
+   * the same path before it can win.
+   */
+  revise_rejected?: (entry: {
+    candidate: T
+    variant_index: number
+    evaluation: PublicCandidateEvaluation
+  }) => Promise<T>
   on_rejected?: (evaluations: PublicCandidateEvaluation[], generationFailures: number) => void | Promise<void>
 }): Promise<CandidateSelectionResult<T>> {
   await input.preflight?.()
@@ -81,7 +92,40 @@ export async function runPublicCandidateTournament<T>(input: {
     .sort((left, right) =>
       right.evaluation.overall_score - left.evaluation.overall_score
       || left.evaluation.candidate_id.localeCompare(right.evaluation.candidate_id))
-  const winner = ranked[0]
+  let winner = ranked[0]
+  if (!winner && input.revise_rejected && evaluations.length > 0) {
+    const source = [...evaluations].sort((left, right) =>
+      right.evaluation.overall_score - left.evaluation.overall_score
+      || left.evaluation.candidate_id.localeCompare(right.evaluation.candidate_id))[0]!
+    try {
+      const revisedCandidate = await input.revise_rejected({
+        candidate: source.entry.candidate,
+        variant_index: source.entry.variant_index,
+        evaluation: source.evaluation,
+      })
+      let revisedEvaluation = input.evaluate(revisedCandidate, source.entry.variant_index)
+      if (input.review) {
+        const reviewed = await input.review([{
+          candidate: revisedCandidate,
+          variant_index: source.entry.variant_index,
+          evaluation: revisedEvaluation,
+        }])
+        if (reviewed.length !== 1 || reviewed[0]!.candidate_id !== revisedEvaluation.candidate_id) {
+          throw new Error("PUBLIC_CANDIDATE_REVIEW_RESULT_MISMATCH")
+        }
+        revisedEvaluation = reviewed[0]!
+      }
+      evaluations.push({
+        entry: { candidate: revisedCandidate, variant_index: source.entry.variant_index },
+        evaluation: revisedEvaluation,
+      })
+      if (revisedEvaluation.release_eligible) {
+        winner = evaluations[evaluations.length - 1]!
+      }
+    } catch (error) {
+      generationErrors.push(error)
+    }
+  }
   if (!winner) {
     await input.on_rejected?.(
       evaluations.map((entry) => entry.evaluation),

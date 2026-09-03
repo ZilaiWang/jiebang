@@ -138,6 +138,18 @@ describe("Role C targeted public-safety repair", () => {
     expect(repaired.programming_task?.gap_template?.gaps[0]?.label).toBe("待填写代码片段 1")
     expect(repaired.programming_task?.gap_template?.gaps[0]?.placeholder).toBe("# 按题目要求填写")
     expect(repaired.programming_task?.gap_template?.template_code).toContain("def greet(name):")
+    const withPublicData = structuredClone(prior)
+    withPublicData.starter_code = `note = '公开输入数据'\n${prior.starter_code}`
+    withPublicData.programming_task.gap_template.template_code = `note = '公开输入数据'\n${prior.programming_task.gap_template.template_code}`
+    const repairedData = conservativeCodeLabPublicSafetyRepair(withPublicData, `note = '公开输入数据'\n${reference}`)
+    expect(repairedData.programming_task?.gap_template?.template_code).toContain("note = '公开输入数据'")
+    expect(repairedData.programming_task?.gap_template?.template_code).not.toContain("message = '你好，' + name")
+    const fullReference = structuredClone(prior)
+    fullReference.programming_task.gap_template.template_code = `${reference}\n{{gap:body}}`
+    const repairedFull = conservativeCodeLabPublicSafetyRepair(fullReference, reference)
+    expect(repairedFull.programming_task?.gap_template?.template_code).toContain("{{gap:body}}")
+    expect(repairedFull.programming_task?.gap_template?.template_code).not.toContain("message = '你好，' + name")
+    expect(repairedFull.programming_task?.gap_template?.template_code).not.toContain("return message")
   })
 
   test("compresses assessment code public fields when secure reference leaks", () => {
@@ -165,5 +177,35 @@ describe("Role C targeted public-safety repair", () => {
     expect(repaired.items[0].prompt).not.toContain("append(4)")
     expect(repaired.items[0].starter_code).toContain("TODO")
     expect(repaired.items[0].starter_code).not.toContain("append(4)")
+  })
+
+  test("assessment safety repair preserves the authored task and removes only published implementation lines", () => {
+    const publicPayload: any = {
+      form_id: "FORM-1", title: "测评", objective_ids: ["O1"],
+      items: [{
+        item_id: "I1", family_id: "F1", variant_id: "V1", display_no: 1,
+        objective_id: "O1", tier: 2, difficulty_band: "improvement",
+        cognitive_level: "apply", modality: "code", max_score: 1,
+        prompt: "实现函数，把输入列表复制后追加数字 4。\nresult.append(4)\n返回新列表。",
+        starter_code: "def solve(values):\n    # TODO: 完成实现\n    result = list(values)\n    result.append(4)\n    return result\n",
+        citations: [], structure_meta: { operation: "apply", reasoning_pattern: "construct", representation: "code", context_family: "direct", answer_form: "code" },
+      }],
+      submission_policy: { max_attempts: 2, formative: true }, routing: { anchor_item_ids: [], rules: [] },
+      objective_coverage: [], used_evidence: [],
+    }
+    const securePayload: any = {
+      form_id: "FORM-1", option_order_seed: 1,
+      items: [{ item_id: "I1", objective_id: "O1", tier: 2, modality: "code", max_score: 1,
+        answer_spec: { kind: "code", test_suite_id: "TS1" }, misconception_by_option: {}, evidence_weight: 1 }],
+      code_test_suites: [{ test_suite_id: "TS1", reference_solution: "def solve(values):\n    result = list(values)\n    result.append(4)\n    return result\n", execution_contract: {}, hidden_tests: [] }],
+      objective_coverage: [],
+    }
+    const repaired = conservativeAssessmentPublicSafetyRepair(publicPayload, securePayload)
+    expect(repaired.items[0].prompt).toContain("把输入列表复制后追加数字 4")
+    expect(repaired.items[0].prompt).toContain("返回新列表")
+    expect(repaired.items[0].prompt).not.toContain("result.append(4)")
+    expect(repaired.items[0].starter_code).toContain("def solve(values):")
+    expect(repaired.items[0].starter_code).toContain("TODO")
+    expect(repaired.items[0].starter_code).not.toContain("result.append(4)")
   })
 })

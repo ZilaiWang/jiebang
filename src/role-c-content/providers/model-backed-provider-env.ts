@@ -52,7 +52,7 @@ function generationStrategy(value: string | undefined): "staged" | "monolithic" 
 }
 
 function repairAttempts(value: string | undefined): 0 | 1 | 2 {
-  if (value === undefined || value === "") return 1
+  if (value === undefined || value === "") return 2
   if (value === "2") return 2
   if (value === "1") return 1
   if (value === "0") return 0

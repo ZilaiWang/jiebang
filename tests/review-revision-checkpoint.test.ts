@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   canResumeStage,
+  conceptDownstreamDependencyHash,
   recoveryInvalidatesStage,
   stageFingerprint,
 } from "../src/role-c-content/orchestrator/content-pipeline"
@@ -128,6 +129,67 @@ describe("改进方案4 第一批：检查点与外审修订关系", () => {
     const assess1 = stageFingerprint({ ...base, stage: "assessment", revisionContext: ctx, conceptArtifactId: "c1" })
     const assess2 = stageFingerprint({ ...base, stage: "assessment", revisionContext: ctx, conceptArtifactId: "c2" })
     expect(assess1).not.toBe(assess2)
+  })
+
+  test("Concept 局部修订保持 artifact_id 时，内容哈希变化仍使下游失效", () => {
+    const base = {
+      inputHash: "sha256:x",
+      blueprintId: "bp-1",
+      conceptArtifactId: "concept-stable-id",
+    }
+    const ctx = revisionContext()
+    const beforeLab = stageFingerprint({
+      ...base,
+      stage: "code_lab",
+      revisionContext: ctx,
+      conceptArtifactHash: "sha256:before",
+    })
+    const afterLab = stageFingerprint({
+      ...base,
+      stage: "code_lab",
+      revisionContext: ctx,
+      conceptArtifactHash: "sha256:after",
+    })
+    const beforeAssessment = stageFingerprint({
+      ...base,
+      stage: "assessment",
+      revisionContext: ctx,
+      conceptArtifactHash: "sha256:before",
+    })
+    const afterAssessment = stageFingerprint({
+      ...base,
+      stage: "assessment",
+      revisionContext: ctx,
+      conceptArtifactHash: "sha256:after",
+    })
+
+    expect(beforeLab).not.toBe(afterLab)
+    expect(beforeAssessment).not.toBe(afterAssessment)
+  })
+
+  test("Concept 只改可见讲解文字时下游合同不变；改 Claim 时才失效", () => {
+    const artifact = (text: string, claimText = "if 根据条件真假决定是否执行代码块。") => ({
+      artifact_id: "ART-CONCEPT",
+      status: "ready",
+      payload: {
+        objective_ids: ["OBJ-1"],
+        prerequisite_bridge: [],
+        explanation_blocks: [{
+          block_id: "B-1", block_type: "paragraph", text,
+          claims: [{ claim_id: "C-1", text: claimText, citations: [{ source_id: "K006", fact_id: "F001", relation: "supports" }] }],
+        }],
+        worked_examples: [], summary: [], misconceptions: [], micro_checks: [], hint_ladders: [],
+        objective_coverage: [{ objective_id: "OBJ-1", block_ids: ["B-1"] }], used_evidence: [],
+      },
+    } as any)
+    const before = artifact("原讲解中有一句需要被局部重写的文字。")
+    const proseRevision = artifact("修订后的讲解只保留证据支持的表达。")
+    const contractRevision = artifact("修订后的讲解。", "if 总会执行第一个代码块。")
+
+    expect(conceptDownstreamDependencyHash(before))
+      .toBe(conceptDownstreamDependencyHash(proseRevision))
+    expect(conceptDownstreamDependencyHash(before))
+      .not.toBe(conceptDownstreamDependencyHash(contractRevision))
   })
 
   test("concept 修订指令改变 concept 指纹（concept 被质疑 → concept 失效）", () => {

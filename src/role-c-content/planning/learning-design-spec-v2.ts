@@ -94,7 +94,7 @@ export function buildLearningDesignSpecV2(input: {
     const source = input.evidence.results.find((entry) => entry.source_id === target.source_id)
     const requiredFacts = new Set(target.required_fact_ids)
     return (source?.misconceptions ?? [])
-      .filter((entry) => entry.factRefs.length === 0 || entry.factRefs.some((reference) =>
+      .filter((entry) => entry.factRefs.length > 0 && entry.factRefs.every((reference) =>
         reference.sourceId === target.source_id && requiredFacts.has(reference.factId)))
       .slice(0, 3)
       .map((entry) => ({

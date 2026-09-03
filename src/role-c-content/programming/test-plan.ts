@@ -1,5 +1,7 @@
 import { contentHash } from "../contracts/common"
 import type { ProgrammingProblemBlueprint, TestInputCandidate } from "./contracts"
+import type { PythonFunctionInterface } from "./python-function-interface"
+import { validateFunctionInvocationAgainstInterface } from "./python-function-interface"
 
 export interface TestPackQualityReport {
   ok: boolean
@@ -13,6 +15,7 @@ export function validateInputCandidates(
   blueprint: ProgrammingProblemBlueprint,
   publicInputs: Array<{ input: unknown }>,
   hiddenInputs: TestInputCandidate[],
+  functionInterface?: PythonFunctionInterface,
 ): TestPackQualityReport {
   const issues: string[] = []
   if (publicInputs.length < blueprint.public_case_count) {
@@ -39,6 +42,16 @@ export function validateInputCandidates(
     if (count < partition.minimum_cases) {
       issues.push(`${partition.label}隐藏测试不足：需要 ${partition.minimum_cases}，实际 ${count}`)
     } else satisfied += 1
+  }
+  if (functionInterface) {
+    publicInputs.forEach((entry, index) => {
+      validateFunctionInvocationAgainstInterface(entry.input, functionInterface)
+        .forEach((message) => issues.push(`公开测试 ${index + 1}：${message}`))
+    })
+    hiddenInputs.forEach((entry, index) => {
+      validateFunctionInvocationAgainstInterface(entry.input, functionInterface)
+        .forEach((message) => issues.push(`隐藏测试 ${index + 1}：${message}`))
+    })
   }
   return {
     ok: issues.length === 0,

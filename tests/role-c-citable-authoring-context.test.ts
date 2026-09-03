@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { buildAssessmentAuthorModelInput } from "../src/role-c-content/context/assessment-context"
 import { buildCodeLabModelInput } from "../src/role-c-content/context/code-lab-context"
 import { buildConceptTutorModelInput } from "../src/role-c-content/context/concept-context"
+import { buildLearningDesignSpecV2 } from "../src/role-c-content/planning/learning-design-spec-v2"
 
 const spec = {
   spec_id: "SPEC-CITABLE",
@@ -59,6 +60,27 @@ const conceptArtifact = {
 }
 
 describe("Role C citable authoring context", () => {
+  test("learning design only carries misconceptions with their full frozen evidence", () => {
+    const evidence = structuredClone(evidencePack) as any
+    const misconception = (id: string, facts: string[]) => ({ misconceptionId: id, diagnosticSignals: [id], factRefs: facts.map(factId => ({ sourceId: "K003", factId })) })
+    evidence.results[0].misconceptions = [misconception("complete", ["F001"]), misconception("partial", ["F001", "F002"]), misconception("unbound", [])]
+    const design = buildLearningDesignSpecV2({ spec: spec as any, evidence, assessment_plan: [] })
+    expect(design.learner.misconceptions.map(x => x.misconception_id)).toEqual(["complete"])
+  })
+  test("keeps declared citation closure and never guesses references from matching words", () => {
+    const evidence = structuredClone(evidencePack) as any
+    const ref = (fact_id: string) => ({ source_id: "K003", fact_id })
+    evidence.results[0].examples = [
+      { title: "int 示例", code: "x=1", explanation: "int 表示整数", fact_refs: [ref("F001")] },
+      { title: "int 示例", code: "type(1)", explanation: "int 表示整数", fact_refs: [ref("F001"), ref("F002")] },
+      { title: "int 示例", code: "type(1)", explanation: "int 表示整数", fact_refs: [] },
+    ]
+    evidence.results[0].practice_tasks = ["int 表示整数，用 type() 检查它"]
+    const input = buildConceptTutorModelInput({ generation_spec: spec, evidence_pack: evidence } as never)
+    expect(input.evidence[0]!.examples).toHaveLength(1)
+    expect(input.evidence[0]!.examples[0]!.fact_refs).toEqual([ref("F001")])
+    expect(JSON.stringify(input)).not.toContain("type(")
+  })
   test("does not expose unaddressable RAG examples or practice text as publishable evidence", () => {
     const concept = buildConceptTutorModelInput({ generation_spec: spec, evidence_pack: evidencePack } as never)
     const lab = buildCodeLabModelInput({ generation_spec: spec, evidence_pack: evidencePack, concept_artifact: conceptArtifact } as never)

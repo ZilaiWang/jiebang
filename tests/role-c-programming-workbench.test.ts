@@ -30,6 +30,27 @@ describe("Role C programming workbench", () => {
     expect(blueprint.test_partitions.map((entry) => entry.partition_id)).toContain("error_path")
   })
 
+  test("debugging blueprints allocate one real fault per frozen objective", () => {
+    const blueprint = buildProgrammingProblemBlueprint({
+      objective_ids: ["O1", "O2", "O3"],
+      source_ids: ["K1", "K2", "K3"],
+      fact_refs: [
+        { source_id: "K1", fact_id: "F1" },
+        { source_id: "K2", fact_id: "F2" },
+        { source_id: "K3", fact_id: "F3" },
+      ],
+      goal_profile: "job_interview",
+      learner_level: "basic",
+      progress_band: "developing",
+      title_brief: "综合调试",
+      scenario_brief: "面试练习",
+      learner_owned_behavior: "定位并修复三个相互依赖的故障",
+      execution_contract: functionContract,
+    })
+    expect(blueprint.task_kind).toBe("debugging_repair")
+    expect(blueprint.required_mutation_count).toBe(3)
+  })
+
   test("materializes code completion only from frozen server-side gaps", () => {
     const template = {
       schema_version: "code-gap-template.v1" as const,

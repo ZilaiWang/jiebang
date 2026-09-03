@@ -1,4 +1,4 @@
-import type { RoleCAgents } from "../agents/types"
+import type { RoleCAgents, CodeLabRequest, ConceptTutorRequest } from "../agents/types"
 import { isValidSourceId } from "../../knowledge/identifiers"
 import type { CPipelineInput, CPipelineOptions, CPipelineResult } from "../orchestrator/content-pipeline"
 import { pipelineCheckpointHash, runCPipeline } from "../orchestrator/content-pipeline"
@@ -45,6 +45,8 @@ export async function runReviewedCPipeline(
   const reviewReports: ContentReviewResult[] = []
   let cumulativeInstructions: ContentRevisionInstruction[] = []
   let previousFindingFingerprints: string[] = []
+  let priorCodeLab: CodeLabRequest["prior_review_candidate"]
+  let priorConcept: ConceptTutorRequest["prior_review_candidate"]
   let parentCandidateHashes: ReviewRevisionContext["parent_candidate_hashes"] = {
     concept: "",
     code_lab_public: "",
@@ -67,6 +69,8 @@ export async function runReviewedCPipeline(
         agents,
         cumulativeInstructions,
         revisionRound as 0 | 1 | 2,
+        priorCodeLab,
+        priorConcept,
       ),
       temporaryStore,
       basePipelineOptions(options, revisionContext),
@@ -278,6 +282,20 @@ export async function runReviewedCPipeline(
     cumulativeInstructions = mergeInstructions(cumulativeInstructions, artifactLocal)
     // 记录本轮候选 hash 作为下一轮外审修订的 parent（用于 before/after 证明）。
     parentCandidateHashes = currentHashes
+    if (candidate.public_artifacts.concept_lesson?.payload) priorConcept = {
+      spec_id: frozenInput.generation_spec.spec_id, evidence_hash: evidenceHash,
+      payload: structuredClone(candidate.public_artifacts.concept_lesson.payload),
+    }
+    const codeLabPublic = candidate.public_artifacts.code_lab?.payload
+    const privateArtifacts = await Promise.all(candidate.secure_refs.map((ref) => temporaryStore.get(ref, {
+      principal: "role-c-pipeline", run_id: frozenInput.generation_spec.run_id,
+    })))
+    const codeLabSecure = privateArtifacts.find((artifact) => artifact.artifact_type === "code_lab_secure")
+    if (codeLabPublic && codeLabSecure?.payload && candidate.public_artifacts.concept_lesson) {
+      priorCodeLab = { spec_id: frozenInput.generation_spec.spec_id, evidence_hash: evidenceHash,
+        concept_artifact_id: candidate.public_artifacts.concept_lesson.artifact_id,
+        draft: { public_draft: { payload: structuredClone(codeLabPublic) }, secure_draft: { payload: structuredClone(codeLabSecure.payload) } } }
+    }
   }
 
   throw new Error("ROLE_C_REVIEW_UNREACHABLE")
@@ -413,6 +431,8 @@ function agentsWithReviewInstructions(
   agents: RoleCAgents,
   instructions: ContentRevisionInstruction[],
   revisionRound: 0 | 1 | 2,
+  priorCodeLab?: CodeLabRequest["prior_review_candidate"],
+  priorConcept?: ConceptTutorRequest["prior_review_candidate"],
 ): RoleCAgents {
   const objections = toAlignmentObjections(instructions)
   const forAgent = (agent: "concept-tutor" | "code-lab" | "tiered-evaluator") =>
@@ -421,6 +441,7 @@ function agentsWithReviewInstructions(
     concept_tutor: {
       generate: (request) => agents.concept_tutor.generate({
         ...request,
+        ...(priorConcept ? { prior_review_candidate: structuredClone(priorConcept) } : {}),
         revision_objections: mergeObjections(
           request.revision_objections ?? [],
           forAgent("concept-tutor"),
@@ -431,6 +452,7 @@ function agentsWithReviewInstructions(
     code_lab: {
       generate: (request) => agents.code_lab.generate({
         ...request,
+        ...(priorCodeLab ? { prior_review_candidate: structuredClone(priorCodeLab) } : {}),
         revision_objections: mergeObjections(
           request.revision_objections ?? [],
           forAgent("code-lab"),

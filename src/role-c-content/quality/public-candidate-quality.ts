@@ -9,6 +9,7 @@ import type {
 } from "./contracts"
 import type { RoleCExpressionContext } from "../../role-b-profile/expression-context-contract"
 import { evaluateExpressionAdaptation } from "./expression-adaptation"
+import type { ProgrammingTaskKind } from "../programming/contracts"
 
 const META_LANGUAGE = /(?:source[_ ]?id|fact[_ ]?id|\bRAG\b|evidence(?:_pack)?|知识库编号|内部审核|隐藏测试|正确答案|\bsource\s*:\s*K\d+|\bfact\s*:\s*F\d+)/iu
 const VACUOUS_DISTRACTOR = /(?:不需要任何.{0,8}(?:依据|规则)|随机生成|只适用于界面|与题目无关|以上都[对错]|永远不会|什么都不做)/u
@@ -23,6 +24,8 @@ export function evaluatePublicAuthorCandidate(input: {
   hard_gate_issues?: string[]
   minimum_score?: number
   expression_context?: RoleCExpressionContext
+  /** Frozen by planning; author payload intentionally does not repeat it. */
+  code_lab_task_kind?: ProgrammingTaskKind
 }): PublicCandidateEvaluation {
   const hardIssues = input.hard_gate_issues ?? []
   const text = collectText(input.payload)
@@ -30,7 +33,7 @@ export function evaluatePublicAuthorCandidate(input: {
   const baseDimensions = input.artifact_kind === "concept_lesson"
     ? conceptDimensions(input.payload, input.learning_design, input.concept_section_plans ?? [])
     : input.artifact_kind === "code_lab"
-      ? codeLabDimensions(input.payload, input.learning_design)
+      ? codeLabDimensions(input.payload, input.learning_design, input.code_lab_task_kind)
       : assessmentDimensions(input.payload, input.assessment_plan ?? [], input.learning_design)
   const expressionAudit = evaluateExpressionAdaptation(input.payload, input.expression_context)
   const dimensions = [
@@ -109,7 +112,11 @@ function conceptDimensions(
   ]
 }
 
-function codeLabDimensions(payload: unknown, design: LearningDesignSpecV2): QualityDimensionScore[] {
+function codeLabDimensions(
+  payload: unknown,
+  design: LearningDesignSpecV2,
+  frozenTaskKind?: ProgrammingTaskKind,
+): QualityDimensionScore[] {
   const record = asRecord(payload)
   const programmingTask = asRecord(record.programming_task)
   const gapTemplate = asRecord(programmingTask.gap_template)
@@ -117,6 +124,22 @@ function codeLabDimensions(payload: unknown, design: LearningDesignSpecV2): Qual
   const text = collectText(payload)
   const starter = String(gapTemplate.template_code ?? record.starter_code ?? "")
   const hasIncompleteStarter = /TODO|pass|NotImplementedError|待完成|\{\{gap:/u.test(starter)
+  const debuggingRepair = (frozenTaskKind ?? programmingTask.task_kind) === "debugging_repair"
+  // An implementation exercise should expose a deliberate learner-owned gap.
+  // A debugging exercise has the opposite contract: its starter must be a
+  // complete, runnable *faulty* program.  Treating every full program as an
+  // answer leak made valid debugging candidates fail the quality tournament.
+  // Reproducibility and mutation count remain enforced by the code-lab
+  // validators and secure-stage execution checks.
+  const starterScaffolding = debuggingRepair
+    ? bool(!hasIncompleteStarter
+      && starter.length >= 8
+      && /(?:if|elif|else|for|while|range|\[[^\]]+\]|return|print)/u.test(starter))
+    : average([
+        bool(hasIncompleteStarter),
+        bool(starter.length >= 8),
+        bool(!looksCompleteSolution(starter)),
+      ])
   const tests = objectives.flatMap((objective) => objective.public_test ? [objective.public_test] : [])
   const reflections = objectives.filter((objective) => String(objective.reflection_question ?? "").trim().length > 0)
   const hints = objectives.flatMap((objective) => Array.isArray(objective.hints)
@@ -136,7 +159,9 @@ function codeLabDimensions(payload: unknown, design: LearningDesignSpecV2): Qual
   return [
     dimension("objective_alignment", ratio(objectives.length, design.objectives.length), 1.3, true, "每个目标都有可执行练习职责"),
     dimension("task_authenticity", bool(/(?:实现|完成|输入|输出|返回|统计|处理|判断)/u.test(text)), 1, true, "任务要求学习者产出可观察结果"),
-    dimension("starter_scaffolding", average([bool(hasIncompleteStarter), bool(starter.length >= 8), bool(!looksCompleteSolution(starter))]), 1.1, true, "starter 明确学习者负责区域且未泄露完整实现"),
+    dimension("starter_scaffolding", starterScaffolding, 1.1, true, debuggingRepair
+      ? "调试 starter 是完整可运行的故障程序，故障由学习者定位与修复"
+      : "starter 明确学习者负责区域且未泄露完整实现"),
     dimension("public_test_clarity", ratio(tests.length, Math.max(1, objectives.length)), 1, true, "公开测试描述可帮助学习者自查"),
     dimension("hint_fading", hintProgression, 0.8, false, "提示针对当前任务逐级增加信息且不复用通用模板"),
     dimension("reflection_value", ratio(reflections.length, Math.max(1, objectives.length)), 0.7, false, "反思问题连接实现与目标规则"),

@@ -21,6 +21,7 @@ import {
   type ModelScheduler,
   type ModelTraceSink,
 } from "../../model-runtime"
+import { recoverStructuredJson } from "./structured-output"
 
 /** 在缺少模型配置时尝试加载 .env.role-c.local。显式传入的 env 值优先。 */
 function ensureModelEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
@@ -608,7 +609,9 @@ function parseJson(value: string): unknown {
     try {
       const normalized = normalizePythonLiterals(candidate)
       const normalizedFenced = normalized.trim().match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
-      return JSON.parse(normalizedFenced ? normalizedFenced[1] : normalized.trim())
+      const recovered = recoverStructuredJson(normalizedFenced ? normalizedFenced[1] : normalized.trim())
+      if (recovered.ok) return recovered.value
+      throw new Error("JSON_RECOVERY_FAILED")
     } catch {
       throw new ModelGatewayError("INVALID_JSON", "模型响应不是合法 JSON")
     }

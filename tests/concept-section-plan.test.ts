@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { buildConceptSectionPlan, materializeConceptObjectiveV2, validateConceptSectionStructure } from "../src/role-c-content/planning/concept-section-plan"
 import type { ObservableBehavior } from "../src/role-c-content/contracts/profile-adapter"
+import { inferFactCapabilities, selectEvidenceBundle } from "../src/knowledge/capabilities"
 
 const support = (overrides: Partial<{ behaviors: ObservableBehavior[]; concept: string; factCount: number }> = {}) => ({
   objective_id: "O1",
@@ -12,6 +13,14 @@ const support = (overrides: Partial<{ behaviors: ObservableBehavior[]; concept: 
 })
 
 describe("改进方案5 第六节：讲义 Section Plan", () => {
+  test("说明执行者不等于给出可追踪过程，明确的顺序和状态事实仍受支持", () => {
+    expect(inferFactCapabilities("程序通常由解释器执行。")).not.toContain("procedure")
+    expect(selectEvidenceBundle({ behavior: "trace", facts: [{ content: "程序通常由解释器执行。" }] }).sufficient).toBe(false)
+    expect(selectEvidenceBundle({ behavior: "trace", facts: [{ content: "语句按书写顺序逐行执行。" }] }).sufficient).toBe(true)
+    expect(selectEvidenceBundle({ behavior: "trace", facts: [{ content: "重新赋值时，新值覆盖旧绑定。" }] }).sufficient).toBe(true)
+    expect(inferFactCapabilities("if 根据条件真假决定是否执行代码块。")).toContain("state_transition")
+    expect(inferFactCapabilities("同一个模块被多次导入时只执行一次初始化。")).toContain("state_transition")
+  })
   test("每个 required slot 都生成（overview/fact_explanation/misconception/recap 恒有）", () => {
     const plan = buildConceptSectionPlan({
       objective_id: "O1", observable_behavior: "explain",
@@ -71,6 +80,19 @@ describe("改进方案5 第六节：讲义 Section Plan", () => {
     })
     expect(plan.mode).toBe("procedural")
     expect(plan.slots.some((slot) => slot.kind === "procedure_steps")).toBe(true)
+  })
+
+  test("可运行示例不会把定义证据提升为执行过程证据", () => {
+    const plan = buildConceptSectionPlan({
+      objective_id: "O1", observable_behavior: "explain",
+      fact_ids: ["F1", "F2", "F4"],
+      support: support(),
+      executable_example_fact_ids: ["F1"],
+      artifact_lesson: { require_step_trace: true } as any,
+      pedagogy_contract: { lesson: { require_step_trace: true, worked_example_count: 1 } } as any,
+    })
+    expect(plan.slots.some((slot) => slot.kind === "procedure_steps")).toBe(false)
+    expect(plan.slots.find((slot) => slot.kind === "guided_example")?.requires_executable_code).toBe(true)
   })
 
   test("misconception slot 只允许 fact_negation，不允许 procedure_trace", () => {

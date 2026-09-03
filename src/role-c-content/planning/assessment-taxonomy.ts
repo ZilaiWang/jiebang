@@ -102,11 +102,8 @@ export function validateAssessmentTaxonomyPlan(
       issues.push(`${item.item_id} 的 Tier 3 construct_solution 必须为 create`)
     }
   }
-  if (items.length >= 3) {
-    if (new Set(plan.entries.map((entry) => entry.difficulty_band)).size < 2) issues.push("三题及以上至少包含两个难度层级")
-    // Cognitive diversity follows the frozen operations, not the number of
-    // questions. Five explanation checks must not be relabelled as application.
-  }
+  // Distribution describes the frozen item plan. A uniform foundation set is
+  // valid; item count alone cannot justify inventing a second difficulty band.
   return issues
 }
 

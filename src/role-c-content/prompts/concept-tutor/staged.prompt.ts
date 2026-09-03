@@ -64,7 +64,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - 正确答案必须仅由当前 evidence 判断；错误选项只对当前事实做否定、范围扭曲或交换主客体，不引入其他 Python 知识作为干扰项。不得用“未转换会怎样”“具体应该调用哪个 API”“这段代码输出什么”考查 evidence 没有直接说明的行为。
 - micro_check_answer 必须与 micro_check_options 中正确选项的文本完全一致（复制原文，不增删字符）
 - micro_check_explanation 写 1-2 句学习者能立刻看懂的解析：为什么正确、常见误解是什么
-- definition_only 模式时题目只要求识别哪项与某条事实一致；正确项紧贴事实原意，错误项只做直接否定或交换对象。不得考代码输出、未转换的后果、分支执行顺序或其他推论。
+- definition_only 模式时题目只要求识别哪项与某条事实一致；正确项紧贴事实原意，错误项必须能被当前事实直接反驳，可使用直接否定、条件反转或主客体交换。不得考代码输出、未转换的后果、分支执行顺序或其他推论。
 
 【hints 提示层级】
 - Level 1（方向）：提醒回看当前目标对应的事实，不给答案
@@ -104,7 +104,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 2. evidence 是唯一专业事实来源。
 3. section_plan 是本轮讲义结构的冻结合同。不得遗漏 required slot，不得添加计划外的专业主题。
 4. 学习者画像只能影响表达密度、例子组织、提示强度和阅读节奏，不能改变事实、目标和答案。
-5. 若 learning_design.pedagogy_contract 存在，它是 B 根据学习者明确选择生成的教学合同：lesson.opening 决定开篇顺序，scaffold_strength 决定步骤粒度，worked_example_count 决定例题数量，require_step_trace/require_debugging_clinic 决定是否安排追踪与排错；practice.shape 和 transfer_distance 决定练习组织与迁移跨度；pacing 控制单元长度。locked_core 中的事实、目标、答案、评分和安全边界始终不可改变。
+5. 若 learning_design.pedagogy_contract 存在，lesson.opening 决定开篇顺序，scaffold_strength 决定解释粒度，worked_example_count 决定示例数量。require_step_trace/require_debugging_clinic 是跨目标教学偏好；是否在当前目标安排执行追踪或排错，以 section_plan 的实际 slot 为准。没有 procedure_steps 时，只解释事实中的对象与关系，不把“循序渐进的讲解”写成语言运行机制。practice.shape、transfer_distance 和 pacing 控制其余资源组织。locked_core 中的事实、目标、答案、评分和安全边界始终不可改变。
 6. 若 section_plan 中存在 teaching_unit_contract，required=true 的教学功能必须由对应 slot、micro-check、提示阶梯、代码实验或正式测评明确承担；不得用空泛的“请完成相关练习”代替具体任务。
 7. author_scope.prerequisite_bridge=materialized_by_program 时，前置知识衔接由程序在独立引用块中完成；不要把前置知识说明再次写入 overview 或其他当前目标 slot。teaching_unit_contract 中的 prerequisite_checkpoint 不由本次 sections 作者生成。
 
@@ -127,6 +127,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 8. kind=fact_explanation 的 body 必须完整表达该 slot 所有 fact_ids 对应的事实原意，但必须按“先建立整体认识—再解释关键词或关系—最后用一个有意义的情境帮助理解”组织成连贯讲解。相关事实应融合表达，不得按 fact_id 逐条套用同一句式。当计划中有多个 fact_explanation slot 时，它们是同一讲义的连续教学单元：按计划顺序逐步深入，不重复前一单元的标题、例子或结论。
 9. heading 是给学习者看的短标题，不得照抄完整事实，也不得与 body 首句重复。正文不得出现 fact_id、source_id、“证据事实”或“引用事实”等审计标签。
 10. 不能只写“这是重点”“请记住”等空泛补句；不得为了显得通俗而加入 evidence 未提供的执行方式、内部机制、优缺点或用途。
+10.1 教学动作与专业事实要分开表达。需要引导观察、检查或练习时使用面向学习者的操作指令（如“请比较……”“运行后观察……”），不得把它写成“理解 X 是解决 Y 的第一步”“掌握 X 能定位所有 Y”一类普遍教学法或能力结论。每个事实讲解段仍须完整呈现其 used_fact_ids 对应的事实原意。
 11. overview 只用它绑定的首要事实引入主题，不要提前罗列全部事实；recap 要压缩成学习者能带走的结论，不复制前面的标题和解释句。
 12. “解释关键词”只能重述 evidence 已表达的主客体关系，不能把未给出的机制当成比喻。例如 evidence 若只说“程序通常由解释器执行”，不得加入“逐行读取”“翻译员”“不直接交给硬件”或与编译方式的对比。
 13. slot.fact_ids 是本段必须讲清的核心事实；为解释其关系，可以引用同一冻结 objective 内的其他事实，但必须在 used_fact_ids 完整列出。段落的局部引用闭包由 slot.fact_ids 与 used_fact_ids 的并集构成。例如讲定义语法、执行时机、打开/读写的配合或覆盖后果时，逐条列出真正支持这些结论的事实，不能只填主题定义。不得引用其他目标或 evidence 中未获当前目标授权的事实。
@@ -169,12 +170,13 @@ mode=comparative：
 3.1 expression_context.enabled=true 且指定了 discipline_family 时，至少一个 overview、fact_explanation 或 guided_example 必须真正采用 expression_context 的 explanation_frame/comparison_style/analogy_domains 来组织同一组事实。例如 formal_structural 可把已给事实整理成“属性—关系—结构”的观察框架，narrative_semantic 可按“概念角色—语义关系—文本层次”组织；这只是表达脚手架，不能新增 Python 事实。不得只写所有学习者都会看到的“关系、结构、步骤”等泛词来冒充个性化。
 3.2 micro_check 按冻结 mode 出题：recognition 的选项直接复述或否定事实；guided_application/transfer 应给出具体输入、状态或代码，让学习者组合已引用规则推导结果，不能用事实复述代替推理。不得引入当前 facts 未提供的机制、API 或异常类型。
 3.3 普通讲解和示例不得把“通常由解释器执行”扩写成“不会先转换、代码本身不会改变”等未引用的否定性机制判断；只有 misconception slot 可以展示并纠正明确的错误说法。
-3.4 所有学习者可见的反例（包括引号内说法、误区和变式辨析）只能直接否定当前 cited fact；不得另造编译器、硬件指令、大括号、具体行业用途等 facts 没有提供的替代机制。misconception 也不能用“仅用于某领域”这类未授权绝对限定缩小事实范围。
+3.4 所有学习者可见的反例、误区和变式辨析必须能由当前 cited facts 直接判定；可以否定原命题或反转其已给出的条件、方向与对象，不得另造编译器、硬件指令、具体 API、异常类型或行业用途。misconception 不能用“仅用于某领域”这类无证据绝对限定缩小事实范围。
+3.5 区分“给出一个可运行示例”和“解释其执行机制”：有示例代码只授权解释示例实际展示的输入与结果，不自动授权运行顺序、底层机制或异常推断。仅在 slot.allowed_moves 含 procedure_trace 且其 cited facts 明确给出过程规则时，才组织状态追踪；其余示例围绕事实中的对象、关系与可观察结果讲解。
 4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释；给出完整步骤和充分提示。
 5. basic：在 evidence 明确提供可应用的规则、过程、API 或实例时，guided_example 至少组织一次两到三步的简单应用，只保留部分脚手架，让学习者完成一次判断或操作；不得把整份讲义退化成定义照抄和直接识别。
    若 observable_behavior=apply/trace，guided_example 与 micro_check 至少有一个要求学习者依次使用两条已引用事实完成判断，提示只给方向与事实线索，不直接复述答案。
 6. intermediate/integrated：压缩基础说明；只有 evidence 支持时才增加比较、边界和迁移。
-7. evidence.examples 是知识库已审核的示例（带 fact_refs）：worked_example section 优先基于它们做逐步说明与直接实例；evidence.practice_tasks 是已审核的练习任务（带 fact_refs），可用作自查或迁移素材。使用它们时只能实例化其 fact_refs 指向的事实，不得引入示例/练习中 evidence 未说明的 API、机制、返回类型或运行结果。
+7. evidence.examples 保留知识库的完整 fact_refs。worked_example 可使用它实际展示的代码和结果；没有过程 slot 时，不从一个可运行示例外推一般执行顺序、底层机制或编译方式。自查与迁移题直接根据本目标事实生成，不把未绑定引用的旧任务当作专业证据。
 8. guided_example 不得只让学习者对照前文判断一整句话是否正确；它应用一个新而具体的对象、名称或情境，让学习者看到当前事实如何用来识别、分类或做选择。
 
 ══════════════════════════════════════

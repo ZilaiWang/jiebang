@@ -31,6 +31,7 @@ export function buildProgrammingProblemBlueprint(
   if (input.fact_refs.length === 0) throw new Error("至少需要一个 fact_ref")
   const taskKind = input.preferred_task_kind
     ?? selectProgrammingTaskKind(input.goal_profile, input.learner_level, input.progress_band)
+  const objectiveIds = unique(input.objective_ids)
   const complexity = taskComplexity(input.goal_profile, input.progress_band)
   const pureOutput = input.execution_contract.input_contract.type === "none"
   const partitions = pureOutput
@@ -39,7 +40,7 @@ export function buildProgrammingProblemBlueprint(
   const partitionMinimum = partitions.reduce((total, partition) => total + partition.minimum_cases, 0)
   const body = {
     schema_version: "programming-problem-blueprint.v1" as const,
-    objective_ids: unique(input.objective_ids),
+    objective_ids: objectiveIds,
     source_ids: unique(input.source_ids),
     task_kind: taskKind,
     submission_mode: taskKind === "code_completion" ? "gap_answers" as const : "full_code" as const,
@@ -53,7 +54,15 @@ export function buildProgrammingProblemBlueprint(
     test_partitions: partitions,
     public_case_count: pureOutput ? 1 : complexity.publicCases,
     hidden_case_count: pureOutput ? 1 : Math.max(complexity.hiddenCases, partitionMinimum),
-    required_mutation_count: pureOutput ? 1 : complexity.mutations,
+    // In a fault-localization task every frozen objective must be exercised by
+    // an observable defect. Otherwise a multi-objective contract can demand
+    // three learner-owned debugging steps while the problem blueprint asks the
+    // author for only two mutations, making a valid task impossible.
+    required_mutation_count: pureOutput
+      ? 1
+      : taskKind === "debugging_repair"
+        ? Math.max(complexity.mutations, objectiveIds.length)
+        : complexity.mutations,
     require_secondary_oracle: pureOutput ? false : complexity.secondaryOracle,
     fact_refs: deduplicateFacts(input.fact_refs),
   }

@@ -205,7 +205,8 @@ export function pipelineCheckpointHash(input: CPipelineInput): string {
 /**
  * 每个阶段单独计算 fingerprint（改进方案4 第 4.3 节）。
  * base 不含外审修订意见（保持"普通故障恢复可复用成功阶段"的性质）；
- * 各 stage 指纹额外并入"该阶段自身"的修订指令 hash 与（下游阶段的）concept 产物 id。
+ * 各 stage 指纹额外并入"该阶段自身"的修订指令 hash 与（下游阶段的）concept
+ * 冻结教学合同 hash；只改可见文字不会让已验证的兄弟资源重复生成。
  * 因此：assessment 被质疑只使 assessment 指纹变化，concept/code_lab 指纹不变，仍可复用。
  */
 export function stageFingerprint(input: {
@@ -214,6 +215,7 @@ export function stageFingerprint(input: {
   stage: "concept" | "code_lab" | "assessment"
   revisionContext?: ReviewRevisionContext
   conceptArtifactId?: string
+  conceptArtifactHash?: string
 }): string {
   const base = contentHash({ inputHash: input.inputHash, blueprint: input.blueprintId })
   if (input.stage === "concept") {
@@ -227,8 +229,35 @@ export function stageFingerprint(input: {
     : contentHash(input.revisionContext?.instructions_by_agent.tiered_evaluator ?? [])
   return contentHash({
     base,
-    concept: input.conceptArtifactId ?? "",
+    concept: input.conceptArtifactHash ?? input.conceptArtifactId ?? "",
     instructions,
+  })
+}
+
+/**
+ * Downstream resources depend on the concept lesson's frozen teaching
+ * contract, not on every sentence of learner-facing prose. A localized review
+ * rewrite is allowed to change prose only while claims, citations, objective
+ * bindings and misconceptions remain stable; in that case already verified
+ * lab/assessment artifacts can be reused and are still reviewed again as part
+ * of the final candidate.
+ */
+export function conceptDownstreamDependencyHash(concept: ConceptLessonArtifact): string {
+  const payload = concept.payload
+  if (!payload) return contentHash({ artifact_id: concept.artifact_id, status: concept.status })
+  const blocks = [
+    ...payload.prerequisite_bridge,
+    ...payload.explanation_blocks,
+    ...payload.worked_examples,
+    ...payload.summary,
+  ]
+  return contentHash({
+    objective_ids: payload.objective_ids,
+    objective_coverage: payload.objective_coverage,
+    claims: blocks.flatMap((block) => "claims" in block
+      ? block.claims.map((claim) => ({ text: claim.text, citations: claim.citations }))
+      : []),
+    misconceptions: payload.misconceptions,
   })
 }
 
@@ -282,6 +311,25 @@ function checkpointRevisionFields(
         }
       : {}),
   }
+}
+
+function rebindPairToConcept<T extends {
+  public_artifact: { input_refs: string[] }
+  secure_artifact: { input_refs: string[] }
+}>(
+  pair: T,
+  input: CPipelineInput,
+  conceptArtifactId: string,
+): T {
+  const rebound = structuredClone(pair)
+  const refs = [
+    input.generation_spec.spec_id,
+    input.evidence_pack.retrieval_id,
+    conceptArtifactId,
+  ]
+  rebound.public_artifact.input_refs = [...refs]
+  rebound.secure_artifact.input_refs = [...refs]
+  return rebound
 }
 
 function recoveryForAgent(
@@ -458,7 +506,7 @@ function buildFeasibilityInput(input: CPipelineInput, capacity: AssessmentCapaci
  * （required_fact_ids）；used_structures 取历史里同 observation_key 的
  * 去重结构数（operation + reasoning + representation + context + answer form）。
  */
-function planAssessmentCapacityForPipeline(input: CPipelineInput): AssessmentCapacityPlan {
+export function planAssessmentCapacityForPipeline(input: CPipelineInput): AssessmentCapacityPlan {
   const spec = input.generation_spec
   const history = input.prior_assessment_items ?? []
   const usedStructures = new Map<string, Set<string>>()
@@ -499,7 +547,7 @@ function planAssessmentCapacityForPipeline(input: CPipelineInput): AssessmentCap
         importance: target.importance,
         available_facts: target.required_fact_ids.length,
         evidence_item_capacity: sourceFacts.reduce((capacity, fact) =>
-          capacity + assessmentSlotsForFact(fact.capabilities ?? []), 0),
+          capacity + assessmentSlotsForFact(fact.capabilities ?? [], target.observable_behavior), 0),
         used_structures: (usedStructures.get(observationKey)
           ?? usedStructures.get(target.objective_id))?.size ?? 0,
       }
@@ -508,11 +556,10 @@ function planAssessmentCapacityForPipeline(input: CPipelineInput): AssessmentCap
 }
 
 /**
- * 一条纯定义事实只承担一次直接识别，避免为了凑题量把“X 是 Y”扩写成
- * evidence 未列出的用途、机制或领域。规则/过程/边界事实允许再承担一次
- * 应用、追踪或错误诊断视角；这是测量容量，不改变任何事实内容。
+ * 定义事实可承载识别；解释目标还可测量同一事实的关系解释或直接反命题辨析。
+ * 这不授权扩写运行机制。规则/过程/边界事实可增加应用、追踪或诊断视角。
  */
-function assessmentSlotsForFact(capabilities: string[]): number {
+function assessmentSlotsForFact(capabilities: string[], behavior: string): number {
   const operational = new Set([
     "rule",
     "procedure",
@@ -522,7 +569,7 @@ function assessmentSlotsForFact(capabilities: string[]): number {
     "io_contract",
     "example",
   ])
-  return capabilities.some((capability) => operational.has(capability)) ? 2 : 1
+  return behavior === "explain" || capabilities.some((capability) => operational.has(capability)) ? 2 : 1
 }
 
 async function runCPipelineCore(
@@ -774,8 +821,9 @@ async function runCPipelineCore(
     ...(checkpoint?.concept ? { retry_kind: "resume" as const } : {}),
   })
   let concept: ConceptLessonArtifact
+  let resumeConcept = false
   try {
-    const resumeConcept = !recoveryInvalidatesStage(input.generation_recovery, "concept")
+    resumeConcept = !recoveryInvalidatesStage(input.generation_recovery, "concept")
       && canResumeStage(checkpoint, "concept", conceptFingerprint, revisionContext)
     concept = resumeConcept
       ? checkpoint!.concept!
@@ -787,7 +835,17 @@ async function runCPipelineCore(
           round_semantic_plan: roundSemanticPlan,
           generation_recovery: recoveryForAgent(input, "concept"),
         })
-    if (!resumeConcept && concept.status === "ready") {
+    const preservesDownstreamContract = Boolean(
+      !resumeConcept
+      && checkpoint?.stage === "branches_ready"
+      && checkpoint.concept
+      && checkpoint.code_lab
+      && checkpoint.assessment
+      && concept.status === "ready"
+      && conceptDownstreamDependencyHash(checkpoint.concept)
+        === conceptDownstreamDependencyHash(concept),
+    )
+    if (!resumeConcept && concept.status === "ready" && !preservesDownstreamContract) {
       try {
         await options.checkpoint_store?.save({
           input_hash: inputHash,
@@ -849,12 +907,14 @@ async function runCPipelineCore(
 
   let labPair: CodeLabArtifactPair
   let assessmentPair: AssessmentArtifactPair
+  const conceptDependencyHash = conceptDownstreamDependencyHash(concept)
   const codeLabFingerprint = stageFingerprint({
     inputHash,
     blueprintId: resourceBlueprint.blueprint_id,
     stage: "code_lab",
     revisionContext,
     conceptArtifactId: concept.artifact_id,
+    conceptArtifactHash: conceptDependencyHash,
   })
   const assessmentFingerprint = stageFingerprint({
     inputHash,
@@ -862,6 +922,7 @@ async function runCPipelineCore(
     stage: "assessment",
     revisionContext,
     conceptArtifactId: concept.artifact_id,
+    conceptArtifactHash: conceptDependencyHash,
   })
   const resumedBranches = checkpoint?.stage === "branches_ready"
     && checkpoint.code_lab !== undefined
@@ -879,8 +940,8 @@ async function runCPipelineCore(
     && canResumeStage(checkpoint, "assessment", assessmentFingerprint, revisionContext)
     && !recoveryInvalidatesStage(input.generation_recovery, "assessment")
   if (resumedBranches) {
-    labPair = checkpoint!.code_lab!
-    assessmentPair = checkpoint!.assessment!
+    labPair = rebindPairToConcept(checkpoint!.code_lab!, input, concept.artifact_id)
+    assessmentPair = rebindPairToConcept(checkpoint!.assessment!, input, concept.artifact_id)
     for (const agent of ["code-lab", "tiered-evaluator"] as const) {
       pushTrace({
         event_type: "c.agent.started",
@@ -909,7 +970,7 @@ async function runCPipelineCore(
     }
     const [labOutcome, assessmentOutcome] = await Promise.allSettled([
       resumedCodeLab
-        ? Promise.resolve(checkpoint!.code_lab!)
+        ? Promise.resolve(rebindPairToConcept(checkpoint!.code_lab!, input, concept.artifact_id))
         : agents.code_lab.generate({
             generation_spec: input.generation_spec,
             evidence_pack: input.evidence_pack,
@@ -920,7 +981,7 @@ async function runCPipelineCore(
             generation_recovery: recoveryForAgent(input, "code_lab"),
           }),
       resumedAssessment
-        ? Promise.resolve(checkpoint!.assessment!)
+        ? Promise.resolve(rebindPairToConcept(checkpoint!.assessment!, input, concept.artifact_id))
         : agents.tiered_evaluator.generate({
             generation_spec: input.generation_spec,
             evidence_pack: input.evidence_pack,
@@ -1163,6 +1224,18 @@ async function runCPipelineCore(
       summary: "tiered-evaluator public/secure 产物已从检查点恢复",
       validator_results: [{ validator: "assessment-structure-answer", ok: true, issue_count: 0 }],
     })
+    try {
+      await options.checkpoint_store?.save({
+        input_hash: inputHash,
+        stage: "branches_ready",
+        concept,
+        code_lab: labPair,
+        assessment: assessmentPair,
+        metadata: checkpointMetadata,
+        ...(roundSemanticPlan ? { round_semantic_plan: roundSemanticPlan } : {}),
+        ...checkpointRevisionFields({ concept: conceptFingerprint, code_lab: codeLabFingerprint, assessment: assessmentFingerprint }, revisionContext),
+      })
+    } catch { /* checkpoint is non-authoritative */ }
   }
 
   state = transitionCState(state, "VALIDATING")

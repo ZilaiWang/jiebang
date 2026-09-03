@@ -625,6 +625,39 @@ describe("quality kernel v2", () => {
     expect(evaluation.critical_findings).not.toContain("CORE_QUALITY_DIMENSION_LOW")
   })
 
+  test("debugging starter is scored as a runnable faulty program rather than an incomplete implementation", () => {
+    const design = buildLearningDesignSpecV2({
+      spec: {
+        spec_id: "S-DEBUG-STARTER",
+        profile_ref: { profile_id: "P", profile_version: "1" },
+        learner_adaptation: { level: "basic", known_concepts: [], weak_concepts: [], scaffold_level: 2 },
+        targets: [{ objective_id: "O", source_id: "K", required_fact_ids: ["F"], observable_behavior: "debug" }],
+      } as any,
+      evidence: { results: [{ source_id: "K", title: "循环边界" }] } as any,
+      assessment_plan: [],
+    })
+    const evaluation = evaluatePublicAuthorCandidate({
+      candidate_id: "DEBUG-STARTER",
+      artifact_kind: "code_lab",
+      payload: {
+        starter_code: "for index in range(3):\n    print(index + 1)",
+        programming_task: { task_kind: "debugging_repair" },
+        objectives: [{
+          instruction_text: "运行程序并定位编号边界错误",
+          public_test: { input: "", expected_behavior: "输出 0、1、2" },
+          hints: ["观察首项", "追踪 index", "核对边界"],
+          reflection_question: "哪一个公开输出暴露了边界问题？",
+        }],
+      },
+      learning_design: design,
+      code_lab_task_kind: "debugging_repair",
+      minimum_score: 0.5,
+    })
+    expect(evaluation.dimensions.find((entry) => entry.dimension === "starter_scaffolding"))
+      .toMatchObject({ score: 1, core: true })
+    expect(evaluation.critical_findings).not.toContain("CORE_QUALITY_DIMENSION_LOW")
+  })
+
   test("Tier 3 的 recognize 题未冻结迁移构念时不被质量核反向逼成高阶题", () => {
     const design = buildLearningDesignSpecV2({
       spec: {

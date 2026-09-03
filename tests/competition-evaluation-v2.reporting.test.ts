@@ -132,6 +132,7 @@ describe("v2 evidence denominators", () => {
             reflection_questions: [],
             used_evidence: citations,
             programming_task: {
+              task_kind: "debugging_repair",
               statement: "累加奇数位置元素",
               input_description: "一组整数",
               output_description: "总和",
@@ -196,6 +197,8 @@ describe("v2 evidence denominators", () => {
     expect(symptom.local_context).toContain('"kind":"troubleshooting"')
     expect(symptom.local_context).toContain("没有检查列表边界")
     expect(claims.find(c => c.surface === "public_test")!.local_context).toContain('"args":[[1,2],3]')
+    expect(claims.find(c => c.surface === "public_test")!.local_context).toContain("task_kind=debugging_repair")
+    expect(claims.find(c => c.surface === "public_test")!.local_context).toContain("累加奇数位置元素")
     expect(claims.some((c) => c.text.includes("累加奇数位置元素"))).toBe(true)
     expect(
       claims.some(

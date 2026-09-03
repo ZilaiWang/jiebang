@@ -19,7 +19,12 @@ import {
 import { classifyExpectedValue, classifyOutputContract } from "../contracts/output-contract"
 import { failClosedStarterCode, validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
 import { validateInputCandidates } from "../programming/test-plan"
-import { executePublicLabInputs } from "../security/public-lab-inputs"
+import { describePythonEntryPoint } from "../programming/python-function-interface"
+import {
+  executePublicLabInputs,
+  materializeTrustedPublicExpectations,
+  publicLabInputCases,
+} from "../security/public-lab-inputs"
 
 export interface CodeLabDraftValidationReport {
   ok: boolean
@@ -221,6 +226,12 @@ export function validateCodeLabDraftStructure(
   const hintLadders = uniqueMap(publicPayload.hint_ladders, "objective_id", "$.public_draft.payload.hint_ladders", issues)
   const programmingProblem = request.resource_blueprint?.code_lab.programming_problem
   if (programmingProblem) {
+    const functionInterface = publicPayload.execution_contract.execution_mode === "function"
+      ? describePythonEntryPoint(
+          securePayload.reference_solution,
+          publicPayload.execution_contract.entry_point,
+        )
+      : undefined
     const quality = validateInputCandidates(
       programmingProblem,
       publicPayload.programming_task?.public_examples ?? publicPayload.public_tests,
@@ -230,6 +241,7 @@ export function validateCodeLabDraftStructure(
         input: test.input,
         note: test.note ?? "",
       })),
+      functionInterface,
     )
     quality.issues.forEach((message) => issues.push(issue(
       message.includes("重叠") ? "public_hidden_input_overlap"
@@ -605,13 +617,38 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
       }
     }
 
-    const publicPayload = draft.public_draft.payload
-    const securePayload = draft.secure_draft.payload
+    let publicPayload = draft.public_draft.payload
+    let securePayload = draft.secure_draft.payload
     if (publicPayload.programming_task) {
-      const publicProbe = await executePublicLabInputs(this.runner, publicPayload, securePayload.reference_solution)
+      const publicProbe = await executePublicLabInputs(
+        this.runner,
+        publicPayload,
+        securePayload.reference_solution,
+        request.generation_spec.policies.max_tool_retry,
+      )
       if (publicProbe.status !== "passed") return {
         ...result(false, [`PUBLIC_REFERENCE_INPUT_FAILED:${publicProbe.failure_codes.join("、") || publicProbe.status}`], this.runner.runner_image_digest, 0, 0, report.objective_coverage),
         ...(materializedDraft ? { materialized_draft: materializedDraft } : {}),
+      }
+      if (publicProbe.derived_outputs?.length !== publicLabInputCases(publicPayload).length) return {
+        ...result(false, ["PUBLIC_REFERENCE_OUTPUT_DERIVATION_FAILED"], this.runner.runner_image_digest, 0, 0, report.objective_coverage),
+        ...(materializedDraft ? { materialized_draft: materializedDraft } : {}),
+      }
+      const trustedPublic = materializeTrustedPublicExpectations(
+        publicPayload,
+        publicProbe.derived_outputs,
+      )
+      if (JSON.stringify(trustedPublic) !== JSON.stringify(publicPayload)) {
+        materializedDraft = structuredClone(draft)
+        materializedDraft.public_draft.payload = trustedPublic
+        draft = materializedDraft
+        report = validateCodeLabDraftStructure(request, draft)
+        if (!report.ok) return {
+          ...result(false, report.issues.map((entry) => `${entry.path}: ${entry.message}`), this.runner.runner_image_digest, 0, 0, report.objective_coverage),
+          materialized_draft: materializedDraft,
+        }
+        publicPayload = draft.public_draft.payload
+        securePayload = draft.secure_draft.payload
       }
     }
     const suite: RunnerTestSuite = {
