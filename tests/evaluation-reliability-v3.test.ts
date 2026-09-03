@@ -94,6 +94,13 @@ describe("Evaluation Reliability V3", () => {
     expect(classifyEvaluationFailure({ message: "schema invalid: expected length 512" }).category).toBe("structured_output")
   })
 
+  test("separates frozen evidence gaps from generated grounding defects", () => {
+    expect(classifyEvaluationFailure({ message: "COMPETITION_V2_MISSING_EVIDENCE:K999" }).category)
+      .toBe("input_contract")
+    expect(classifyEvaluationFailure({ message: "MISSING_EVIDENCE_ANCHOR:/items/0" }).category)
+      .toBe("grounding")
+  })
+
   test("recovers fenced JSON", () => {
     const value = recoverStructuredJson<{ok:boolean}>("before```json\n{\"ok\":true,}\n```after")
     expect(value.ok).toBe(true)

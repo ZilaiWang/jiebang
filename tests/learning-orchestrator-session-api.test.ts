@@ -74,6 +74,38 @@ async function waitForSessionGeneration(
   throw new Error(`Session ${sessionId} did not finish background generation within ${timeoutMs}ms`)
 }
 
+test("session creation is an authenticated asynchronous contract without requiring a model call", async () => {
+  const { handle } = await fixture()
+  const response = await handle(ownerRequest("http://localhost/orchestrator/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session_id: "SESSION-ASYNC-CONTRACT",
+      mode: "deterministic",
+      learner_request: {
+        learner_id: "learner-interactive-001",
+        goal: "学习 Python 循环",
+        // An intentionally incomplete structured intake pauses before model
+        // diagnosis, so this test proves the HTTP lifecycle without consuming
+        // provider credits or depending on network availability.
+        profile_intake: {
+          learner_id: "learner-interactive-001",
+          goal: "学习 Python 循环",
+        },
+      },
+    }),
+  }))
+  expect(response.status).toBe(202)
+  expect(await json(response)).toMatchObject({
+    session_id: "SESSION-ASYNC-CONTRACT",
+    status: "waiting_for_user",
+    waiting_for: { type: "profile_answers" },
+  })
+  const stored = await handle(ownerRequest("http://localhost/orchestrator/sessions/SESSION-ASYNC-CONTRACT"))
+  expect(stored.status).toBe(200)
+  expect(await json(stored)).toMatchObject({ session_id: "SESSION-ASYNC-CONTRACT" })
+})
+
 describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP API", () => {
   test("binds every session route to the authenticated learner", async () => {
     const { handle } = await fixture()
@@ -130,10 +162,9 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
       left(ownerRequest("http://localhost/orchestrator/sessions", createInit)),
       right(ownerRequest("http://localhost/orchestrator/sessions", createInit)),
     ])
-    expect([createdLeft.status, createdRight.status].sort()).toEqual([201, 409])
+    expect([createdLeft.status, createdRight.status].sort()).toEqual([202, 409])
 
-    const get = await left(ownerRequest("http://localhost/orchestrator/sessions/SESSION-CROSS-HANDLER"))
-    const state = await json(get)
+    const state = await waitForSessionGeneration(left, "SESSION-CROSS-HANDLER")
     const answers = Object.fromEntries(state.waiting_for.items.map((item: any) => [item.item_id, item.options?.[0] ?? "不知道"]))
     const command = {
       command_id: "CMD-CROSS-HANDLER",
@@ -165,7 +196,7 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
       }),
     })))
     const responses = await Promise.all(requests)
-    expect(responses.every((response) => response.status === 201)).toBe(true)
+    expect(responses.every((response) => response.status === 202)).toBe(true)
     const bodies = await Promise.all(responses.map((response) => json(response)))
     expect(new Set(bodies.map((body) => body.session_id)).size).toBe(30)
     expect(new Set(bodies.map((body) => body.run_id)).size).toBe(30)
@@ -231,7 +262,7 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
       handle(ownerRequest("http://localhost/orchestrator/sessions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })),
       handle(ownerRequest("http://localhost/orchestrator/sessions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })),
     ])
-    expect([left.status, right.status].sort()).toEqual([201, 409])
+    expect([left.status, right.status].sort()).toEqual([202, 409])
   })
 
   test("does not force a focused target to five unrelated diagnosis questions", async () => {
@@ -249,7 +280,10 @@ describe.skipIf(!runIntegration)("learning orchestrator persistent session HTTP 
         },
       }),
     }))
-    const body = await json(response)
+    const accepted = await json(response)
+    const body = accepted.status === "running"
+      ? await waitForSessionGeneration(handle, accepted.session_id)
+      : accepted
 
     expect(body.waiting_for.items.map((item: any) => item.source_id)).toEqual(["K007", "K002", "K003"])
   })

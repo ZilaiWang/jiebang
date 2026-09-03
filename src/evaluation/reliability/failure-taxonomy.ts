@@ -61,7 +61,12 @@ const RULES: Rule[] = [
     retryable: false,
     patterns: [
       /input[_ -]?drift|manifest[_ -]?drift|source[_ -]?drift|expectation[_ -]?mismatch/iu,
-      /missing[_ -]?evidence|unknown[_ -]?source|unsupported[_ -]?behavior/iu,
+      // Only frozen-input evidence failures belong here. Generated-content
+      // findings such as MISSING_EVIDENCE_ANCHOR are grounding defects and
+      // must remain eligible quality evidence rather than invalidating the
+      // whole evaluation case identity.
+      /competition[_ -]?v2[_ -]?missing[_ -]?evidence|target[_ -]?without[_ -]?(?:core[_ -]?)?facts/iu,
+      /unknown[_ -]?source|unsupported[_ -]?behavior/iu,
       /preflight_failed/iu,
     ],
   },

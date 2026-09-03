@@ -57,7 +57,7 @@ describe.skipIf(!runIntegration)("learning orchestrator HTTP API", () => {
     const root = await makeRoot()
     const response = await handleLearningOrchestratorApiRequest(new Request("http://localhost/orchestrator/runs", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: "Bearer api-learner-001" },
       body: JSON.stringify({
         root_dir: root,
         run_id: "RUN-HTTP-TEST-001",
@@ -90,7 +90,7 @@ describe.skipIf(!runIntegration)("learning orchestrator HTTP API", () => {
   test("rejects invalid requests without starting orchestration", async () => {
     const response = await handleLearningOrchestratorApiRequest(new Request("http://localhost/orchestrator/runs", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", authorization: "Bearer api-learner-001" },
       body: JSON.stringify({ mode: "deterministic" }),
     }))
 
