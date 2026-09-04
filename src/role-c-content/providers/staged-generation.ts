@@ -50,6 +50,7 @@ import {
   describePythonEntryPoint,
   validateFunctionInvocationAgainstInterface,
 } from "../programming/python-function-interface"
+import { validateCodeLabReflectionQuestions } from "../programming/reflection-grounding"
 
 export interface ConceptSegmentRequest extends ConceptTutorRequest {
   segment_index: number
@@ -903,6 +904,9 @@ export function validateCodeLabPublicAuthorAgainstPlan(
   if (payload.objectives.length !== plan.length) {
     issues.push(`objectives 数量应为 ${plan.length}，实际 ${payload.objectives.length}`)
   }
+  issues.push(...validateCodeLabReflectionQuestions(
+    payload.objectives.map((objective) => objective.reflection_question),
+  ))
   payload.objectives.forEach((entry, index) => {
     if (entry.hints.length !== 3) {
       issues.push(`objectives[${index}].hints 必须恰好包含三级提示`)

@@ -20,6 +20,7 @@ import { classifyExpectedValue, classifyOutputContract } from "../contracts/outp
 import { failClosedStarterCode, validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
 import { validateInputCandidates } from "../programming/test-plan"
 import { describePythonEntryPoint } from "../programming/python-function-interface"
+import { validateCodeLabReflectionQuestions } from "../programming/reflection-grounding"
 import {
   executePublicLabInputs,
   materializeTrustedPublicExpectations,
@@ -96,6 +97,8 @@ export function validateCodeLabPublicStage(
   for (const message of validateExecutionContractResultSemantics(publicPayload.execution_contract)) {
     issues.push(issue("invalid_execution_result_contract", "$.execution_contract.output_contract", message))
   }
+  validateCodeLabReflectionQuestions(publicPayload.reflection_questions).forEach((message) =>
+    issues.push(issue("unsupported_reflection_question", "$.reflection_questions", message)))
   const targetIds = new Set(request.generation_spec.targets.map((target) => target.objective_id))
   const coreTargets = request.generation_spec.targets.filter((target) => target.importance === "core")
   const blocks = uniqueMap(publicPayload.instructions, "block_id", "$.instructions", issues)
