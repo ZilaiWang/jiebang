@@ -9,6 +9,7 @@ playwright-report/
 opencode.json
 .env.role-c.local
 .env.evaluation-v2.local
+.env.evaluation-v2.*.local
 # Local candidate/review working files stay private, while the approved frozen
 # contract is versioned so a clean clone can reproduce the formal 60-case run.
 evaluation/v2/*
