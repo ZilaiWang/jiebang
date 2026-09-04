@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { validatePythonProgramEntry } from "../src/role-c-content/security/python-program-entry"
+import { ensureZeroArgumentFunctionIsInvoked } from "../src/role-c-content/providers/model-backed-provider"
 
 describe("stdin/stdout Python program entry", () => {
   test("rejects a main guard plus a second top-level call", () => {
@@ -40,5 +41,26 @@ def main():
 
 main()
 `)).toEqual([])
+  })
+
+  test("normalization preserves a conventional main guard without appending a duplicate call", () => {
+    const source = `
+def main():
+    print(input())
+
+if __name__ == "__main__":
+    main()
+`
+    expect(ensureZeroArgumentFunctionIsInvoked(source)).toBe(source)
+    expect(validatePythonProgramEntry(ensureZeroArgumentFunctionIsInvoked(source))).toEqual([])
+  })
+
+  test("normalization appends one entry only when the program has none", () => {
+    const normalized = ensureZeroArgumentFunctionIsInvoked(`
+def solve():
+    print(input())
+`)
+    expect(normalized.match(/^solve\(\)$/gmu)).toHaveLength(1)
+    expect(validatePythonProgramEntry(normalized)).toEqual([])
   })
 })

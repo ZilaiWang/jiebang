@@ -26,6 +26,7 @@ import {
   materializeTrustedPublicExpectations,
   publicLabInputCases,
 } from "../security/public-lab-inputs"
+import { validatePythonProgramEntry } from "../security/python-program-entry"
 
 export interface CodeLabDraftValidationReport {
   ok: boolean
@@ -858,8 +859,25 @@ function staticIssues(publicPayload: CodeLabPublicPayload, securePayload: CodeLa
     ["$.public_draft.payload.starter_code", publicPayload.starter_code],
     ["$.secure_draft.payload.reference_solution", securePayload.reference_solution],
   ] as const
-  return sources.flatMap(([path, source]) => analyzePythonSource(source, publicPayload.execution_contract)
+  const issues = sources.flatMap(([path, source]) => analyzePythonSource(source, publicPayload.execution_contract)
     .map((entry) => issue(`static_${entry.code}`, path, entry.message)))
+  if (publicPayload.execution_contract.execution_mode !== "stdin_stdout") return issues
+  const executableSources: Array<[string, string]> = [
+    ["$.secure_draft.payload.reference_solution", securePayload.reference_solution],
+    ...(securePayload.secondary_reference_solution
+      ? [["$.secure_draft.payload.secondary_reference_solution", securePayload.secondary_reference_solution] as [string, string]]
+      : []),
+    ...securePayload.mutation_variants.map((entry, index) => [
+      `$.secure_draft.payload.mutation_variants[${index}].code`,
+      entry.code,
+    ] as [string, string]),
+  ]
+  for (const [path, source] of executableSources) {
+    for (const entry of validatePythonProgramEntry(source)) {
+      issues.push(issue(entry.code, path, entry.message))
+    }
+  }
+  return issues
 }
 
 function validateClaimGrounding(

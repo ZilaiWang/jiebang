@@ -3834,25 +3834,48 @@ function stdoutSafeStarter(
   return `${signature.trim()}\n    raise NotImplementedError("TODO")\n\n${entryPoint}()\n`
 }
 
-function ensureZeroArgumentFunctionIsInvoked(source: string): string {
+export function ensureZeroArgumentFunctionIsInvoked(source: string): string {
   const definition = source.match(/^def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*:/mu)
   if (!definition) return source
   const functionName = definition[1]!
-  const topLevelInvocation = new RegExp(
-    `^${escapeRegExp(functionName)}\\s*\\(`,
-    "mu",
-  )
-  const topLevelPrintedInvocation = new RegExp(
-    `^print\\s*\\(\\s*${escapeRegExp(functionName)}\\s*\\(`,
-    "mu",
-  )
-  if (topLevelInvocation.test(source) || topLevelPrintedInvocation.test(source)) {
+  if (hasPythonModuleEntryInvocation(source, functionName)) {
     return source
   }
   const invocation = /(?:^|\n)[ \t]+print\s*\(/u.test(source)
     ? `${functionName}()`
     : `print(${functionName}())`
   return `${source.trimEnd()}\n\n${invocation}\n`
+}
+
+/**
+ * A stdin/stdout reference may use either a direct module-level invocation or
+ * the conventional __main__ guard.  Treat both as an existing entry point so
+ * normalization never turns one execution into two.
+ */
+function hasPythonModuleEntryInvocation(source: string, functionName: string): boolean {
+  const call = new RegExp(
+    `^(?:print\\s*\\(\\s*)?${escapeRegExp(functionName)}\\s*\\(\\s*\\)`,
+    "u",
+  )
+  const lines = source.replace(/\r\n?/gu, "\n").split("\n")
+  let mainGuardIndent: number | undefined
+  for (const line of lines) {
+    const indent = line.match(/^\s*/u)?.[0].replace(/\t/gu, "    ").length ?? 0
+    const guard = line.match(/^\s*if\s+__name__\s*==\s*["']__main__["']\s*:\s*(.*)$/u)
+    if (guard) {
+      if (call.test(guard[1]?.trim() ?? "")) return true
+      mainGuardIndent = indent
+      continue
+    }
+    if (!line.trim() || /^\s*#/u.test(line)) continue
+    if (mainGuardIndent !== undefined && indent <= mainGuardIndent) {
+      mainGuardIndent = undefined
+    }
+    const trimmed = line.trim()
+    if ((indent === 0 || (mainGuardIndent !== undefined && indent > mainGuardIndent))
+      && call.test(trimmed)) return true
+  }
+  return false
 }
 
 function normalizeFunctionReturnSemantics(source: string): string {
