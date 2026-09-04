@@ -71,6 +71,12 @@ export interface ReviewBlockLocator {
 export interface ReviewContentBlock {
   review_block_id: string
   text: string
+  /**
+   * Public material from the same artifact that the reviewed question refers
+   * to.  It proves task-local literals and mappings, but is not an additional
+   * source of programming-language or real-world facts.
+   */
+  task_context?: string
   citations: CitationRef[]
   /**
    * Claims are checked for proposition-level grounding. Rendered teaching text

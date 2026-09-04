@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ModelGateway, StructuredModelRequest } from "../src/role-c-content/contracts/model-gateway"
 import type { AssessmentPublicArtifact } from "../src/role-c-content/contracts/artifacts"
-import { extractAssessmentBlocks, extractConceptBlocks } from "../src/role-c-content/review/extract-review-blocks"
+import { extractAssessmentBlocks, extractCodeLabBlocks, extractConceptBlocks } from "../src/role-c-content/review/extract-review-blocks"
 import {
   ModelContentSemanticAuditPort,
   ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT,
@@ -104,6 +104,38 @@ describe("Role C model semantic fact audit", () => {
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("确定唯一正确选项")
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("不得以“证据未列出具体序列”为由判为 unsupported")
     expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("cited_examples 可以支持该示例实际展示的代码形状")
+    expect(ROLE_C_SEMANTIC_AUDIT_SYSTEM_PROMPT).toContain("task_context 是已发布的题内材料")
+  })
+
+  test("反思题携带同一公开实验的 starter 和公开样例作为题内上下文", () => {
+    const [reflection] = extractCodeLabBlocks({
+      status: "ready",
+      artifact_id: "LAB-ART-1",
+      payload: {
+        lab_id: "LAB-1",
+        title: "输出三条笔记",
+        objective_ids: ["OBJ-1"],
+        instructions: [],
+        execution_contract: {
+          language: "python", execution_mode: "stdin_stdout", allowed_imports: [],
+          input_contract: { type: "none", constraints: [] },
+          output_contract: { type: "stdout text", constraints: ["输出三行"] },
+          resource_limits: { timeout_ms: 1000, memory_mb: 64, max_output_bytes: 4096 },
+        },
+        starter_code: "print(note_1)\nprint(note_2)\nprint(note_3)\n",
+        public_tests: [{
+          test_id: "P1", objective_id: "OBJ-1", description: "运行程序",
+          input: "", expected_behavior: "依次输出三条笔记", citations: [],
+        }],
+        hint_ladders: [],
+        reflection_questions: ["三条要点分别对应哪一行 print？"],
+        objective_coverage: [],
+        used_evidence: [{ source_id: "K001", fact_id: "F001", relation: "supports" }],
+      },
+    } as any).filter((block) => block.locator.field === "reflection")
+
+    expect(reflection?.task_context).toContain("print(note_3)")
+    expect(reflection?.task_context).toContain("依次输出三条笔记")
   })
 
   test("audits one complete artifact in a single structured model call", async () => {

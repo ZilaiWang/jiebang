@@ -143,16 +143,34 @@ export function extractCodeLabBlocks(artifact: CodeLabPublicArtifact): ReviewCon
       "citation_only",
       "starter_skeleton",
     ),
-    ...payload.reflection_questions.map((question, index) => makeBlock(
-      "code_lab",
-      { field: "reflection", ref_id: `${payload.lab_id}:${index + 1}` },
-      question,
-      payload.used_evidence,
-      "citation_only",
-      "normative_task",
-    )),
+    ...payload.reflection_questions.map((question, index) => ({
+      ...makeBlock(
+        "code_lab",
+        { field: "reflection", ref_id: `${payload.lab_id}:${index + 1}` },
+        question,
+        payload.used_evidence,
+        "citation_only",
+        "normative_task",
+      ),
+      task_context: codeLabReflectionTaskContext(payload),
+    })),
     ...guideBlocks,
   ]
+}
+
+function codeLabReflectionTaskContext(payload: NonNullable<CodeLabPublicArtifact["payload"]>): string {
+  return [
+    "已发布执行合同：",
+    JSON.stringify(payload.execution_contract),
+    "已发布 starter_code：",
+    payload.starter_code,
+    "已发布公开样例：",
+    ...payload.public_tests.map((test, index) => [
+      `样例 ${index + 1}：${test.description}`,
+      `输入：${JSON.stringify(test.input)}`,
+      `预期行为：${test.expected_behavior}`,
+    ].join("\n")),
+  ].join("\n")
 }
 
 export function extractAssessmentBlocks(artifact: AssessmentPublicArtifact): ReviewContentBlock[] {
