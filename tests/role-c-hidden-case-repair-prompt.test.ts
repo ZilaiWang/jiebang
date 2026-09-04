@@ -46,6 +46,13 @@ describe("Role C staged hidden-case repair prompt", () => {
     expect(prompt).toContain("同步重算 expected")
   })
 
+  test("assessment secure contract repair removes stdin from function references", () => {
+    const prompt = stagedRepairPrompt("BASE", ["public_secure_code_contract_mismatch"])
+    expect(prompt).toContain("starter_code 函数签名是唯一调用合同")
+    expect(prompt).toContain("不得出现 input()、sys.stdin")
+    expect(prompt).toContain('{"args": [...], "kwargs": {...}}')
+  })
+
   test("requires form-level repair to follow a distinct task contract", () => {
     expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("current_form_distinctions")
     expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("required_task_shape")
