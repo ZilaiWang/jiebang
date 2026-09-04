@@ -934,7 +934,10 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
     ].filter((entry, index, entries) => entries.findIndex((candidate) =>
       contentHash(candidate.input) === contentHash(entry.input)) === index)
     const publicTestInputs = publicInputRecords.map((entry) => entry.input)
-    const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- hidden_tests[].input 使用覆盖典型、边界、防硬编码和错误路径的新数据，避开 public 输入：${JSON.stringify(publicTestInputs)}。\n- 只输出 input/partition_id/note/misconception_tag；不得输出 expected 或 comparison，可信 Docker 会执行参考解计算标准答案。\n- 纯输出任务可以使用空 input；function 模式必须使用 args/kwargs 调用封装。`
+    const stdinTokenRule = taskContract?.stdin_layout === "single_line_text"
+      ? `\n- stdin_layout=single_line_text：hidden_tests[].input 必须与 public 输入保持同序、同 token 类型（public 的每个 token 是整数就只能用整数、是小数就只能用小数、是文本就只能用文本），只换数值不换类型、不增删 token。`
+      : ""
+    const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- hidden_tests[].input 使用覆盖典型、边界、防硬编码和错误路径的新数据，避开 public 输入：${JSON.stringify(publicTestInputs)}。\n- 只输出 input/partition_id/note/misconception_tag；不得输出 expected 或 comparison，可信 Docker 会执行参考解计算标准答案。\n- 纯输出任务可以使用空 input；function 模式必须使用 args/kwargs 调用封装。${stdinTokenRule}`
     const secureStageInput = {
         contract: modelInput.contract,
         evidence: modelInput.evidence,
