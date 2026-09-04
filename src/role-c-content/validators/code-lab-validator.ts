@@ -288,7 +288,11 @@ export function validateCodeLabDraftStructure(
   issues.push(...validateFrozenStdinTokenShapes(
     request,
     publicPayload.public_tests.map((test) => ({ id: test.test_id, input: test.input })),
-    securePayload.hidden_tests.map((test) => ({ id: test.test_id, input: test.input })),
+    securePayload.hidden_tests.map((test) => ({
+      id: test.test_id,
+      input: test.input,
+      partition_id: test.partition_id,
+    })),
   ))
 
   const claims = publicPayload.instructions.flatMap((block) => "claims" in block ? block.claims : [])
@@ -428,7 +432,11 @@ type StdinTokenKind = "integer" | "decimal" | "boolean" | "text"
 export function validateFrozenStdinTokenShapes(
   request: CodeLabRequest,
   publicTests: Array<{ id: string; input: unknown }>,
-  hiddenTests: Array<{ id: string; input: unknown }>,
+  hiddenTests: Array<{
+    id: string
+    input: unknown
+    partition_id?: "nominal" | "boundary" | "anti_hardcode" | "error_path"
+  }>,
 ): ValidationIssue[] {
   if (request.resource_blueprint?.code_lab.task_contract.stdin_layout !== "single_line_text") return []
   const publicShapes = publicTests.flatMap((test) =>
@@ -442,9 +450,16 @@ export function validateFrozenStdinTokenShapes(
   for (const test of hiddenTests) {
     if (typeof test.input !== "string") continue
     const hiddenShape = stdinTokenShape(test.input)
-    const compatible = homogeneousKind
+    // Nominal and anti-hardcode cases are new data in the same input grammar,
+    // so their lexical token types stay frozen.  Boundary/error-path cases are
+    // allowed to exercise empty, missing or malformed values explicitly
+    // requested by the test partition; trusted execution remains the arbiter
+    // of whether the reference implementation actually handles them.
+    const permitsShapeDeviation = test.partition_id === "boundary"
+      || test.partition_id === "error_path"
+    const compatible = permitsShapeDeviation || (homogeneousKind
       ? hiddenShape.length > 0 && hiddenShape.every((kind) => kind === homogeneousKind)
-      : publicShapes.some((shape) => sameTokenShape(shape, hiddenShape))
+      : publicShapes.some((shape) => sameTokenShape(shape, hiddenShape)))
     if (!compatible) {
       issues.push(issue(
         "stdin_token_shape_mismatch",

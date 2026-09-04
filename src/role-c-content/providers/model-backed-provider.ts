@@ -935,7 +935,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
       contentHash(candidate.input) === contentHash(entry.input)) === index)
     const publicTestInputs = publicInputRecords.map((entry) => entry.input)
     const stdinTokenRule = taskContract?.stdin_layout === "single_line_text"
-      ? `\n- stdin_layout=single_line_text：hidden_tests[].input 必须与 public 输入保持同序、同 token 类型（public 的每个 token 是整数就只能用整数、是小数就只能用小数、是文本就只能用文本），只换数值不换类型、不增删 token。`
+      ? `\n- stdin_layout=single_line_text：nominal/anti_hardcode 输入必须与 public 保持同序、同 token 类型，只换数据；boundary/error_path 可按冻结分区要求使用空值、缺失值或非法类型，但仍只能是一行，且必须由 reference_solution 正常处理。`
       : ""
     const secureInputRules = `\n\nPRIVATE INPUT GUIDANCE (follow):\n- hidden_tests[].input 使用覆盖典型、边界、防硬编码和错误路径的新数据，避开 public 输入：${JSON.stringify(publicTestInputs)}。\n- 只输出 input/partition_id/note/misconception_tag；不得输出 expected 或 comparison，可信 Docker 会执行参考解计算标准答案。\n- 纯输出任务可以使用空 input；function 模式必须使用 args/kwargs 调用封装。${stdinTokenRule}`
     const secureStageInput = {
@@ -1071,6 +1071,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
                 normalized.hidden_tests.map((test, index) => ({
                   id: securePlan.hidden_tests[index]?.test_id ?? `hidden-${index + 1}`,
                   input: test.input,
+                  partition_id: test.partition_id,
                 })),
               ).map((entry) => `${entry.path}: ${entry.message}`)
               if (!programmingProblem) return [...planIssues, ...stdinShapeIssues]

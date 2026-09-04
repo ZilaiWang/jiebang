@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { CodeLabPublicPayload } from "../src/role-c-content/contracts/artifacts"
-import { validateCodeLabDraftStructure, validateCodeLabPublicStage } from "../src/role-c-content/validators/code-lab-validator"
+import { validateCodeLabDraftStructure, validateCodeLabPublicStage, validateFrozenStdinTokenShapes } from "../src/role-c-content/validators/code-lab-validator"
 
 const citation = { source_id: "K009", fact_id: "F001", relation: "supports" as const }
 
@@ -134,5 +134,17 @@ describe("Code lab frozen stdin layout", () => {
       },
     })
     expect(report.issues.map((entry) => entry.code)).toContain("stdin_token_shape_mismatch")
+  })
+
+  test("allows a frozen boundary/error partition to deviate from nominal token types", () => {
+    const issues = validateFrozenStdinTokenShapes(
+      request(),
+      [{ id: "P1", input: "ADD 2 3" }],
+      [
+        { id: "H-boundary", input: "", partition_id: "boundary" },
+        { id: "H-error", input: "ADD not-a-number 3", partition_id: "error_path" },
+      ],
+    )
+    expect(issues).toEqual([])
   })
 })

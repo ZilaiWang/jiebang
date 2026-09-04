@@ -57,10 +57,10 @@ describe("role c prompt manifest version", () => {
     expect(repair).toContain("不同公开样例要用不同输入触发不同目标对应的可观察现象")
   })
 
-  test("stdin 隐藏输入 token 类型必须与公开输入对齐，repair 提供专门指导", () => {
+  test("stdin 正常输入保持 token 合同，同时保留边界与错误分区语义", () => {
     const repair = stagedRepairPrompt("base", ["$.secure_draft.payload.hidden_tests.h1.input: 隐藏输入的 token 类型序列 text/integer 与公开输入合同不一致"])
-    expect(repair).toContain("hidden_tests[].input 的 token 类型必须与公开输入逐个对齐")
-    expect(repair).toContain("只换数值不换类型、不增删 token")
-    expect(repair).toContain("同时避开 public 已用过的具体值")
+    expect(repair).toContain("nominal/anti_hardcode 的 input 必须与公开输入逐个对齐 token 类型")
+    expect(repair).toContain("boundary/error_path 可以按冻结分区要求使用空值、缺失值或非法类型")
+    expect(repair).toContain("避开 public 已用值")
   })
 })
