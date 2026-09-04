@@ -97,7 +97,7 @@ export async function reviewPublicCandidatesWithModel<T>(input: {
         task: `${input.task}.candidate-critic`,
         system_prompt: attempt === 0
           ? SYSTEM_PROMPT
-          : `${SYSTEM_PROMPT}\n\n结构修复：上一份结果数量或索引不完整。本次 results 必须恰好包含 ${input.candidates.length} 项，candidate_index 必须依次为 ${input.candidates.map((_, index) => index).join("、")}，不得遗漏、重复或增加。`,
+          : `${SYSTEM_PROMPT}\n\n结构修复：上一份结果数量、索引或分数格式不符合要求。本次 results 必须恰好包含 ${input.candidates.length} 项，candidate_index 必须依次为 ${input.candidates.map((_, index) => index).join("、")}，不得遗漏、重复或增加；groundedness、correctness、instructional_value 必须是纯数字（0 到 1 之间的小数，或 0 到 100 的整数），不得加引号、不得写成文字、不得为空。`,
         input: payload,
         output_schema_id: "role_c_public_candidate_critic_v1",
         output_schema: candidateCriticOutputSchema(input.candidates.length),
@@ -244,8 +244,9 @@ function validateCriticResults(
     if (!Number.isSafeInteger(index) || (index as number) < 0 || (index as number) >= expectedCount || byIndex.has(index as number)) {
       throw new Error("ROLE_C_CANDIDATE_CRITIC_RESULT_INDEX_MISMATCH")
     }
-    for (const score of [record.groundedness, record.correctness, record.instructional_value]) {
-      if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 100) {
+    for (const raw of [record.groundedness, record.correctness, record.instructional_value]) {
+      const score = coerceCriticScore(raw)
+      if (!Number.isFinite(score) || score < 0 || score > 100) {
         throw new Error("ROLE_C_CANDIDATE_CRITIC_RESULT_SCORE_INVALID")
       }
     }
@@ -261,15 +262,29 @@ function validateCriticResults(
     const record = byIndex.get(index) as Record<string, unknown>
     return {
       candidate_index: index,
-      groundedness: normalizeCriticScore(record.groundedness as number),
-      correctness: normalizeCriticScore(record.correctness as number),
-      instructional_value: normalizeCriticScore(record.instructional_value as number),
+      groundedness: normalizeCriticScore(coerceCriticScore(record.groundedness)),
+      correctness: normalizeCriticScore(coerceCriticScore(record.correctness)),
+      instructional_value: normalizeCriticScore(coerceCriticScore(record.instructional_value)),
       critical_issues: (record.critical_issues as Array<Record<string, string>>).map((issue) => ({
         code: issue.code.trim(),
         message: issue.message.trim(),
       })).filter((issue) => issue.code && issue.message),
     }
   })
+}
+
+/**
+ * glm-5.2 在 json_object 软约束下偶发把分数写成字符串（如 "0.85"）而不是
+ * JSON number。字符串数字与数字语义等价，确定性转成 number；其余非法值
+ * （null/对象/空串/非数字字符串）返回 NaN，由上层按 SCORE_INVALID 拒绝。
+ */
+function coerceCriticScore(value: unknown): number {
+  if (typeof value === "number") return value
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : Number.NaN
+  }
+  return Number.NaN
 }
 
 function normalizeCriticScore(value: number): number {

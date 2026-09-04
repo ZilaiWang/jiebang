@@ -801,3 +801,61 @@ describe("quality kernel v2", () => {
     ])
   })
 })
+
+describe("candidate critic score coercion (glm-5.2 json_object soft schema)", () => {
+  const base = {
+    candidate_id: "C-STR",
+    artifact_kind: "concept_lesson",
+    hard_gates: [],
+    dimensions: [{ dimension: "objective_alignment", score: 0.9, weight: 1, confidence: 0.8, evidence_refs: ["O1"], rationale: "covered", core: true }],
+    overall_score: 0.9,
+    release_eligible: true,
+    critical_findings: [],
+  } as any
+
+  test("accepts string-number scores and normalizes them instead of throwing SCORE_INVALID", async () => {
+    const reviewed = await reviewPublicCandidatesWithModel({
+      gateway: {
+        model_id: "glm-5.2",
+        model_config_hash: "sha256:test",
+        generateStructured: async () => ({
+          results: [{
+            candidate_index: 0,
+            groundedness: "0.85",
+            correctness: "0.8",
+            instructional_value: "70",
+            critical_issues: [],
+          }],
+        }),
+      } as any,
+      task: "test.candidate",
+      artifact_kind: "concept_lesson",
+      candidates: [{ candidate: { text: "x" }, variant_index: 0, evaluation: base }],
+      evidence: [{ fact_id: "F1", content: "已知事实" }],
+      contract: { objective_id: "O1" },
+    })
+    expect(reviewed[0]?.release_eligible).toBe(true)
+    const dims = reviewed[0]!.dimensions
+    const groundedness = dims.find((d) => d.dimension === "semantic_groundedness")!.score
+    const instructional = dims.find((d) => d.dimension === "instructional_value")!.score
+    expect(groundedness).toBeCloseTo(0.85)
+    expect(instructional).toBeCloseTo(0.7) // "70" percent → 0.7
+  })
+
+  test("still rejects null/object scores", async () => {
+    await expect(reviewPublicCandidatesWithModel({
+      gateway: {
+        model_id: "glm-5.2",
+        model_config_hash: "sha256:test",
+        generateStructured: async () => ({
+          results: [{ candidate_index: 0, groundedness: null, correctness: 0.8, instructional_value: 0.7, critical_issues: [] }],
+        }),
+      } as any,
+      task: "test.candidate",
+      artifact_kind: "concept_lesson",
+      candidates: [{ candidate: { text: "x" }, variant_index: 0, evaluation: base }],
+      evidence: [{ fact_id: "F1", content: "已知事实" }],
+      contract: { objective_id: "O1" },
+    })).rejects.toThrow("ROLE_C_CANDIDATE_CRITIC_RESULT_SCORE_INVALID")
+  })
+})
