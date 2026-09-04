@@ -142,14 +142,15 @@ describe("orchestrator browser client", () => {
 
   test("reads and saves provider configuration without a learner authorization header", async () => {
     const { calls, fetcher } = fakeFetch([
-      { configured: false, provider_mode: "model", endpoint: "", model_id: "" },
-      { configured: true, provider_mode: "model", endpoint: "https://api.deepseek.com/chat/completions", model_id: "deepseek-chat" },
+      { configured: false, provider_mode: "model", provider: "", endpoint: "", model_id: "" },
+      { configured: true, provider_mode: "model", provider: "deepseek", endpoint: "https://api.deepseek.com/chat/completions", model_id: "deepseek-chat" },
     ])
     await getProviderConfiguration(fetcher)
     await saveProviderConfiguration({
+      provider: "deepseek",
       endpoint: "https://api.deepseek.com/chat/completions",
       modelId: "deepseek-chat",
-      apiKey: "secret",
+      apiKey: "secret-key",
     }, fetcher)
     expect(calls.map((call) => call.url)).toEqual([
       "/orchestrator/provider-config",
@@ -157,9 +158,10 @@ describe("orchestrator browser client", () => {
     ])
     expect(new Headers(calls[0]!.init?.headers).has("authorization")).toBe(false)
     expect(JSON.parse(String(calls[1]!.init?.body))).toEqual({
+      provider: "deepseek",
       endpoint: "https://api.deepseek.com/chat/completions",
       model_id: "deepseek-chat",
-      api_key: "secret",
+      api_key: "secret-key",
     })
   })
 })

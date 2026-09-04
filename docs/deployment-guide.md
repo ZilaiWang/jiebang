@@ -264,7 +264,7 @@ Docker 代码沙箱已就绪
 点击后，系统会调用后端：
 
 ```text
-GET /orchestrator/docker-setup
+POST /orchestrator/docker-setup
 ```
 
 它会尝试：
@@ -664,7 +664,7 @@ dist/
 ```bash
 curl http://127.0.0.1:8787/health
 curl http://127.0.0.1:8787/orchestrator/provider-config
-curl http://127.0.0.1:8787/orchestrator/docker-setup
+curl -X POST http://127.0.0.1:8787/orchestrator/docker-setup
 bun test --isolate tests/provider-config-api.test.ts src/role-d-ui-v2/src/orchestrator-client.test.ts --timeout 60000
 bun run role-d:v2:build
 ```

@@ -235,6 +235,8 @@ describe("orchestrator UI state mapping", () => {
 
   test("routes diagnosis completion and plan re-entry to the learning plan before C content", () => {
     expect(pageForSession({ status: "waiting_for_user", current_stage: "objective_diagnosis", waiting_for: { type: "diagnosis_answers" } })).toBe("diagnosis")
+    // 建档必填项缺失 → B 结构化采集追问（profile_answers）必须先展示补充表单
+    expect(pageForSession({ status: "waiting_for_user", current_stage: "objective_diagnosis", waiting_for: { type: "profile_answers", items: [] } })).toBe("diagnosis")
     expect(pageForSession({ status: "waiting_for_user", current_stage: "assessment", waiting_for: { type: "assessment_answers" }, profile: {}, formal_path: {}, current_path_node: {}, learning_resources: { concept_lesson: {} } })).toBe("path")
     expect(pageForSession({ status: "blocked", current_stage: "blocked", profile: {}, formal_path: {}, current_path_node: {}, learning_resources: {} })).toBe("path")
     expect(pageForSession({ status: "completed", current_stage: "completed", feedback: {} })).toBe("feedback")

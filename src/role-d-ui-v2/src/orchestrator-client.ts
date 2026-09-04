@@ -66,6 +66,7 @@ export interface GoalPathChangeInput {
 export interface ProviderConfigurationView {
   configured: boolean
   provider_mode: "model"
+  provider?: "deepseek" | "glm" | "kimi" | "minimax" | ""
   endpoint: string
   model_id: string
 }
@@ -117,12 +118,12 @@ export async function getProviderConfiguration(fetcher: Fetcher = fetch): Promis
 }
 
 export async function saveProviderConfiguration(
-  input: { endpoint: string; modelId: string; apiKey: string },
+  input: { provider?: string; endpoint: string; modelId: string; apiKey: string },
   fetcher: Fetcher = fetch,
 ): Promise<ProviderConfigurationView> {
   return publicRequestJson("/orchestrator/provider-config", fetcher, {
     method: "PUT",
-    body: JSON.stringify({ endpoint: input.endpoint, model_id: input.modelId, api_key: input.apiKey }),
+    body: JSON.stringify({ provider: input.provider, endpoint: input.endpoint, model_id: input.modelId, api_key: input.apiKey }),
   })
 }
 

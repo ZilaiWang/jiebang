@@ -99,6 +99,7 @@ import {
   loadWorkspace,
   markPlanConceptMastered,
   masteredConceptsForUser,
+  nextAvailableLearnerName,
   planNameFromGoal,
   recordPlanPublicState,
   renamePlan,
@@ -159,6 +160,16 @@ export async function checkDockerReady(fetchImpl: typeof fetch = fetch): Promise
       : { ready: false, error: data?.docker?.error ?? "无法检测 Docker 状态" }
   } catch {
     return { ready: false, error: "无法连接主 Agent，请确认已启动" }
+  }
+}
+
+async function setupDocker(fetchImpl: typeof fetch = fetch): Promise<{ ready: boolean; steps: string[]; error?: string }> {
+  try {
+    const response = await fetchImpl("/orchestrator/docker-setup", { method: "POST" })
+    const data = await response.json() as { ready?: boolean; steps?: string[]; error?: string }
+    return { ready: data.ready === true, steps: data.steps ?? [], error: data.error }
+  } catch {
+    return { ready: false, steps: [], error: "无法连接主 Agent，请确认后端已启动" }
   }
 }
 
@@ -232,7 +243,7 @@ export function App() {
   const [error, setError] = useState("")
   const [diagnosisAnswers, setDiagnosisAnswers] = useState<Record<string, string>>({})
   const [assessmentAnswers, setAssessmentAnswers] = useState<Record<string, string>>({})
-  const [provider, setProvider] = useState({ configured: false, provider_mode: "model" as const, endpoint: "", model_id: "" })
+  const [provider, setProvider] = useState<import("./orchestrator-client").ProviderConfigurationView>({ configured: false, provider_mode: "model", provider: "", endpoint: "", model_id: "" })
   const [dockerStatus, setDockerStatus] = useState<{ ready: boolean; error?: string }>({ ready: false })
   const [providerOpen, setProviderOpen] = useState(false)
   const [collaborationOpen, setCollaborationOpen] = useState(false)
@@ -264,7 +275,7 @@ export function App() {
   }, [workspace])
 
   useEffect(() => {
-    getProviderConfiguration().then(setProvider).catch(() => setProvider({ configured: false, provider_mode: "model", endpoint: "", model_id: "" }))
+    getProviderConfiguration().then(setProvider).catch(() => setProvider({ configured: false, provider_mode: "model", provider: "", endpoint: "", model_id: "" }))
     // 检测 Docker 状态
     checkDockerReady()
       .then(setDockerStatus)
@@ -669,11 +680,11 @@ export function App() {
           }} /> : <NoSessionState onStart={() => setPage("goal")} />)}
           {page === "history" && (liveSession ? <HistoryPage /> : <NoSessionState onStart={() => setPage("goal")} />)}
         </main>
-        {profileOpen && <ProfileModal onClose={() => setProfileOpen(false)} onCreate={(profile) => { setWorkspace((value) => addUser(value, profile)); setProfileOpen(false); setPage("home") }} />}
+        {profileOpen && <ProfileModal existingNames={workspace.users.map((user) => user.name)} onClose={() => setProfileOpen(false)} onCreate={(profile) => { setWorkspace((value) => addUser(value, profile)); setProfileOpen(false); setPage("home") }} />}
         {userOpen && createPortal(<UserSwitcher workspace={workspace} onClose={() => setUserOpen(false)} onAdd={() => { setUserOpen(false); setProfileOpen(true) }} onSelect={(id) => { setConfirmSwitchUserId(id); setUserOpen(false) }} onViewDetail={(id) => { setUserDetailUserId(id) }} onDeleteUser={(id) => { setWorkspace((value) => deleteUser(value, id)) }} />, document.body)}
         {userDetailUserId && createPortal(<UserDetailModal user={workspace.users.find(u => u.id === userDetailUserId)!} onClose={() => setUserDetailUserId(null)} />, document.body)}
         {confirmSwitchUserId && createPortal(<ConfirmSwitchUserModal targetUser={workspace.users.find(u => u.id === confirmSwitchUserId)} currentUser={currentUser} onCancel={() => setConfirmSwitchUserId(null)} onConfirm={() => { setWorkspace((value) => selectUser(value, confirmSwitchUserId)); setPage("home"); setConfirmSwitchUserId(null) }} />, document.body)}
-        {providerOpen && <ApiConfigModal current={provider} dockerStatus={dockerStatus} onDockerSetup={() => { fetch("/orchestrator/docker-setup").then(r => r.json()).then(d => { if (d.ready) setDockerStatus({ ready: true }) }) }} onDockerReady={() => setDockerStatus({ ready: true })} onClose={() => { setProviderOpen(false); setOpenPlanAfterProvider(false) }} onSave={async (input) => { const saved = await saveProviderConfiguration(input); setProvider(saved); setProviderOpen(false); if (openPlanAfterProvider && currentUser) { const id = newClientId("plan"); setWorkspace((value) => addPlan(value, currentUser.id, { id, name: "待选择学习目标" })); setOpenPlanAfterProvider(false); setPage("goal") } }} />}
+        {providerOpen && <ApiConfigModal current={provider} dockerStatus={dockerStatus} onDockerSetup={async () => { const result = await setupDocker(); if (result.ready) setDockerStatus({ ready: true }); else setDockerStatus({ ready: false, error: [result.error, ...result.steps].filter(Boolean).join("；") || "Docker 配置失败" }); return result }} onDockerReady={() => setDockerStatus({ ready: true })} onClose={() => { setProviderOpen(false); setOpenPlanAfterProvider(false) }} onSave={async (input) => { const saved = await saveProviderConfiguration(input); setProvider(saved); setProviderOpen(false); if (openPlanAfterProvider && currentUser) { const id = newClientId("plan"); setWorkspace((value) => addPlan(value, currentUser.id, { id, name: "待选择学习目标" })); setOpenPlanAfterProvider(false); setPage("goal") } }} />}
       </div>
     </LiveContext.Provider>
   )
@@ -808,7 +819,7 @@ function ConfirmSwitchUserModal({ targetUser, currentUser, onCancel, onConfirm }
   return <div className="user-switcher-backdrop" role="presentation" onMouseDown={onCancel}><section className="user-popover confirm-switch-modal" role="dialog" aria-modal="true" aria-label="确认切换用户" onMouseDown={(event) => event.stopPropagation()}><div className="popover-title"><div><span>确认切换</span><b>确定要切换学习者吗？</b></div></div><div className="confirm-switch-content"><div className="confirm-switch-icon"><UserRound size={28} /></div><p>即将从 <b>{currentUser?.name ?? "当前用户"}</b> 切换到 <b>{targetUser.name}</b></p><small>切换后将返回首页，当前学习进度会自动保存</small></div><div className="confirm-switch-actions"><button className="secondary-action" type="button" onClick={onCancel}>取消</button><button className="primary-action" type="button" onClick={onConfirm}>确认切换</button></div></section></div>
 }
 
-function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (profile: LearnerProfileDraft) => void }) {
+function ProfileModal({ onClose, onCreate, existingNames = [] }: { onClose: () => void; onCreate: (profile: LearnerProfileDraft) => void; existingNames?: string[] }) {
   const [name, setName] = useState("")
   const [weeklyHours, setWeeklyHours] = useState(5)
   const [pythonLevel, setPythonLevel] = useState<LearnerProfileDraft["pythonLevel"]>("beginner")
@@ -829,7 +840,7 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
   const splitItems = (value: string) => value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
   const save = () => onCreate({
     id: newClientId("learner"),
-    name: name.trim(),
+    name: name.trim() || nextAvailableLearnerName(existingNames),
     weeklyHours,
     pythonLevel,
     learningStyle,
@@ -846,9 +857,9 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
     retention,
     disciplineBackground: goalUseCase === "coursework" && disciplineBackground ? [disciplineBackground] : undefined,
   })
-  return <Modal title="认识你，从更合适的第一步开始" subtitle="这些明确选择会由 B 转换成教学策略，能力仍以客观诊断为准。" onClose={onClose}>
+  return <Modal title="认识你，从更合适的第一步开始" subtitle="这些明确选择会由 B 转换成教学策略，能力仍以客观诊断为准。必填项暂时留空也可以先保存，创建学习计划后主 Agent 会以追问方式逐项补齐。" onClose={onClose}>
     <div className="form-grid">
-      <label><span>怎么称呼你？</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：林晓" /></label>
+      <label><span>怎么称呼你？</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：林晓（留空将自动命名）" /></label>
       <label><span>你和 Python 的熟悉程度</span><select value={pythonLevel} onChange={(event) => setPythonLevel(event.target.value as LearnerProfileDraft["pythonLevel"])}><option value="new">完全没接触过</option><option value="beginner">了解一点基础</option><option value="intermediate">能写简单程序</option><option value="advanced">有项目经验</option></select></label>
       <label className="temp-field"><span>客观影响温度</span><div className="onboard-temp-options">{([{ value: 0, label: "低温", desc: "需连续3轮达标才晋级（慢而稳）" }, { value: 1, label: "中温", desc: "需连续2轮达标才晋级（平衡）" }, { value: 2, label: "高温", desc: "单轮优秀即可晋级（快但波动）" }] as Array<{ value: 0 | 1 | 2; label: string; desc: string }>).map((option) => <button type="button" key={option.value} className={objectiveTemp === option.value ? "is-active" : ""} onClick={() => { setObjectiveTemp(option.value); localStorage.setItem("kb-objective-temperature", String(option.value)) }}><b>{option.label}</b><small>{option.desc}</small></button>)}</div></label>
       <label><span>这次学习主要用于</span><select value={goalUseCase} onChange={(event) => { setGoalUseCase(event.target.value as typeof goalUseCase); if (event.target.value !== "coursework") setDisciplineBackground("") }}><option value="coursework">课程学习或作业</option><option value="competition">竞赛准备</option><option value="job">求职或岗位提升</option></select></label>
@@ -858,11 +869,11 @@ function ProfileModal({ onClose, onCreate }: { onClose: () => void; onCreate: (p
       <label><span>单次学习时长</span><select value={sessionMinutes} onChange={(event) => setSessionMinutes(Number(event.target.value))}>{[15,20,30,45,60,90].map((minutes) => <option value={minutes} key={minutes}>{minutes} 分钟</option>)}</select></label>
       <label><span>学习节奏</span><select value={pacePreference} onChange={(event) => setPacePreference(event.target.value as typeof pacePreference)}><option value="slow">慢一些，多铺垫</option><option value="steady">稳定推进</option><option value="fast">快节奏、少重复</option></select></label>
       <label><span>画像保留方式</span><select value={retention} onChange={(event) => setRetention(event.target.value as typeof retention)}><option value="session_only">只用于当前会话</option><option value="cross_session">跨会话保留并更新</option></select></label>
-      <label className="full-field"><span>目前的学习/工作背景</span><input value={background} onChange={(event) => setBackground(event.target.value)} placeholder="必填，例如：高中生、计算机专业大一、转行学习" /></label>
+      <label className="full-field"><span>目前的学习/工作背景（暂缺可先保存，创建计划后主 Agent 会追问补充）</span><input value={background} onChange={(event) => setBackground(event.target.value)} placeholder="例如：高中生、计算机专业大一、转行学习（选填）" /></label>
       <label className="full-field"><span>希望最终能够独立完成什么？</span><input value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="例如：能独立编写并调试一个成绩统计程序" /></label>
       <label className="full-field"><span>接触过其他编程语言吗？</span><input value={languages} onChange={(event) => setLanguages(event.target.value)} placeholder="选填，用顿号或逗号分隔" /></label>
     </div>
-    <div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>以后再说</button><button className="primary-action" disabled={!name.trim() || !background.trim()} type="button" onClick={save}>保存学习档案</button></div>
+    <div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>以后再说</button><button className="primary-action" type="button" onClick={save}>保存学习档案</button></div>
   </Modal>
 }
 
@@ -879,49 +890,62 @@ function practicePreferenceForStyle(style: LearnerProfileDraft["learningStyle"])
 }
 
 
-function ApiConfigModal({ current, dockerStatus, onDockerSetup, onDockerReady, onClose, onSave }: { current: { configured: boolean; endpoint: string; model_id: string }; dockerStatus: { ready: boolean; error?: string }; onDockerSetup: () => void; onDockerReady: () => void; onClose: () => void; onSave: (input: { endpoint: string; modelId: string; apiKey: string }) => Promise<void> }) {
-  const [endpoint, setEndpoint] = useState(current.endpoint || "https://api.deepseek.com/chat/completions")
-  const [modelId, setModelId] = useState(current.model_id || "deepseek-chat")
+function ApiConfigModal({ current, dockerStatus, onDockerSetup, onDockerReady, onClose, onSave }: { current: { configured: boolean; provider?: string; endpoint: string; model_id: string }; dockerStatus: { ready: boolean; error?: string }; onDockerSetup: () => Promise<{ ready: boolean; steps: string[]; error?: string }>; onDockerReady: () => void; onClose: () => void; onSave: (input: { provider: string; endpoint: string; modelId: string; apiKey: string }) => Promise<void> }) {
+  const providers = [
+    { id: "deepseek", name: "DeepSeek", endpoint: "https://api.deepseek.com/chat/completions", models: ["deepseek-chat", "deepseek-reasoner"] },
+    { id: "glm", name: "智谱 GLM", endpoint: "https://open.bigmodel.cn/api/paas/v4/chat/completions", models: ["glm-5.2", "glm-4.5-air"] },
+    { id: "kimi", name: "月之暗面 Kimi", endpoint: "https://api.moonshot.cn/v1/chat/completions", models: ["kimi-k2.5", "moonshot-v1-8k"] },
+    { id: "minimax", name: "MiniMax", endpoint: "https://api.minimaxi.com/v1/text/chatcompletion_v2", models: ["MiniMax-M2.5", "MiniMax-Text-01"] },
+  ] as const
+  const initial = providers.find((item) => item.id === current.provider)
+    ?? providers.find((item) => current.endpoint.includes("bigmodel"))
+    ?? providers.find((item) => current.endpoint.includes("moonshot"))
+    ?? providers.find((item) => current.endpoint.includes("minimaxi"))
+    ?? providers[0]
+  const initialModel = initial.models.includes(current.model_id as never) ? current.model_id : initial.models[0]
+  const [providerId, setProviderId] = useState(initial.id)
+  const [modelId, setModelId] = useState(initialModel)
   const [apiKey, setApiKey] = useState("")
   const [saving, setSaving] = useState(false)
+  const [dockerBusy, setDockerBusy] = useState(false)
   const [failure, setFailure] = useState("")
-  const submit = async () => { setSaving(true); setFailure(""); try { await onSave({ endpoint: endpoint.trim(), modelId: modelId.trim(), apiKey: apiKey.trim() }) } catch (reason) { setFailure(reason instanceof Error ? reason.message : "保存失败") } finally { setSaving(false) } }
-  return <Modal title={current.configured ? "切换通用模型 API" : "先连接你的通用模型"} subtitle="密钥只发送到本机主 Agent并保存于本地运行目录，浏览器不会保存或再次读取它。" onClose={onClose}>
+  const selected = providers.find((item) => item.id === providerId) ?? providers[0]
+  const changeProvider = (value: string) => {
+    const next = providers.find((item) => item.id === value) ?? providers[0]
+    setProviderId(next.id)
+    setModelId(next.models[0])
+    setFailure("")
+  }
+  const submit = async () => {
+    setSaving(true); setFailure("")
+    try { await onSave({ provider: selected.id, endpoint: selected.endpoint, modelId: modelId.trim(), apiKey: apiKey.trim() }) }
+    catch (reason) { setFailure(reason instanceof Error ? reason.message : "保存失败") }
+    finally { setSaving(false) }
+  }
+  const setup = async () => {
+    setDockerBusy(true); setFailure("正在执行 Docker 检测、启动和镜像配置，请等待真实结果…")
+    try {
+      const result = await onDockerSetup()
+      if (result.ready) { setFailure(""); onDockerReady() }
+      else setFailure([result.error, ...result.steps].filter(Boolean).join("；") || "Docker 配置失败")
+    } finally { setDockerBusy(false) }
+  }
+  return <Modal title={current.configured ? "切换通用模型 API" : "连接通用模型"} subtitle="选择供应商后自动填入官方兼容地址；密钥只发送到本机主 Agent，验证成功后才保存。" onClose={onClose}>
     <div className={`docker-status-banner ${dockerStatus.ready ? "is-ready" : "is-warning"}`}>
-      {dockerStatus.ready
-        ? <><CheckCircle2 size={16} /><span>Docker 代码沙箱已就绪</span></>
-        : <><ShieldCheck size={16} /><span>{dockerStatus.error ?? "正在检测 Docker…"}</span></>}
-      {!dockerStatus.ready && <button className="docker-setup-button" type="button" onClick={() => {
-        setFailure("正在配置 Docker，请稍候…（可能需要 30 秒）")
-        onDockerSetup()
-        // 轮询直到 Docker 稳定就绪：要求连续 3 次确认（约 9 秒稳定期），
-        // 避免 Docker Desktop 冷启动时引擎瞬时可用就被误判为完成
-        let stableCount = 0
-        const poll = setInterval(async () => {
-          try {
-            const res = await fetch("/orchestrator/docker-status")
-            const data = await res.json()
-            if (data?.docker?.ready) {
-              stableCount += 1
-              if (stableCount >= 3) {
-                clearInterval(poll)
-                setFailure("")
-                onDockerReady()
-              }
-            } else {
-              stableCount = 0
-            }
-          } catch {
-            stableCount = 0
-          }
-        }, 3000)
-        setTimeout(() => { clearInterval(poll); setFailure("Docker 配置超时。请手动启动 Docker Desktop 后刷新页面。") }, 45000)
-      }}>🔧 一键配置 Docker</button>}
+      {dockerStatus.ready ? <><CheckCircle2 size={16} /><span>Docker 代码沙箱已就绪</span></> : <><ShieldCheck size={16} /><span>{dockerStatus.error ?? "Docker 尚未就绪"}</span></>}
+      {!dockerStatus.ready && <button className="docker-setup-button" type="button" disabled={dockerBusy} onClick={() => void setup()}>{dockerBusy ? "正在配置…" : "🔧 一键配置 Docker"}</button>}
     </div>
-    <div className="api-security-note"><ShieldCheck size={19} /><div><b>本机配置，不进入前端计划</b><p>保存后主 Agent立即使用新配置；接口响应只返回模型名称和地址，不返回密钥。</p></div></div>
-    <div className="form-grid"><label className="full-field"><span>兼容接口地址</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://.../chat/completions" /></label><label><span>模型 ID</span><input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="deepseek-chat" /></label><label><span>API Key</span><input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={current.configured ? "输入新密钥以切换" : "仅发送到本机主 Agent"} /></label></div>{failure && <p className="form-error">{failure}</p>}<div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>取消</button><button className="primary-action" disabled={saving || !endpoint.trim() || !modelId.trim() || !apiKey.trim()} type="button" onClick={() => void submit()}>{saving ? "正在安全保存…" : "保存并启用"}</button></div></Modal>
+    <div className="api-security-note"><ShieldCheck size={19} /><div><b>本机配置，先验证再保存</b><p>主 Agent 会真实请求所选供应商；认证失败、模型不存在、余额不足或接口不可用时不会保存。</p></div></div>
+    <div className="form-grid">
+      <label className="full-field"><span>模型供应商</span><select value={providerId} onChange={(event) => changeProvider(event.target.value)}>{providers.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+      <label className="full-field"><span>模型</span><select value={modelId} onChange={(event) => setModelId(event.target.value)}>{selected.models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
+      <label className="full-field"><span>官方兼容接口地址</span><input value={selected.endpoint} readOnly /></label>
+      <label className="full-field"><span>API Key</span><input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={current.configured ? "输入新密钥以重新验证" : "仅发送到本机主 Agent"} /></label>
+    </div>
+    {failure && <p className="form-error">{failure}</p>}
+    <div className="modal-actions"><button className="secondary-action" type="button" onClick={onClose}>取消</button><button className="primary-action" disabled={saving || !modelId.trim() || !apiKey.trim()} type="button" onClick={() => void submit()}>{saving ? "正在验证并保存…" : "验证密钥并启用"}</button></div>
+  </Modal>
 }
-
 function Modal({ title, subtitle, onClose, children, backdropClass }: { title: string; subtitle: string; onClose: () => void; children: React.ReactNode; backdropClass?: string }) {
   return <div className={`modal-backdrop ${backdropClass ?? ""}`} role="presentation" onMouseDown={onClose}><section className="modal-card" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}><header><div><h2>{title}</h2><p>{subtitle}</p></div><button type="button" aria-label="关闭" onClick={onClose}><X /></button></header>{children}</section></div>
 }
