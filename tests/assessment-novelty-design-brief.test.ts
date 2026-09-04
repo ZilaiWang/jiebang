@@ -87,6 +87,18 @@ describe("assessment novelty design brief", () => {
     ])
   })
 
+  test("同目标同题型在一张五题卷内不会因任务形状目录过短而回绕", () => {
+    const shortAnswers = Array.from({ length: 5 }, (_, index) => ({
+      ...plan[0]!,
+      item_id: `ITEM-${index + 1}`,
+      display_no: index + 1,
+      modality: "short_answer" as const,
+    }))
+    const shapes = buildAssessmentNoveltyDesignBrief(shortAnswers, []).items
+      .map((item) => item.planned_task_shape)
+    expect(new Set(shapes).size).toBe(5)
+  })
+
   test("同一目标同一题型跨轮继续轮换任务结构，不把固定题号写成固定题型模板", () => {
     const history = Array.from({ length: 3 }, (_, index) => ({
       form_id: `FORM-${index}`,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { stagedRepairPrompt } from "../src/role-c-content/prompts/staged-repair.prompt"
+import { ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT } from "../src/role-c-content/prompts/evaluator/staged.prompt"
 
 describe("Role C staged hidden-case repair prompt", () => {
   test("names machine leak codes and requires changed hidden vectors", () => {
@@ -23,5 +24,11 @@ describe("Role C staged hidden-case repair prompt", () => {
     expect(prompt).toContain("完整重写这些下标对应的题目")
     expect(prompt).toContain("repair_directive.required_change_indices")
     expect(prompt).toContain("只换数字、变量名")
+  })
+
+  test("requires form-level repair to follow a distinct task contract", () => {
+    expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("current_form_distinctions")
+    expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("required_task_shape")
+    expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("must_differ_from")
   })
 })

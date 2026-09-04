@@ -1338,6 +1338,15 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             form_id: formId,
             objective_ids: [itemPlan.objective_id],
             item_plan: [itemPlan],
+            current_form_index: itemIndex,
+            form_design_outline: noveltyBrief.items.map((entry) => ({
+              index: entry.index,
+              objective_id: entry.objective_id,
+              tier: entry.tier,
+              modality: entry.modality,
+              in_form_role: entry.in_form_role,
+              planned_task_shape: entry.planned_task_shape,
+            })),
             evidence_authoring_boundary: buildAssessmentEvidenceAuthoringBoundaries(
               [itemPlan],
               itemFacts,
@@ -2249,6 +2258,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         previous_output: previousOutput,
         validator_report: issues,
         repair_directive: repairDirective,
+        current_form_distinctions: buildAssessmentFormRepairDistinctions(
+          stage.input,
+          previousOutput,
+          indices,
+          repairDirective.repair_attempt,
+        ),
       },
       output_schema_id: "role_c_assessment_public_novelty_patch_v1",
       output_schema: assessmentNoveltyPatchSchema(indices, stage.input),
@@ -2474,29 +2489,120 @@ export function buildAssessmentNoveltyDesignBrief(
   }
 }
 
-function assessmentTaskShape(
+function assessmentTaskShapes(
   modality: AssessmentItemPlan["modality"],
-  index: number,
-): string {
+): string[] {
   const shapes: Record<AssessmentItemPlan["modality"], string[]> = {
     mcq: [
       "select_one_supported_statement",
       "choose_best_fact_summary",
       "match_subject_to_supported_description",
       "identify_supported_relation",
+      "select_supported_boundary_statement",
+      "choose_supported_comparison",
     ],
     true_false: [
       "verify_one_atomic_claim",
       "judge_direct_fact_paraphrase",
       "verify_supported_relation",
       "judge_explicitly_negated_claim",
+      "verify_subject_category_match",
+      "judge_supported_boundary",
     ],
-    short_answer: ["restate_supported_fact", "compare_given_facts", "explain_given_relation"],
-    trace: ["trace_given_state", "complete_given_trace", "locate_trace_divergence"],
-    code: ["complete_missing_branch", "complete_missing_expression", "complete_missing_transformation"],
+    short_answer: [
+      "restate_supported_fact",
+      "compare_given_facts",
+      "explain_given_relation",
+      "correct_a_given_misstatement",
+      "complete_a_structured_fact_summary",
+      "distinguish_two_cited_relations",
+    ],
+    trace: [
+      "trace_given_state",
+      "complete_given_trace",
+      "locate_trace_divergence",
+      "explain_one_state_transition",
+      "reconstruct_missing_trace_step",
+    ],
+    code: [
+      "complete_missing_branch",
+      "complete_missing_expression",
+      "complete_missing_transformation",
+      "repair_one_faulty_step",
+      "implement_one_cited_rule",
+    ],
   }
-  const choices = shapes[modality]
+  return shapes[modality]
+}
+
+function assessmentTaskShape(
+  modality: AssessmentItemPlan["modality"],
+  index: number,
+): string {
+  const choices = assessmentTaskShapes(modality)
   return choices[index % choices.length]!
+}
+
+function buildAssessmentFormRepairDistinctions(
+  stageInput: unknown,
+  previousOutput: unknown,
+  indices: number[],
+  repairAttempt: number,
+): Array<{
+  index: number
+  required_task_shape: string
+  must_differ_from: Array<{
+    index: number
+    prompt: string
+    structure_meta?: AssessmentStructureMeta
+  }>
+}> {
+  const staged = asRecord(asRecord(stageInput).staged_contract)
+  const plan = Array.isArray(staged.item_plan)
+    ? staged.item_plan as AssessmentItemPlan[]
+    : []
+  const brief = asRecord(staged.novelty_design_brief)
+  const briefItems = Array.isArray(brief.items)
+    ? brief.items.map(asRecord)
+    : []
+  const previousItems = Array.isArray(asRecord(previousOutput).items)
+    ? asRecord(previousOutput).items as unknown[]
+    : []
+
+  return indices.flatMap((index) => {
+    const targetPlan = plan[index]
+    if (!targetPlan) return []
+    const peerShapes = new Set(briefItems.flatMap((entry, peerIndex) =>
+      peerIndex !== index && entry.modality === targetPlan.modality
+        && typeof entry.planned_task_shape === "string"
+        ? [entry.planned_task_shape]
+        : []))
+    const shapes = assessmentTaskShapes(targetPlan.modality)
+    const originalShape = typeof briefItems[index]?.planned_task_shape === "string"
+      ? briefItems[index]!.planned_task_shape as string
+      : ""
+    const start = Math.max(0, shapes.indexOf(originalShape)) + repairAttempt
+    const requiredTaskShape = Array.from({ length: shapes.length }, (_, offset) =>
+      shapes[(start + offset) % shapes.length]!)
+      .find((shape) => shape !== originalShape && !peerShapes.has(shape))
+      ?? shapes[start % shapes.length]!
+    return [{
+      index,
+      required_task_shape: requiredTaskShape,
+      must_differ_from: previousItems.flatMap((raw, peerIndex) => {
+        if (peerIndex === index) return []
+        const item = asRecord(raw)
+        if (typeof item.prompt !== "string") return []
+        return [{
+          index: peerIndex,
+          prompt: item.prompt,
+          ...(item.structure_meta && typeof item.structure_meta === "object"
+            ? { structure_meta: item.structure_meta as AssessmentStructureMeta }
+            : {}),
+        }]
+      }),
+    }]
+  })
 }
 
 export interface AssessmentNoveltyReplacement {
