@@ -124,6 +124,7 @@ export interface DockerCommandResult {
   stderr: string
   timed_out: boolean
   output_truncated: boolean
+  oom_killed?: boolean
 }
 
 /** Injectable Docker CLI process boundary; unit tests inspect it without executing learner code. */
@@ -255,7 +256,6 @@ export class DockerPythonCodeRunner implements CodeRunner {
     const containerName = `role-c-python-${randomUUID()}`
     const args = [
       "run",
-      "--rm",
       "--interactive",
       "--name", containerName,
       "--pull=never",
@@ -300,12 +300,13 @@ export class DockerPythonCodeRunner implements CodeRunner {
     }
     if (result.exit_code !== 0 || result.output_truncated) {
       if ([124, 137, 143].includes(result.exit_code ?? -1)) {
+        const memoryKilled = result.oom_killed === true
         return {
-          status: result.exit_code === 137 ? "failed" : "timeout",
+          status: memoryKilled ? "failed" : "timeout",
           passed_tests: 0,
           total_tests: suite.tests.length,
           score_ratio: 0,
-          failure_codes: [result.exit_code === 137 ? "resource_limit_exceeded" : "execution_timeout"],
+          failure_codes: [memoryKilled ? "resource_limit_exceeded" : "execution_timeout"],
           runner_image_digest: this.runner_image_digest,
         }
       }
@@ -397,14 +398,38 @@ export class BunDockerCommandExecutor implements DockerCommandExecutor {
       processHandle.exited,
     ])
     clearTimeout(timer)
+    const oomKilled = await this.inspectOomKilled(request.cleanup)
     if (termination) await termination
+    else await this.cleanup(request.cleanup)
     return {
       exit_code: exitCode,
       stdout,
       stderr,
       timed_out: timedOut,
       output_truncated: outputTruncated,
+      oom_killed: oomKilled,
     }
+  }
+
+  private async inspectOomKilled(command: DockerCleanupCommand | undefined): Promise<boolean | undefined> {
+    const containerName = command?.args.at(-1)
+    if (!command || !containerName) return undefined
+    let inspectHandle: ReturnType<typeof Bun.spawn>
+    try {
+      inspectHandle = Bun.spawn([command.command, "inspect", "--format", "{{.State.OOMKilled}}", containerName], {
+        stdin: "ignore", stdout: "pipe", stderr: "ignore", env: dockerCliEnvironment(),
+      })
+    } catch { return undefined }
+    const stdout = inspectHandle.stdout
+    if (!stdout || typeof stdout === "number") {
+      try { inspectHandle.kill() } catch {}
+      return undefined
+    }
+    const timer = setTimeout(() => { try { inspectHandle.kill() } catch {} }, 3_000)
+    const [exitCode, output] = await Promise.all([inspectHandle.exited, new Response(stdout).text()])
+    clearTimeout(timer)
+    if (exitCode !== 0) return undefined
+    return output.trim().toLowerCase() === "true"
   }
 
   private async cleanup(command: DockerCleanupCommand | undefined): Promise<void> {

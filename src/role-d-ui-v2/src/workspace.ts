@@ -61,6 +61,15 @@ export function createEmptyWorkspace(): WorkspaceState {
   return { version: 1, users: [] }
 }
 
+/** 学习者未填称呼时的自动兜底名；同名时追加序号，避免多个学习者无法区分。 */
+export function nextAvailableLearnerName(existing: string[]): string {
+  const base = "新同学"
+  if (!existing.includes(base)) return base
+  let index = 2
+  while (existing.includes(`${base} ${index}`)) index += 1
+  return `${base} ${index}`
+}
+
 export function loadWorkspace(raw: string | null): WorkspaceState {
   if (!raw) return createEmptyWorkspace()
   try {

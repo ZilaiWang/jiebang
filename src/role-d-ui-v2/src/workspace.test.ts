@@ -7,6 +7,7 @@ import {
   loadWorkspace,
   markPlanConceptMastered,
   masteredConceptsForUser,
+  nextAvailableLearnerName,
   planNameFromGoal,
   recordPlanPublicState,
   renamePlan,
@@ -76,5 +77,12 @@ describe("Role D local workspace", () => {
     expect(masteredConceptsForUser(workspace, "learner-lin")).toEqual([])
     workspace = markPlanConceptMastered(workspace, "learner-lin", "plan-loop", "for 循环")
     expect(masteredConceptsForUser(workspace, "learner-lin")).toEqual(["for 循环"])
+  })
+
+  test("names an unnamed learner automatically without colliding with existing names", () => {
+    expect(nextAvailableLearnerName([])).toBe("新同学")
+    expect(nextAvailableLearnerName(["新同学"])).toBe("新同学 2")
+    expect(nextAvailableLearnerName(["新同学", "新同学 2"])).toBe("新同学 3")
+    expect(nextAvailableLearnerName(["林晓"])).toBe("新同学")
   })
 })
