@@ -39,6 +39,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - stdin_stdout_program：学习者提交完整程序，题面按标准输入/输出描述，样例与所有目标共用同一输入形状。
 - debugging_repair：starter_code 必须包含真实存在、可由公开样例复现的缺陷；缺陷数量至少达到 programming_problem.required_mutation_count。先逐行核对 starter 里的实际错误，再写题面，绝不能声称一个代码中不存在的缺陷。题面要求学习者按“复现现象→定位原因→修复→回归验证”完成相互依赖的调试步骤，而不是重写成另一任务。
 - debugging_repair 输出前执行机械自检：starter_code 中不得出现 TODO、pass、NotImplementedError、空函数或“缺陷/错误/修复/正确写法”注释；必须直接放入一份完整可运行、但会在公开样例上产生错误结果的实现。statement 只写正确目标、输入输出和可观察的错误现象，不编号列出缺陷，不解释错误源码表达式，也不写修复后的表达式。
+- debugging_repair 写 starter 时，必须先确定每个 objective 要注入的具体缺陷，然后真的把代码写错，采用这些确定性改写之一（或同类）：制造“分支不互斥”就把本该 elif 的地方写成独立 if；制造“端点/边界错误”就把 range 的起止参数写错一个；制造“条件反转”就把 < 写成 <=（或反之）；制造“索引偏移”就把下标写错 ±1。写完 starter 后把题面声称的现象代入改错的代码逐条复现：如果 starter 对公开样例返回了正确结果、能通过全部示例，说明没有真正注入缺陷，必须重写 starter，直到它确实在至少一个公开或错误路径案例上产生错误现象。
 - debugging_repair 描述缺陷时禁止写源码机制：不得写“某分支在另一分支之前/之后”“条件顺序颠倒”“索引从某值开始”“缺少某行/某操作”“把某变量加到了错误的计数器”等定位性描述；只能用“给定输入 X，观察到错误输出/状态 Y（而正确应为 Z）”的可观察现象形式。写完 starter_code 后必须逐条把 instruction、hints、troubleshooting 声称的现象代入 starter 在心里复现一遍，凡不能在 starter 上真实复现的现象必须删掉，或把 starter 改成能产生该现象、同时仍保留该 objective 目标逻辑的真实缺陷。绝不保留一个代码中不存在的缺陷描述。
 - debugging_repair 必须让 objective_plan 中每个 objective 对应 starter 中一个不同且真实存在的故障，该故障必须直接练习该 objective 所引用的行为或边界事实，并至少有一个公开或错误路径案例可观察到。不得用“验证空输入”“回归检查”等没有实际故障的步骤凑 objective 数量；故障总数必须达到 required_mutation_count。
 - 每处调试修复都应保留并正确使用该 objective 的目标操作；不得通过删除整段目标逻辑、绕开目标操作或改写成无关实现来“修复”。
