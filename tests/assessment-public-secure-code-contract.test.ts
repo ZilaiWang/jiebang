@@ -2,6 +2,33 @@ import { describe, expect, test } from "bun:test"
 import { validateAssessmentPublicSecureCodeContract } from "../src/role-c-content/validators/assessment-validator"
 
 describe("assessment public/secure code contract", () => {
+  test("rejects stdin reads in function-mode assessment code", () => {
+    const issues = validateAssessmentPublicSecureCodeContract({
+      objective_id: "O1",
+      modality: "code",
+      prompt: "补全函数并读取标准输入",
+      starter_code: "def read_value():\n    return input()",
+    } as any, {
+      execution_contract: { execution_mode: "function" },
+      reference_solution: "def read_value():\n    return input()",
+      hidden_tests: [{ input: { args: [], kwargs: {} } }],
+    } as any)
+    expect(issues.map((entry) => entry.code)).toContain("public_secure_code_contract_mismatch")
+  })
+
+  test("accepts function parameters as the complete input channel", () => {
+    expect(validateAssessmentPublicSecureCodeContract({
+      objective_id: "O1",
+      modality: "code",
+      prompt: "返回传入的文本",
+      starter_code: "def normalize_text(raw_text):\n    pass",
+    } as any, {
+      execution_contract: { execution_mode: "function" },
+      reference_solution: "def normalize_text(raw_text):\n    return raw_text",
+      hidden_tests: [{ input: { args: ["hello"], kwargs: {} } }],
+    } as any)).toEqual([])
+  })
+
   test("rejects secure stdin input when public fixed-variable task never disclosed input ownership", () => {
     const issues = validateAssessmentPublicSecureCodeContract({
       objective_id: "OBJ-K006",

@@ -116,6 +116,28 @@ describe("B observable behavior controls C assessment modalities", () => {
     expect(issues.join("\n")).toContain("不能索要具体值")
   })
 
+  test("函数模式代码题在公开命题阶段就拒绝 stdin 输入渠道", () => {
+    const issues = validateAssessmentPublicAuthorAgainstPlan({
+      title: "输入测评",
+      items: [{
+        prompt: "补全 read_user_value，通过 input() 读取一行文字并返回。",
+        options: null,
+        starter_code: "def read_user_value():\n    # TODO\n    raise NotImplementedError('TODO')",
+        structure_meta: {
+          operation: "函数构造",
+          reasoning_pattern: "读取后返回",
+          representation: "函数",
+          context_family: "direct",
+          answer_form: "code",
+        },
+      }],
+    } as any, [{
+      modality: "code",
+      cognitive_operation: "construct_solution",
+    }] as any)
+    expect(issues.join("\n")).toContain("不得调用 input()/stdin")
+  })
+
   test("误区需要的事实未全部进入本题 citations 时不会强制绑定", () => {
     const node = {
       schema_version: "1.0", node_id: "N4", target_source_ids: ["K003"], prerequisite_source_ids: [], goal: "基本数据类型",

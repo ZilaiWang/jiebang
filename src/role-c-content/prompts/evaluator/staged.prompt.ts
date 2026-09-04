@@ -78,7 +78,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - trace 题若当前 cited facts 没有输出函数、比较运算或其他 API 的行为事实，就只追踪 facts 已明确描述的状态、步骤或分支选择，不得自行加入 print/type/len、比较表达式等未被引用支持的运行细节。
 - short_answer 题要求用自然语言解释概念或分析问题
 - code 题给出明确的任务边界、输入输出约束和示例；只把当前 objective/facts 对应的行为留给学习者完成
-- code 题统一使用函数模式：public 必须提供明确函数签名和输入输出合同；starter_code 只保留函数签名、参数以及显式 TODO / pass / raise NotImplementedError 待完成区域，不得包含能直接满足题意的完整实现，也不得把任务改成 stdin_stdout
+- code 题统一使用函数模式：public 必须提供明确函数签名和输入输出合同；starter_code 只保留函数签名、参数以及显式 TODO / pass / raise NotImplementedError 待完成区域，不得包含能直接满足题意的完整实现，也不得把任务改成 stdin_stdout。判题器不会提供 stdin，因此题面、starter_code 和未来参考实现都不得调用 input()/sys.stdin；包括“读取用户输入”在内的目标必须改写为接收字符串或数值参数并返回结果的函数任务
 - code/trace 题不得声称某段“当前代码”会返回或输出某个值，除非该值已根据题面中的实际控制流逐步核算且与代码一致。优先只陈述目标输入输出合同，让学习者补全 starter_code；若需要诊断错误，必须保证所展示的故障代码确实违反至少一个题面验收案例，不能凭空编造“问题现象”
 - observable_behavior 为 recognize 或 explain 时，优先使用选择、判断或短答直接测量事实；若冻结 item_plan 要求 code，旁支语法必须由 starter 提供，只把当前事实对应的最小部分留给学习者
 - 定义事实只能考识别、判断或原意复述。若 evidence 只说“X 是 Y”，不得继续追问 Y 体现在哪些方面、具体用途、应用场景、原因、优点或例子，除非这些内容本身也在 cited facts 中
@@ -152,7 +152,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 3. trace/short_answer 使用可确定验证的 exact、numeric 或 concept_rubric；rubric 权重合计为 1。
 4. 非选择题的 correct_option_id 为 null、misconception_by_option 为空对象；代码题的 answer_spec 也为 null，并按公开代码题顺序在 code_test_suites 中返回 execution_contract、reference_solution 和至少一个只含 input/expected/comparison 的 hidden test。
 5. code 题一律使用 function execution_mode，不得使用 stdin_stdout；entry_point、参数形态与 learner-owned 区域必须严格来自 public starter_code 的函数签名。reference 与隐藏测试遵守该冻结任务合同；hidden_tests.input 统一使用 {"args": [...], "kwargs": {...}}；每个隐藏输入必须与公开题干、示例和 starter 中出现的输入值不同，并同步计算 expected。评分只能覆盖 item_plan 对应 objective/facts；starter 已提供的旁支输入/转换胶水不得被改成评分要求。
-6. function 模式的 expected 与 output_contract 必须对应函数返回值，不能把 print/标准输出当作函数返回值；若题面场景原本是纯打印任务，也必须改写成返回可 JSON 序列化结果的函数题，不得使用 stdin_stdout。
+6. function 模式的 expected 与 output_contract 必须对应函数返回值，不能把 print/标准输出当作函数返回值；不得调用 input()/sys.stdin，所有变化数据由 args/kwargs 对应的函数参数传入。若题面场景原本是读取输入或纯打印任务，也必须改写成接收参数并返回可 JSON 序列化结果的函数题，不得使用 stdin_stdout。
 7. code suite 的 reference 不得动态访问双下划线属性或使用动态执行/内省/文件/进程能力；普通类的 __init__ 定义可用；import 只能来自 execution_contract.allowed_imports。
 8. evidence 涉及文件读写时，代码题使用独立临时目录内的 open/read/write/with；function 测试可带 files 初始文本夹具，按公共策略声明文件和输入约定。不能访问宿主文件。
 9. 不得把私有答案或测试材料复制到任何公开字段，不得声称已经验证。

@@ -582,9 +582,13 @@ export class TrustedCodeLabVerifier implements CodeLabDraftVerifier {
         derive_expected: true,
       }, request.generation_spec.policies.max_tool_retry)
       if (oracle.status !== "passed" || oracle.derived_outputs?.length !== pendingSuite.tests.length) {
-        return result(false, [
-          `可信参考解无法物化 expected：${oracle.failure_codes.join("、") || oracle.status}`,
-        ], this.runner.runner_image_digest, 0, 0, report.objective_coverage)
+        return {
+          ...result(false, [
+            `可信参考解无法物化 expected：${oracle.failure_codes.join("、") || oracle.status}`,
+          ], this.runner.runner_image_digest, 0, 0, report.objective_coverage),
+          reference_failed: true,
+          reference_failure_codes: [...oracle.failure_codes],
+        }
       }
       if (draft.secure_draft.payload.secondary_reference_solution) {
         const secondary = await executeTrustedReferenceWithRetry(this.runner, {

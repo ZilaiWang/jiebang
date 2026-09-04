@@ -2529,6 +2529,9 @@ export function validateAssessmentPublicAuthorAgainstPlan(
       if (!assessmentStarterIsIncomplete(item.starter_code)) {
         issues.push(`items[${index}] 代码题必须提供明确未完成的函数 starter_code，不能直接给出完整答案`)
       }
+      if (assessmentFunctionCodeUsesStdin(item.prompt, item.starter_code)) {
+        issues.push(`items[${index}] 正式代码题使用函数调用评分，题面和 starter_code 不得调用 input()/stdin；所有可变测试数据必须通过函数参数传入`)
+      }
     } else if (item.starter_code !== null) {
       issues.push(`items[${index}] 非代码题的 starter_code 必须为 null`)
     }
@@ -2903,11 +2906,22 @@ export function validateAssessmentPublicAgainstPlan(
     if (expected.modality === "code" && !item.starter_code) {
       issues.push(`items[${index}] 代码题缺少 starter_code`)
     }
+    if (expected.modality === "code" && assessmentFunctionCodeUsesStdin(item.prompt, item.starter_code)) {
+      issues.push(`items[${index}] 正式代码题使用函数调用评分，不得要求读取 input()/stdin；请把数据改为函数参数`)
+    }
     if (item.difficulty_band !== expected.difficulty_band || item.cognitive_level !== expected.cognitive_level) {
       issues.push(`items[${index}] 双重分阶未按 item plan 冻结`)
     }
   })
   return issues
+}
+
+function assessmentFunctionCodeUsesStdin(
+  prompt: string,
+  starterCode: string | null | undefined,
+): boolean {
+  const visible = `${prompt}\n${starterCode ?? ""}`.normalize("NFKC").toLocaleLowerCase()
+  return /\binput\s*\(|\bsys\.stdin\b|标准输入|\bstdin\b/u.test(visible)
 }
 
 export function normalizeAssessmentPublic(

@@ -31,8 +31,17 @@ export function validateAssessmentPublicSecureCodeContract(
   publicItem: Pick<AssessmentItemPublic, "objective_id" | "modality" | "prompt" | "starter_code">,
   suite: { execution_contract: { execution_mode: string }; reference_solution: string; hidden_tests: unknown[] },
 ): ValidationIssue[] {
-  if (publicItem.modality !== "code" || suite.execution_contract.execution_mode !== "stdin_stdout") return []
+  if (publicItem.modality !== "code") return []
   const publicText = `${publicItem.prompt}\n${publicItem.starter_code ?? ""}`.normalize("NFKC").toLocaleLowerCase()
+  if (suite.execution_contract.execution_mode === "function") {
+    const implementationText = `${publicItem.starter_code ?? ""}\n${suite.reference_solution}`
+    const functionReadsStdin = /\binput\s*\(|\bsys\.stdin\b/u.test(implementationText)
+    const publicRequiresStdin = /\binput\s*\(|\bsys\.stdin\b|标准输入|\bstdin\b/u.test(publicText)
+    return functionReadsStdin || publicRequiresStdin
+      ? [issue("public_secure_code_contract_mismatch", "$.secure.code_test_suite", "function 模式由判题器使用 args/kwargs 调用入口函数，不提供 stdin；题面、starter 和参考实现必须通过函数参数接收全部测试数据")]
+      : []
+  }
+  if (suite.execution_contract.execution_mode !== "stdin_stdout") return []
   const publicOwnsInput = /input\s*\(/u.test(publicItem.starter_code ?? "")
     || /(?:读取|获取|输入).{0,16}(?:用户|标准输入|stdin|数值|温度|分数)/u.test(publicText)
   const secureRequiresInput = /input\s*\(|sys\.stdin/u.test(suite.reference_solution)

@@ -7,6 +7,7 @@ import {
   validateConceptTextRevision,
 } from "../review/concept-text-revision"
 import { applyPublicFileFixtures, publicLabInputCases } from "../security/public-lab-inputs"
+import { validatePythonProgramEntry } from "../security/python-program-entry"
 import { conceptOwnedTeachingContract } from "../planning/teaching-unit-contract"
 import type {
   ArtifactDraft,
@@ -982,6 +983,19 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
                   issues.push(`reference_solution 必须声明冻结入口函数 ${entryPoint ?? "（缺失）"} 的可解析签名`)
                 } else if (publicInterface && JSON.stringify(referenceInterface) !== JSON.stringify(publicInterface)) {
                   issues.push("reference_solution 的入口函数签名必须与已发布 starter_code 完全一致")
+                }
+              } else {
+                const sources = [
+                  ["reference_solution", payload.reference_solution] as const,
+                  ...(payload.secondary_reference_solution
+                    ? [["secondary_reference_solution", payload.secondary_reference_solution] as const]
+                    : []),
+                  ...payload.mutation_variants.map((entry, index) =>
+                    [`mutation_variants[${index}].code`, entry.code] as const),
+                ]
+                for (const [path, source] of sources) {
+                  issues.push(...validatePythonProgramEntry(source)
+                    .map((entry) => `${path}: ${entry.message}`))
                 }
               }
               if (Boolean(payload.secondary_reference_solution) !== Boolean(programmingProblem?.require_secondary_oracle)) {
