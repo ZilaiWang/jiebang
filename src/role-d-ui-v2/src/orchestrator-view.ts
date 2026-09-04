@@ -603,6 +603,9 @@ export function isFinalMasterySession(session: any, notice: { final: boolean } |
 }
 
 export function pageForSession(session: any, options?: { feedbackDismissed?: boolean }): OrchestratorPage {
+  // 画像补充追问（建档必填项缺失，B 结构化采集）必须先于一切页面展示，
+  // 否则学习者无法补填必填项，会话会停在 waiting_for_user。
+  if (session?.waiting_for?.type === "profile_answers") return "diagnosis"
   // 画像缺口追问（"卡在哪里"）优先于反馈页：B 需要学习者先回答困难。
   if (session?.waiting_for?.type === "profile_gap_questions") return "diagnosis"
   if (session?.feedback && !options?.feedbackDismissed) return "feedback"

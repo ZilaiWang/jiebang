@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 
 async function checkDockerImage(buildMissing = false): Promise<{ ready: boolean; digest?: string; error?: string }> {
   if (!Bun.which("docker")) {
@@ -57,7 +57,7 @@ import {
 import { validateOrchestratorApiBody, type RunRequestBody, type SessionRequestBody } from "./orchestrator-api-schema"
 import { createRoleCModelGatewayFromEnv } from "../role-c-content/contracts/model-gateway"
 import { deleteLearnerData } from "../privacy/learner-data-deletion"
-import { modelCallPolicy } from "../model-runtime"
+import { modelCallPolicy, fastModelPolicy } from "../model-runtime"
 import { roleCSchemaRegistryMetadata } from "../role-c-content/validators/runtime-schema-validator"
 import { PathRegistryStore, type SessionPathSnapshot } from "./path-registry-store"
 import { validatePathChangeBody, validatePathResumeBody, validateResumeDiagnosisAnswers } from "./path-api-schema"
@@ -76,6 +76,7 @@ interface ErrorBody {
 
 interface LocalProviderConfiguration {
   provider_mode: "model"
+  provider?: "deepseek" | "glm" | "kimi" | "minimax"
   endpoint: string
   model_id: string
   api_key: string
@@ -86,6 +87,7 @@ export interface LearningOrchestratorApiOptions {
   provider_config_path?: string
   provider_environment?: Record<string, string | undefined>
   server_hostname?: string
+  provider_probe?: (config: LocalProviderConfiguration, environment: Record<string, string | undefined>) => Promise<{ ok: boolean; model_id?: string; error?: string }>
 }
 
 const JSON_HEADERS = {
@@ -120,7 +122,7 @@ export function createLearningOrchestratorApiHandler(
           job_worker: sessions.jobWorkerStatus(),
           endpoints: [
             "GET /health",
-            "GET /orchestrator/docker-setup",
+            "POST /orchestrator/docker-setup",
             "GET /orchestrator/docker-status",
             "POST /orchestrator/preflight",
             "GET /orchestrator/provider-config",
@@ -166,7 +168,7 @@ export function createLearningOrchestratorApiHandler(
       }
 
       // Docker 一键自动配置：检测→启动→构建镜像
-      if (request.method === "GET" && url.pathname === "/orchestrator/docker-setup") {
+      if (request.method === "POST" && url.pathname === "/orchestrator/docker-setup") {
         const steps: string[] = []
         if (!Bun.which("docker")) {
           return jsonResponse({ ready: false, steps: ["Docker 未安装"], error: "请安装 Docker Desktop：https://www.docker.com/products/docker-desktop/" })
@@ -269,6 +271,16 @@ export function createLearningOrchestratorApiHandler(
           requireLoopbackOrigin(request)
           const body = await parseJson<Record<string, unknown>>(request)
           const config = validateProviderConfiguration(body)
+          const probe = options.provider_probe
+            ? await options.provider_probe(config, providerEnvironment)
+            : await probeProviderConfiguration(config)
+          if (!probe.ok) {
+            throw new InteractiveSessionError(
+              "PROVIDER_PROBE_FAILED",
+              probe.error ?? "模型配置验证失败，请检查模型、密钥和账户额度",
+              502,
+            )
+          }
           await saveProviderConfiguration(providerConfigPath, config)
           applyProviderConfiguration(config, providerEnvironment)
           return jsonResponse(providerPublicView(config))
@@ -518,11 +530,42 @@ async function readProviderConfiguration(path: string, environment: Record<strin
     return JSON.parse(stripJsonBom(await readFile(path, "utf8"))) as LocalProviderConfiguration
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    const endpoint = environment.ROLE_C_MODEL_ENDPOINT?.trim()
-    const modelId = environment.ROLE_C_MODEL_ID?.trim()
-    const apiKey = environment.ROLE_C_MODEL_API_KEY?.trim()
-    return endpoint && modelId && apiKey ? { provider_mode: "model", endpoint, model_id: modelId, api_key: apiKey } : null
+    const effective = loadProviderEnvironment(environment)
+    const endpoint = effective.ROLE_C_MODEL_ENDPOINT?.trim()
+    const modelId = effective.ROLE_C_MODEL_ID?.trim()
+    const apiKey = effective.ROLE_C_MODEL_API_KEY?.trim()
+    return endpoint && modelId && apiKey
+      ? { provider_mode: "model", provider: inferProvider(endpoint), endpoint, model_id: modelId, api_key: apiKey }
+      : null
   }
+}
+
+function loadProviderEnvironment(environment: Record<string, string | undefined>): Record<string, string | undefined> {
+  const merged: Record<string, string | undefined> = { ...environment }
+  // 真实服务使用 process.env；注入的测试/嵌入环境必须保持隔离，不能
+  // 被当前工作目录的本地密钥文件意外污染。
+  if (environment !== process.env) return merged
+  try {
+    const content = readFileSync(resolve(process.cwd(), ".env.role-c.local"), "utf8")
+    for (const line of content.split(/\r?\n/u)) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith("#")) continue
+      const separator = trimmed.indexOf("=")
+      if (separator <= 0) continue
+      const key = trimmed.slice(0, separator).trim()
+      if (merged[key] === undefined) merged[key] = trimmed.slice(separator + 1).trim()
+    }
+  } catch { /* 配置文件不存在时继续使用进程环境 */ }
+  return merged
+}
+
+function inferProvider(endpoint: string): LocalProviderConfiguration["provider"] {
+  const lower = endpoint.toLocaleLowerCase()
+  if (lower.includes("deepseek")) return "deepseek"
+  if (lower.includes("bigmodel")) return "glm"
+  if (lower.includes("moonshot")) return "kimi"
+  if (lower.includes("minimax")) return "minimax"
+  return undefined
 }
 
 function hydrateProviderEnvironmentFromDisk(
@@ -540,14 +583,21 @@ function hydrateProviderEnvironmentFromDisk(
 }
 
 function validateProviderConfiguration(body: Record<string, unknown>): LocalProviderConfiguration {
+  const provider = typeof body.provider === "string" ? body.provider.trim().toLowerCase() : undefined
   const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : ""
   const modelId = typeof body.model_id === "string" ? body.model_id.trim() : ""
-  const apiKey = typeof body.api_key === "string" ? body.api_key.trim() : ""
-  if (!endpoint || !modelId || !apiKey) throw new InteractiveSessionError("INVALID_PROVIDER_CONFIGURATION", "endpoint, model_id and api_key are required", 400)
+  const rawApiKey = typeof body.api_key === "string" ? body.api_key.trim() : ""
+  // 用户常把请求头完整复制进输入框；只接受纯密钥，自动去掉一个
+  // Bearer 前缀和包裹引号，避免最终发送成 "Bearer Bearer ..."。
+  const apiKey = rawApiKey.replace(/^Bearer\s+/iu, "").replace(/^(?:"|')|(?:"|')$/gu, "").trim()
+  if (!endpoint || !modelId || !apiKey) throw new InteractiveSessionError("INVALID_PROVIDER_CONFIGURATION", "接口地址、模型和 API Key 不能为空", 400)
   let parsed: URL
   try { parsed = new URL(endpoint) } catch { throw new InteractiveSessionError("INVALID_PROVIDER_CONFIGURATION", "endpoint must be an absolute http(s) URL", 400) }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new InteractiveSessionError("INVALID_PROVIDER_CONFIGURATION", "endpoint must use http or https", 400)
-  return { provider_mode: "model", endpoint, model_id: modelId, api_key: apiKey }
+  if (provider && !["deepseek", "glm", "kimi", "minimax"].includes(provider)) {
+    throw new InteractiveSessionError("INVALID_PROVIDER_CONFIGURATION", "provider 必须是 deepseek、glm、kimi 或 minimax", 400)
+  }
+  return { provider_mode: "model", ...(provider ? { provider: provider as LocalProviderConfiguration["provider"] } : {}), endpoint, model_id: modelId, api_key: apiKey }
 }
 
 async function saveProviderConfiguration(path: string, config: LocalProviderConfiguration): Promise<void> {
@@ -565,10 +615,62 @@ function applyProviderConfiguration(config: LocalProviderConfiguration, environm
   environment.ROLE_C_MODEL_ENDPOINT = config.endpoint
   environment.ROLE_C_MODEL_ID = config.model_id
   environment.ROLE_C_MODEL_API_KEY = config.api_key
+  // MODEL_RUNTIME_* 在模型网关中优先级更高；切换供应商时必须同步，
+  // 否则页面验证的是新模型而主 Agent 继续调用旧模型。
+  environment.MODEL_RUNTIME_ENDPOINT = config.endpoint
+  environment.MODEL_RUNTIME_MODEL_ID = config.model_id
+  environment.MODEL_RUNTIME_API_KEY = config.api_key
+}
+
+async function probeProviderConfiguration(
+  config: LocalProviderConfiguration,
+): Promise<{ ok: boolean; model_id?: string; error?: string }> {
+  try {
+    const environment: Record<string, string | undefined> = {
+      ROLE_C_MODEL_ENDPOINT: config.endpoint,
+      ROLE_C_MODEL_ID: config.model_id,
+      ROLE_C_MODEL_API_KEY: config.api_key,
+      ROLE_C_MODEL_RESPONSE_FORMAT: "json_object",
+      ROLE_C_MODEL_THINKING: "disabled",
+      ROLE_C_MODEL_TIMEOUT_MS: "30000",
+      ROLE_C_MODEL_MAX_RETRIES: "0",
+      MODEL_RUNTIME_MAX_MODEL_CALLS: "1",
+      // 探测使用 30 秒业务预算时，软/硬截止时间必须成对设置；
+      // 否则软截止时间会回退到 600000，触发 hard < soft 的非法预算。
+      MODEL_RUNTIME_JOB_SOFT_DEADLINE_MS: "30000",
+      MODEL_RUNTIME_JOB_HARD_DEADLINE_MS: "30000",
+    }
+    const gateway = createRoleCModelGatewayFromEnv(environment)
+    const value = await gateway.generateStructured<{ ok: true }>({
+      task: "runtime.provider-config.probe",
+      system_prompt: "只输出 JSON：{\"ok\":true}。不要输出其他内容。",
+      input: { probe: "KnowBalance provider configuration" },
+      output_schema_id: "provider_config_probe_v1",
+      output_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["ok"],
+        properties: { ok: { type: "boolean", const: true } },
+      },
+      temperature: 0,
+      max_tokens: 32,
+      idempotency_key: `provider-config-probe-${crypto.randomUUID()}`,
+      policy: fastModelPolicy("PROVIDER_CONFIGURATION_PROBE", 32, {
+        timeout_ms: 30000,
+        max_transport_retries: 0,
+        response_format: "json_object",
+      }),
+    })
+    return value.ok === true
+      ? { ok: true, model_id: gateway.model_id }
+      : { ok: false, error: "模型返回内容不符合验证格式" }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message.slice(0, 500) : "模型连通性验证失败" }
+  }
 }
 
 function providerPublicView(config: LocalProviderConfiguration | null) {
-  return { configured: Boolean(config), provider_mode: "model", endpoint: config?.endpoint ?? "", model_id: config?.model_id ?? "" }
+  return { configured: Boolean(config), provider_mode: "model", provider: config?.provider ?? "", endpoint: config?.endpoint ?? "", model_id: config?.model_id ?? "" }
 }
 
 function stripJsonBom(text: string): string {
@@ -647,9 +749,8 @@ async function checkModelRuntime(
 }> {
   try {
     const gateway = createRoleCModelGatewayFromEnv(environment)
-    if (!gateway.model_id.toLocaleLowerCase().startsWith("glm-5.2")) {
-      throw new Error(`PREFLIGHT_MODEL_MISMATCH: 需要 glm-5.2，当前为 ${gateway.model_id}`)
-    }
+    // 供应商由本机 provider-config 决定；预检不能再写死某一个模型。
+    // DeepSeek、GLM、Kimi、MiniMax 都通过同一 OpenAI 兼容协议探测。
     const schema = {
       type: "object",
       additionalProperties: false,

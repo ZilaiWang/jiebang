@@ -6,13 +6,18 @@ import {
 
 describe("docker runner failure codes preserve assertion diffs", () => {
   test("explicit timeout signals remain distinct from memory/SIGKILL termination", async () => {
-    for (const exitCode of [124, 152, 137]) {
+    for (const { exitCode, oomKilled } of [
+      { exitCode: 124, oomKilled: false },
+      { exitCode: 152, oomKilled: false },
+      { exitCode: 137, oomKilled: false },
+      { exitCode: 137, oomKilled: true },
+    ]) {
       let args: string[] = []
       const runner = new DockerPythonCodeRunner({
         image_id: "sha256:" + "a".repeat(64),
         executor: { async run(request) {
           args = request.args
-          return { exit_code: exitCode, stdout: "", stderr: "", timed_out: false, output_truncated: false }
+          return { exit_code: exitCode, stdout: "", stderr: "", timed_out: false, output_truncated: false, oom_killed: oomKilled }
         } },
       })
       const limits = { timeout_ms: 300, memory_mb: 64, max_output_bytes: 4096 }
@@ -21,8 +26,8 @@ describe("docker runner failure codes preserve assertion diffs", () => {
         tests: [{ test_id: "t", input: "", expected: "", objective_id: "o", weight: 1, comparison: { kind: "exact" } }],
       }, ...limits, network_allowed: false })
       expect(args).toContain("cpu=1:2")
-      expect(result.status).toBe(exitCode === 137 ? "failed" : "timeout")
-      expect(result.failure_codes).toEqual([exitCode === 137 ? "resource_limit_exceeded" : "execution_timeout"])
+      expect(result.status).toBe(oomKilled ? "failed" : "timeout")
+      expect(result.failure_codes).toEqual([oomKilled ? "resource_limit_exceeded" : "execution_timeout"])
     }
   })
   test("Docker 启动开销不挤占学习者程序的执行时限", async () => {
