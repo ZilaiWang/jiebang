@@ -151,5 +151,6 @@ export const CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT = `${CODE_LAB_PUBLIC_
 5. contract.artifact_task.lab.learner_owned_dependent_steps 个核心调试动作仍由学习者完成。
 6. 若 reviewer 指出“题面声称的缺陷在实际 starter 中不存在或与实际代码不符”，二选一修复：把该缺陷真实注入 starter 并同步修正题面现象，或把题面现象改为 starter 实际能复现的现象；禁止保留一个代码中不存在的缺陷描述。缺陷描述仍只能用“给定输入 X → 错误输出/状态 Y”的可观察现象，不得写源码机制。
 7. 若 reviewer 指出 troubleshooting（或任何指南/说明）包含 cited_facts 未提供的语言机制断言（print 用法、语法错误触发条件、缩进对齐规则、循环体归属、异常类型等），必须删除该机制并改为锚定 cited_facts：症状写“学习者输出/结果与某条 cited_fact 描述不符”，原因写“没有正确体现该 cited_fact”，恢复写“对照该 cited_fact 核对并修正”。不得为保留 troubleshooting 的“原因”而继续编造证据外机制；若 cited_facts 不足以支撑“原因”，只保留可观察症状与对照核对动作即可。
+8. 若 reviewer 指出 execution_contradiction（声称的缺陷现象与 starter 实际行为矛盾）或 instructional_contract_mismatch（starter 已正确、无可定位缺陷），说明 starter 没有真正注入缺陷，只声称了缺陷。必须先改 starter：把对应的正确分支/循环/索引改成会真实产生该现象的错误实现——例如声称“某日志出现两次”就必须把 elif 改成 if（违反 if/elif/else 互斥语义）使该分支可能重复触发，声称“多返回了日志/少返回了日志”就必须真的写错循环边界或分支条件。再把题面现象、practical_guide 的 expected_result 与改后的 starter 逐条对齐，保证每个声称的现象都能在改后的 starter 上真实复现。绝不允许保留正确代码却声称它出错。
 
 只输出修订后的完整 Schema JSON。`
