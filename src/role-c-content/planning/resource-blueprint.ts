@@ -467,15 +467,20 @@ export function buildDifficultyPlan(
   spec: GenerationSpec,
   options: { assessment_plan?: AssessmentItemPlan[] } = {},
 ): ResourceDifficultyPlan {
-  if (spec.artifact_tasks) {
-    return Object.fromEntries(Object.entries(spec.artifact_tasks).map(([kind, task]) => {
-      const { challenge, support } = splitDifficultyVector(task.difficulty_vector)
-      return [kind, { challenge_target: challenge, support_target: { ...support, ...(kind === "code_lab" ? { starter_support: (task.lab?.starter_completion_ratio_ceiling ?? 0) * 5 } : { starter_support: 0 }) } }]
-    })) as ResourceDifficultyPlan
-  }
   const difficulty = spec.difficulty
     ?? adaptationDefaults(spec.learner_adaptation?.level ?? "basic").difficulty
-  const { challenge, support } = splitDifficultyVector(difficulty)
+  // artifact_tasks may carry resource-specific challenge vectors, but they do
+  // not replace the semantic rules of each resource: lessons remain guided,
+  // labs expose optional scaffolding, and formal assessments remain unhinted.
+  const conceptBase = splitDifficultyVector(
+    spec.artifact_tasks?.concept_lesson.difficulty_vector ?? difficulty,
+  )
+  const codeLabBase = splitDifficultyVector(
+    spec.artifact_tasks?.code_lab.difficulty_vector ?? difficulty,
+  )
+  const assessmentBase = splitDifficultyVector(
+    spec.artifact_tasks?.assessment.difficulty_vector ?? difficulty,
+  )
   const learnerLevel = spec.learner_adaptation?.level ?? "basic"
   const assessmentBlueprint = spec.assessment_blueprint
   const plannedPrerequisiteLoad = spec.path_node?.prerequisite_source_ids?.length ?? 0
@@ -484,66 +489,73 @@ export function buildDifficultyPlan(
     assessmentBlueprint,
     spec.learner_adaptation?.preferred_contexts ?? [],
   )
+  const hasAssessmentPlan = Boolean(options.assessment_plan?.length || assessmentBlueprint)
 
   const concept: ResourceDifficultyPlanEntry = {
     challenge_target: {
-      ...challenge,
+      ...conceptBase.challenge,
       // 讲义降低阅读密度与表达坡度，但不能把学习目标本身降一档。
       // basic 学习者仍需在讲义中完成简单应用，而不是被重新测成纯识记。
-      cognitive_demand: clamp5(Math.max(1, challenge.cognitive_demand)),
-      reasoning_steps: clamp5(Math.max(1, challenge.reasoning_steps)),
-      code_complexity: clamp5(challenge.code_complexity - 1),
+      cognitive_demand: clamp5(Math.max(1, conceptBase.challenge.cognitive_demand)),
+      reasoning_steps: clamp5(Math.max(1, conceptBase.challenge.reasoning_steps)),
+      code_complexity: clamp5(conceptBase.challenge.code_complexity - 1),
       prerequisite_load: clamp5(Math.max(
-        challenge.prerequisite_load,
+        conceptBase.challenge.prerequisite_load,
         plannedPrerequisiteLoad,
       )),
-      ...(challenge.transfer_distance !== undefined
-        ? { transfer_distance: clamp5(challenge.transfer_distance - 1) }
+      ...(conceptBase.challenge.transfer_distance !== undefined
+        ? { transfer_distance: clamp5(conceptBase.challenge.transfer_distance - 1) }
         : {}),
     },
     support_target: {
-      scaffold_strength: clamp5(support.scaffold_strength + 1),
+      scaffold_strength: clamp5(conceptBase.support.scaffold_strength + 1),
       reading_density: "low",
-      hint_strength: clamp5(support.hint_strength + 1),
+      hint_strength: clamp5(conceptBase.support.hint_strength + 1),
       starter_support: 0,
     },
   }
 
   const codeLab: ResourceDifficultyPlanEntry = {
     challenge_target: {
-      ...challenge,
-      reasoning_steps: clamp5(challenge.reasoning_steps + 0.5),
-      code_complexity: clamp5(Math.max(challenge.code_complexity, 1)),
+      ...codeLabBase.challenge,
+      reasoning_steps: clamp5(codeLabBase.challenge.reasoning_steps + 0.5),
+      code_complexity: clamp5(Math.max(codeLabBase.challenge.code_complexity, 1)),
+      prerequisite_load: clamp5(Math.max(
+        codeLabBase.challenge.prerequisite_load,
+        plannedPrerequisiteLoad,
+      )),
     },
     support_target: {
-      scaffold_strength: clamp5(support.scaffold_strength),
-      reading_density: support.reading_density,
+      scaffold_strength: clamp5(codeLabBase.support.scaffold_strength),
+      reading_density: codeLabBase.support.reading_density,
       hint_strength: clamp5(Math.max(
-        support.hint_strength,
+        codeLabBase.support.hint_strength,
         learnerLevel === "beginner" ? 3 : learnerLevel === "basic" ? 2 : 1,
       )),
-      starter_support: clamp5(Math.max(
-        support.starter_support,
-        learnerLevel === "beginner" ? 3 : learnerLevel === "basic" ? 2 : 1,
-      )),
+      starter_support: spec.artifact_tasks?.code_lab.lab
+        ? clamp5(spec.artifact_tasks.code_lab.lab.starter_completion_ratio_ceiling * 5)
+        : clamp5(Math.max(
+            codeLabBase.support.starter_support,
+            learnerLevel === "beginner" ? 3 : learnerLevel === "basic" ? 2 : 1,
+          )),
     },
   }
 
   const assessment: ResourceDifficultyPlanEntry = {
     challenge_target: {
-      ...challenge,
-      cognitive_demand: clamp5(Math.max(
-        challenge.cognitive_demand,
-        assessmentChallenge.cognitive_demand,
-      )),
-      reasoning_steps: clamp5(Math.max(
-        challenge.reasoning_steps,
-        assessmentChallenge.reasoning_steps,
-      )),
-      transfer_distance: clamp5(Math.max(
-        challenge.transfer_distance ?? 0,
-        assessmentChallenge.transfer_distance,
-      )),
+      ...assessmentBase.challenge,
+      // These three dimensions are owned by the actual item plan.  Taking the
+      // maximum with a generic learner vector asks the author for work that the
+      // frozen assessment plan may not contain, then penalizes the result.
+      cognitive_demand: clamp5(hasAssessmentPlan
+        ? assessmentChallenge.cognitive_demand
+        : assessmentBase.challenge.cognitive_demand),
+      reasoning_steps: clamp5(hasAssessmentPlan
+        ? assessmentChallenge.reasoning_steps
+        : assessmentBase.challenge.reasoning_steps),
+      transfer_distance: clamp5(hasAssessmentPlan
+        ? assessmentChallenge.transfer_distance
+        : (assessmentBase.challenge.transfer_distance ?? 0)),
     },
     support_target: {
       scaffold_strength: 0,

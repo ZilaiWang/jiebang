@@ -198,6 +198,12 @@ describe("evaluation v2 production integration", () => {
     expect(difficulty.cognitive_demand).toBe(4)
     expect(plan.concept_lesson.challenge_target.cognitive_demand).toBe(3)
     expect(plan.assessment.challenge_target.cognitive_demand).toBe(4)
+    expect(plan.assessment.support_target).toEqual({
+      scaffold_strength: 0,
+      reading_density: "high",
+      hint_strength: 0,
+      starter_support: 0,
+    })
     for (const task of Object.values(tasks))
       expect(task).not.toHaveProperty("expected_difficulty")
   })

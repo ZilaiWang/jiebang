@@ -50,8 +50,8 @@ describe("Role C shared resource blueprint", () => {
     expect(blueprint.assessment.item_plan.some((item) =>
       item.tier === 3 && item.presentation_mode === "construction")).toBe(true)
     expect(blueprint.difficulty_plan.assessment.challenge_target.transfer_distance).toBe(0)
-    // 整卷按题目分值加权：两道识别、一道理解、一道应用与一道分析题
-    // 的认知目标恰为 2；Tier 3 构造题仍通过 item_plan 保持 analyze。
+    // 整卷目标由实际 item_plan 决定。本例同时冻结了 Tier 1/2/3，
+    // 按分值加权后认知需求为 2，不应被某个 recognize 目标代表整卷。
     expect(blueprint.difficulty_plan.assessment.challenge_target.cognitive_demand).toBe(2)
     expect(Object.isFrozen(blueprint)).toBe(true)
   })
@@ -107,7 +107,7 @@ describe("resource blueprint difficulty_plan（三类资源目标难度分化）
     expect(plan.concept_lesson.challenge_target.domain_complexity).toBe(2)
     expect(plan.concept_lesson.challenge_target.cognitive_demand).toBe(2)
     expect(plan.code_lab.challenge_target.reasoning_steps).toBe(2.5)
-    expect(plan.assessment.challenge_target.cognitive_demand).toBe(2)
+    expect(plan.assessment.challenge_target.cognitive_demand).toBe(1)
   })
 
   test("缺 difficulty 时用画像 level 默认值兜底，不抛错", () => {

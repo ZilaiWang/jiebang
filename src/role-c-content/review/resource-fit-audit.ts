@@ -129,7 +129,6 @@ function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
   })
   const maxWorkedDepth = Math.max(0, ...workedStepDepths)
   const misconceptionDepth = payload.misconceptions.length
-  const hintCount = payload.hint_ladders.reduce((sum, ladder) => sum + ladder.hints.length, 0)
   const microCheckCount = payload.micro_checks.length
   const blockCount = payload.prerequisite_bridge.length
     + payload.explanation_blocks.length
@@ -144,7 +143,16 @@ function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
   const textLength = visibleBlocks.reduce((sum, block) =>
     sum + learnerVisibleBlockText(block).length, 0)
     + payload.misconceptions.reduce((sum, item) => sum + item.explanation.length, 0)
-  const hintStrength = CLAMP(hintCount * 1.2)
+  const hintStrength = progressiveHintAvailability(payload.hint_ladders)
+  // A complete lesson can expose a progressive hint ladder without giving all
+  // hints up front.  Count the compulsory teaching structures once instead of
+  // adding every hidden hint level to the same scaffold score.
+  const scaffoldStrength = CLAMP(
+    (payload.prerequisite_bridge.length > 0 ? 1 : 0)
+      + (payload.worked_examples.length > 0 ? 1 : 0)
+      + (microCheckCount > 0 ? 1 : 0)
+      + (misconceptionDepth > 0 ? 0.5 : 0),
+  )
 
   return {
     challenge: {
@@ -152,7 +160,7 @@ function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
       // Multiple worked examples are additional scaffolding, not cumulative
       // learner challenge. Measure the deepest single example instead of
       // summing every demonstration in the lesson.
-      cognitive_demand: CLAMP(1 + Math.min(2, maxWorkedExampleCognitiveSignal(payload) * 0.5)),
+      cognitive_demand: CLAMP(1 + Math.min(2, maxWorkedExampleCognitiveSignal(payload) * 0.3)),
       reasoning_steps: CLAMP(guidedReasoningDepth(maxWorkedDepth)),
       code_complexity: CLAMP(Math.max(0, ...codeBlockTexts.map(codeBlockComplexity))),
       prerequisite_load: CLAMP(payload.prerequisite_bridge.length),
@@ -163,7 +171,7 @@ function estimateConceptLesson(payload: ConceptLessonPayload): Observed {
       task_composition: CLAMP(Math.max(0, payload.objective_ids.length - 1)),
     },
     support: {
-      scaffold_strength: CLAMP(hintStrength + microCheckCount * 0.4 + misconceptionDepth * 0.4),
+      scaffold_strength: scaffoldStrength,
       reading_density: readingDensity(textLength, blockCount),
       hint_strength: hintStrength,
       starter_support: 0,
@@ -188,7 +196,10 @@ function codeBlockComplexity(code: string): number {
   const functionDefs = lines.filter((line) => /^def\s+/u.test(line)).length
   // A one-line print/assignment demonstration is presentation glue.  Count
   // branching, loops and functions much more than the number of examples.
-  return Math.min(5, Math.max(0.5, (lines.length - 1) * 0.35 + controlFlow * 1.2 + functionDefs * 1.5))
+  // Code shown inside a worked example is explanatory material, not a
+  // learner-owned implementation task.  Keep branches/functions visible, but
+  // do not rate a short runnable example like a full coding exercise.
+  return Math.min(5, Math.max(0.5, (lines.length - 1) * 0.15 + controlFlow * 0.6 + functionDefs * 0.8))
 }
 
 function maxWorkedExampleCognitiveSignal(payload: ConceptLessonPayload): number {
@@ -217,6 +228,7 @@ function conceptTransferSignal(payload: ConceptLessonPayload): number {
 function estimateCodeLab(payload: CodeLabPublicPayload): Observed {
   const hintCount = payload.hint_ladders.reduce((sum, ladder) => sum + ladder.hints.length, 0)
   const starterSupport = estimateStarterSupport(payload.starter_code)
+  const hintStrength = progressiveHintAvailability(payload.hint_ladders)
   const distinctSources = new Set(payload.used_evidence.map((entry) => entry.source_id)).size
   const visibleTextLength = payload.instructions.reduce((sum, block) =>
     sum + learnerVisibleBlockText(block).length, 0)
@@ -238,9 +250,16 @@ function estimateCodeLab(payload: CodeLabPublicPayload): Observed {
       task_composition: CLAMP(Math.max(0, payload.objective_ids.length - 1)),
     },
     support: {
-      scaffold_strength: CLAMP(hintCount * 0.8 + starterSupport * 0.5),
+      // Only compulsory support changes the initial task difficulty.  Levels 2
+      // and 3 are learner-requested and are reported separately, not added a
+      // second time to scaffold_strength.
+      scaffold_strength: CLAMP(
+        starterSupport
+          + (payload.instructions.length > 0 ? 0.5 : 0)
+          + (payload.public_tests.length > 0 ? 0.5 : 0),
+      ),
       reading_density: readingDensity(visibleTextLength, visibleBlockCount),
-      hint_strength: CLAMP(hintCount * 1.2),
+      hint_strength: hintStrength,
       starter_support: starterSupport,
     },
     confidence: 0.9,
@@ -250,7 +269,6 @@ function estimateCodeLab(payload: CodeLabPublicPayload): Observed {
 function estimateAssessment(payload: AssessmentPublicPayload): Observed {
   const items = payload.items
   const itemDemands = items.map(assessmentItemDemand)
-  const distinctOperations = new Set(items.map((item) => item.structure_meta?.operation).filter(Boolean)).size
   const scoreWeights = items.map((item) => Math.max(1, item.max_score))
   const totalWeight = scoreWeights.reduce((sum, value) => sum + value, 0)
   // 正式测评是一组题目的测量组合，不能让单道高阶题的最大值代表整卷。
@@ -270,12 +288,15 @@ function estimateAssessment(payload: AssessmentPublicPayload): Observed {
       // observed 读取真实题面/题型/结构元数据，不再由 Tier 数量复制 target。
       cognitive_demand: CLAMP(cognitiveDemand),
       reasoning_steps: CLAMP(reasoningSteps),
-      code_complexity: CLAMP(items.filter((item) => item.modality === "code").length),
+      // Complexity/composition are properties of the hardest planned item,
+      // not counts of how many different modalities appear in the form.
+      code_complexity: CLAMP(Math.max(0, ...itemDemands.map((item) => item.code))),
       prerequisite_load: CLAMP(Math.max(0,
         new Set(payload.used_evidence.map((entry) => entry.source_id)).size - 1,
       )),
       transfer_distance: transferDistance,
-      task_composition: CLAMP(Math.max(0, distinctOperations - 1)),
+      boundary_condition_density: CLAMP(Math.max(0, ...itemDemands.map((item) => item.boundary))),
+      task_composition: CLAMP(Math.max(0, ...itemDemands.map((item) => item.composition))),
     },
     support: {
       scaffold_strength: 0,
@@ -291,6 +312,9 @@ function assessmentItemDemand(item: AssessmentPublicPayload["items"][number]): {
   cognitive: number
   reasoning: number
   transfer: number
+  code: number
+  boundary: number
+  composition: number
 } {
   const meta = item.structure_meta
   // 只用任务结构元数据估计认知操作。题干里的领域事实可能自然包含“编写程序”
@@ -328,7 +352,19 @@ function assessmentItemDemand(item: AssessmentPublicPayload["items"][number]): {
     : /迁移|transfer/u.test(structuredSurface)
       ? 2
       : 1
-  return { cognitive, reasoning, transfer }
+  // Mentioning a boundary fact (for example "range excludes the stop value")
+  // in a direct-recognition question does not make the learner solve an edge
+  // case.  Only the frozen task structure may declare boundary reasoning.
+  const boundary = /boundary|edge|invalid_input|empty_input|exception_path|边界分析|异常路径/u.test(structuredSurface)
+    ? 3
+    : 0
+  const code = construction ? 4 : item.modality === "code" ? 3 : 0
+  const composition = construction || diagnosis
+    ? 3
+    : multistep
+      ? 2
+      : 0
+  return { cognitive, reasoning, transfer, code, boundary, composition }
 }
 
 function estimateStarterSupport(starterCode: string): number {
@@ -336,7 +372,13 @@ function estimateStarterSupport(starterCode: string): number {
   if (lines.length === 0) return 0
   const guidedPlaceholders = lines.filter((line) => /^#.*TODO\s*:\s*\S+/u.test(line)).length
   const placeholders = lines.filter((line) => /TODO|^pass$|^\.\.\.$/u.test(line)).length
-  const providedStructure = lines.length - placeholders
+  // Natural-language comments explain the task but are not completed program
+  // structure.  Counting them as executable starter code made a comment-heavy
+  // skeleton look almost finished.
+  const executableLines = lines.filter((line) => !line.startsWith("#"))
+  const executablePlaceholders = executableLines.filter((line) =>
+    /^pass$|^\.\.\.$|^raise\s+NotImplementedError\b/u.test(line)).length
+  const providedStructure = executableLines.length - executablePlaceholders
   // 函数签名、输入输出外壳、初始化代码都属于真实支架；TODO 本身只标出工作位，
   // 不能反向当成“完成度越低、支持越强”。
   const barePlaceholders = Math.max(0, placeholders - guidedPlaceholders)
@@ -345,6 +387,22 @@ function estimateStarterSupport(starterCode: string): number {
       + guidedPlaceholders * 0.8
       + Math.min(1, barePlaceholders) * 0.5,
   )
+}
+
+function progressiveHintAvailability(
+  ladders: Array<{ hints: Array<{ hint_level: number }> }>,
+): number {
+  if (ladders.length === 0) return 0
+  // A three-level ladder is an adaptive capability: level 2/3 are not exposed
+  // until requested.  Measure the depth of the ladder, never multiply it by
+  // objective count or treat all levels as simultaneous help.
+  const strengths = ladders.map((ladder) => {
+    const levels = new Set(ladder.hints.map((hint) => hint.hint_level))
+    if (levels.has(1) && levels.has(2) && levels.has(3)) return 3
+    if (levels.size >= 2) return 2
+    return levels.size === 1 ? 1 : 0
+  })
+  return CLAMP(Math.max(...strengths))
 }
 
 function learnerVisibleBlockText(block: unknown): string {
@@ -401,18 +459,19 @@ function computeFit(
     const targetValue = target.support_target[dimension]
     const observedValue = observed.support[dimension]
     const gap = observedValue - targetValue
+    const applicable = supportDimensionApplicable(kind, dimension)
     dimensions.push({
       name: dimension,
       family: "support",
       target: targetValue,
       observed: observedValue,
-      applicable: supportDimensionApplicable(kind, dimension),
+      applicable,
       weight: 1,
       tolerance: 2,
       direction: "higher_is_more_supportive",
       basis: [{ feature: dimension, value: observedValue }],
     })
-    if (Math.abs(gap) <= 1.5) continue
+    if (!applicable || Math.abs(gap) <= 1.5) continue
     mismatched.push(dimension)
     reasons.push(`${dimension}_${observedValue}_vs_target_${targetValue}`)
     // 支持不足会让资源偏难；支持过强会让资源偏易。
@@ -428,12 +487,18 @@ function computeFit(
     observed: readingSupport(observed.support.reading_density),
     // 阅读密度对三类公开资源都适用；即使完全匹配也应作为真实适用维度计入。
     applicable: true,
-    weight: 1,
-    tolerance: 2,
+    // Three coarse density buckets are much less precise than structural code
+    // or reasoning measurements, so density is a supporting signal rather
+    // than a full-strength penalty.
+    weight: 0.5,
+    tolerance: 4,
     direction: "higher_is_more_supportive",
     basis: [{ feature: "reading_density", value: observed.support.reading_density }],
   })
-  if (Math.abs(readingGap) > 1) {
+  // Adjacent coarse buckets (low↔medium or medium↔high) are a mild signal and
+  // already contribute to the numeric score.  Only a two-bucket difference is
+  // strong enough to change the categorical verdict.
+  if (Math.abs(readingGap) > 2) {
     mismatched.push("reading_density")
     reasons.push(`reading_density_${observed.support.reading_density}_vs_target_${target.support_target.reading_density}`)
     ;(readingGap < 0 ? hardSignals : easySignals).push("reading_density")
@@ -469,7 +534,14 @@ function challengeDimensionApplicable(
   target: number,
   observed: number,
 ): boolean {
-  if (["domain_complexity", "cognitive_demand", "reasoning_steps", "prerequisite_load"].includes(dimension)) {
+  // Domain complexity is semantic and cannot be inferred from objective count;
+  // leave it visible in the report until a semantic judge supplies evidence.
+  if (dimension === "domain_complexity") return false
+  if (dimension === "prerequisite_load") return kind !== "assessment"
+  if (kind === "assessment" && dimension === "code_complexity") {
+    return observed > 0
+  }
+  if (["cognitive_demand", "reasoning_steps"].includes(dimension)) {
     return true
   }
   if (kind === "concept_lesson" && dimension === "code_complexity") return target !== 0 || observed !== 0
@@ -482,6 +554,9 @@ function supportDimensionApplicable(
 ): boolean {
   if (kind === "assessment") return false
   if (kind === "concept_lesson" && dimension === "starter_support") return false
+  // Hint ladders are revealed on demand.  Their availability is useful audit
+  // metadata, but it does not change the default difficulty of the artifact.
+  if (dimension === "hint_strength") return false
   return true
 }
 

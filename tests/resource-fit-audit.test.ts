@@ -251,7 +251,76 @@ describe("resource-fit-audit：生成后实际难度估计与匹配判定", () =
     })
     expect(entry.fit.verdict).not.toBe("fit")
     expect(entry.fit.mismatched_dimensions).toContain("scaffold_strength")
-    expect(entry.fit.mismatched_dimensions).toContain("hint_strength")
+    expect(entry.fit.mismatched_dimensions).not.toContain("hint_strength")
+    expect(entry.fit.dimensions.find((item) => item.name === "hint_strength")?.applicable).toBe(false)
+  })
+
+  test("代码实验：按需三级提示和注释不会被重复算成已给予的强支架", () => {
+    const entry = auditResourceFit({
+      artifact_id: "lab-progressive-hints",
+      kind: "code_lab",
+      target: {
+        challenge_target: {
+          domain_complexity: 1.5, cognitive_demand: 1.5, reasoning_steps: 2,
+          code_complexity: 2, prerequisite_load: 0, transfer_distance: 0.5,
+          boundary_condition_density: 0, task_composition: 0,
+        },
+        support_target: {
+          scaffold_strength: 2, reading_density: "medium", hint_strength: 2, starter_support: 2,
+        },
+      },
+      payload: {
+        lab_id: "lab", title: "遍历列表", objective_ids: ["O1"],
+        instructions: [{ block_id: "i", block_type: "paragraph", text: "遍历并输出。", citations: [] }],
+        execution_contract: {},
+        starter_code: "# 已给出任务数据\nrecords = [1, 2, 3]\n# TODO: 编写循环\n# 输出当前元素",
+        public_tests: [{ test_id: "t", description: "输出三个元素", input: "" }],
+        hint_ladders: [{ objective_id: "O1", hints: [
+          { hint_level: 1, text: "先确定遍历对象。", citations: [] },
+          { hint_level: 2, text: "循环变量依次绑定元素。", citations: [] },
+          { hint_level: 3, text: "在循环体输出当前元素。", citations: [] },
+        ] }],
+        reflection_questions: ["循环变量如何变化？"], objective_coverage: [], used_evidence: [],
+      } as never,
+    })
+    expect(entry.observed.support.starter_support).toBeLessThanOrEqual(2)
+    expect(entry.fit.dimensions.find((item) => item.name === "hint_strength")?.applicable).toBe(false)
+    expect(entry.fit.mismatched_dimensions).not.toContain("hint_strength")
+    expect(entry.fit.mismatched_dimensions).not.toContain("reading_density")
+    expect(entry.fit.score).toBeGreaterThanOrEqual(0.85)
+  })
+
+  test("测评：不适用的提示与支架差异不改变 fit verdict", () => {
+    const entry = auditResourceFit({
+      artifact_id: "assessment-no-support",
+      kind: "assessment",
+      target: {
+        challenge_target: {
+          domain_complexity: 1.5, cognitive_demand: 1, reasoning_steps: 1,
+          code_complexity: 0, prerequisite_load: 0, transfer_distance: 0,
+          boundary_condition_density: 0, task_composition: 0,
+        },
+        support_target: {
+          scaffold_strength: 5, reading_density: "high", hint_strength: 5, starter_support: 5,
+        },
+      },
+      payload: {
+        form_id: "f", title: "直接识别", objective_ids: ["O1"],
+        items: [{
+          item_id: "i", family_id: "fam", variant_id: "v", display_no: 1,
+          objective_id: "O1", tier: 1, modality: "mcq", prompt: "识别事实", max_score: 1,
+          citations: [], structure_meta: {
+            operation: "recognize_fact", reasoning_pattern: "single_direct_match",
+            representation: "text", context_family: "direct", answer_form: "single_choice",
+          },
+        }],
+        submission_policy: { max_attempts: 1, formative: false },
+        routing: { anchor_item_ids: [], rules: [] }, objective_coverage: [], used_evidence: [],
+      } as never,
+    })
+    expect(entry.fit.verdict).toBe("fit")
+    expect(entry.fit.mismatched_dimensions).not.toContain("scaffold_strength")
+    expect(entry.fit.mismatched_dimensions).not.toContain("hint_strength")
   })
 
   test("buildResourceFitReport 聚合 overall verdict 与 score", () => {
