@@ -81,9 +81,14 @@ export function validateCodeLabPublicSecureSeparation(
         `公开产物包含隐藏测试 ${test.test_id} 的输入值`,
       ))
     }
-    if (hasPrivateCase && containsExpectedSecret(
+    // A result value by itself is not a hidden case: common values such as
+    // true, 0 or a category label may legitimately occur in instructions.
+    // It becomes a leak only when one learner-visible surface discloses the
+    // private input and its result together. Exact public/hidden input reuse
+    // remains independently blocked above.
+    if (hasPrivateCase && containsPrivateCasePair(
       publicLearnerStrings,
-      publicLearnerText,
+      test.input,
       test.expected,
     )) {
       const expectedStr = typeof test.expected === "string"

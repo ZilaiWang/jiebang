@@ -34,4 +34,29 @@ describe("Role C hidden case leakage detector", () => {
     const codes = validateCodeLabPublicSecureSeparation(publicPayload, securePayload).issues.map((issue) => issue.code)
     expect(codes).toContain("hidden_test_input_leak")
   })
+
+  test("does not treat a hidden result value alone as a disclosed hidden case", () => {
+    const { publicPayload, securePayload } = fixture({ args: [[4, 5, 6]], kwargs: {} }, 3)
+    publicPayload.instructions = [{
+      block_id: "B2",
+      block_type: "paragraph",
+      text: "可以分 3 步检查参数、处理过程和返回形式。",
+      claims: [],
+    }]
+    const codes = validateCodeLabPublicSecureSeparation(publicPayload, securePayload).issues.map((issue) => issue.code)
+    expect(codes).not.toContain("hidden_test_expected_leak")
+  })
+
+  test("still rejects a private input and expected result disclosed together", () => {
+    const { publicPayload, securePayload } = fixture({ args: [[4, 5, 6]], kwargs: {} }, 3)
+    publicPayload.instructions = [{
+      block_id: "B3",
+      block_type: "paragraph",
+      text: "隐藏测试输入为 {\"args\":[[4,5,6]],\"kwargs\":{}}，预期结果为 hidden-length-three。",
+      claims: [],
+    }]
+    securePayload.hidden_tests[0].expected = "hidden-length-three"
+    const codes = validateCodeLabPublicSecureSeparation(publicPayload, securePayload).issues.map((issue) => issue.code)
+    expect(codes).toContain("hidden_test_expected_leak")
+  })
 })
