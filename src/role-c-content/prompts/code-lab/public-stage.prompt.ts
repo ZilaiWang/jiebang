@@ -39,6 +39,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - stdin_stdout_program：学习者提交完整程序，题面按标准输入/输出描述，样例与所有目标共用同一输入形状。
 - debugging_repair：starter_code 必须包含真实存在、可由公开样例复现的缺陷；缺陷数量至少达到 programming_problem.required_mutation_count。先逐行核对 starter 里的实际错误，再写题面，绝不能声称一个代码中不存在的缺陷。题面要求学习者按“复现现象→定位原因→修复→回归验证”完成相互依赖的调试步骤，而不是重写成另一任务。
 - debugging_repair 输出前执行机械自检：starter_code 中不得出现 TODO、pass、NotImplementedError、空函数或“缺陷/错误/修复/正确写法”注释；必须直接放入一份完整可运行、但会在公开样例上产生错误结果的实现。statement 只写正确目标、输入输出和可观察的错误现象，不编号列出缺陷，不解释错误源码表达式，也不写修复后的表达式。
+- debugging_repair 描述缺陷时禁止写源码机制：不得写“某分支在另一分支之前/之后”“条件顺序颠倒”“索引从某值开始”“缺少某行/某操作”“把某变量加到了错误的计数器”等定位性描述；只能用“给定输入 X，观察到错误输出/状态 Y（而正确应为 Z）”的可观察现象形式。写完 starter_code 后必须逐条把 instruction、hints、troubleshooting 声称的现象代入 starter 在心里复现一遍，凡不能在 starter 上真实复现的现象必须删掉，或把 starter 改成能产生该现象、同时仍保留该 objective 目标逻辑的真实缺陷。绝不保留一个代码中不存在的缺陷描述。
 - debugging_repair 必须让 objective_plan 中每个 objective 对应 starter 中一个不同且真实存在的故障，该故障必须直接练习该 objective 所引用的行为或边界事实，并至少有一个公开或错误路径案例可观察到。不得用“验证空输入”“回归检查”等没有实际故障的步骤凑 objective 数量；故障总数必须达到 required_mutation_count。
 - 每处调试修复都应保留并正确使用该 objective 的目标操作；不得通过删除整段目标逻辑、绕开目标操作或改写成无关实现来“修复”。
 - debugging_repair 的公开说明只能给诊断边界：可以指出观察哪个输出、追踪哪个状态或核对哪条当前事实；不得写出修复后的完整代码，不得用“把/将某行改为/替换为……”直接给出应提交的表达式、关键字或语句。practical_guide.steps 描述调试动作与验证方法，troubleshooting 描述学习者修复后仍可能观察到的症状，不得逐项公布 starter 中全部缺陷及精确修法。
@@ -147,5 +148,6 @@ export const CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT = `${CODE_LAB_PUBLIC_
 3. 正确实现应同时满足所有 objectives 的统一输入输出合同，不能让某个 public_test 只描述部分实际输出；
 4. instruction、三级提示和 practical_guide 只教学习者如何复现、追踪、定位和验证，不直接给出修复后的关键代码；
 5. contract.artifact_task.lab.learner_owned_dependent_steps 个核心调试动作仍由学习者完成。
+6. 若 reviewer 指出“题面声称的缺陷在实际 starter 中不存在或与实际代码不符”，二选一修复：把该缺陷真实注入 starter 并同步修正题面现象，或把题面现象改为 starter 实际能复现的现象；禁止保留一个代码中不存在的缺陷描述。缺陷描述仍只能用“给定输入 X → 错误输出/状态 Y”的可观察现象，不得写源码机制。
 
 只输出修订后的完整 Schema JSON。`

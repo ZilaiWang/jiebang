@@ -5,6 +5,7 @@ import {
 } from "../src/role-c-content/prompts/common-policy"
 import { CONCEPT_TUTOR_SYSTEM_PROMPT } from "../src/role-c-content/prompts/concept-tutor/system.prompt"
 import { CODE_LAB_SECURE_STAGE_SYSTEM_PROMPT } from "../src/role-c-content/prompts/code-lab/secure-stage.prompt"
+import { CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT, CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT } from "../src/role-c-content/prompts/code-lab/public-stage.prompt"
 import { stagedRepairPrompt } from "../src/role-c-content/prompts/staged-repair.prompt"
 
 describe("role c prompt manifest version", () => {
@@ -30,5 +31,13 @@ describe("role c prompt manifest version", () => {
     expect(prompt).toContain("execution_mode 已由编排器冻结为 function")
     expect(prompt).toContain("instruction、public_test 和 hints 都围绕入口函数的返回值")
     expect(prompt).toContain("previous_output 是尚未通过的模型草稿")
+  })
+
+  test("debugging_repair 只描述可观察现象，禁止声称不存在的缺陷", () => {
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("禁止写源码机制")
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("给定输入 X，观察到错误输出/状态 Y")
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("凡不能在 starter 上真实复现的现象必须删掉")
+    expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("二选一修复")
+    expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("禁止保留一个代码中不存在的缺陷描述")
   })
 })
