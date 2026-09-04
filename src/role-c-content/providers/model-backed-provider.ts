@@ -2786,21 +2786,38 @@ function stageRepairContext(
   input: unknown,
   issues: string[],
 ): Record<string, unknown> {
-  if (task !== "role-c.code-lab.secure"
-    || !issues.some((issue) => issue.includes("hidden_test_input_leak"))) {
+  const hiddenCaseLeak = issues.some((issue) =>
+    issue.includes("hidden_test_input_leak")
+      || issue.includes("hidden_test_expected_leak"))
+  if (!hiddenCaseLeak) {
     return {}
   }
   const record = asRecord(input)
   const publicPayload = asRecord(record.public_payload)
-  const publicTests = Array.isArray(publicPayload.public_tests)
-    ? publicPayload.public_tests
-    : []
-  const publicInputs = publicTests.map((test) => asRecord(test).input)
-  return {
-    forbidden_public_inputs: structuredClone(publicInputs),
-    forbidden_public_scalar_values: uniqueJsonScalars(publicInputs),
-    required_change: "为每个失败 hidden test 重新选择不含任何公开输入标量的 input，并根据 reference_solution 同步重算 expected",
+  if (task === "role-c.code-lab.secure") {
+    const publicTests = Array.isArray(publicPayload.public_tests)
+      ? publicPayload.public_tests
+      : []
+    const publicInputs = publicTests.map((test) => asRecord(test).input)
+    return {
+      forbidden_public_inputs: structuredClone(publicInputs),
+      forbidden_public_scalar_values: uniqueJsonScalars(publicInputs),
+      required_change: "为每个失败 hidden test 重新选择不含任何公开输入标量的 input，并根据 reference_solution 同步重算 expected",
+    }
   }
+  if (task === "role-c.tiered-evaluator.secure") {
+    const items = Array.isArray(publicPayload.items) ? publicPayload.items : []
+    const codeSurfaces = items
+      .map(asRecord)
+      .filter((item) => item.modality === "code")
+      .map((item) => ({ prompt: item.prompt, starter_code: item.starter_code }))
+    return {
+      forbidden_public_inputs: structuredClone(codeSurfaces),
+      forbidden_public_scalar_values: uniqueJsonScalars(codeSurfaces),
+      required_change: "逐个重写泄漏的 code_test_suites.hidden_tests：参数数据不得复用关联公开题干或 starter 中给出的完整示例；保持函数签名和 args/kwargs 结构，使用新数据执行 reference_solution 后同步重算 expected",
+    }
+  }
+  return {}
 }
 
 function uniqueJsonScalars(values: unknown[]): unknown[] {

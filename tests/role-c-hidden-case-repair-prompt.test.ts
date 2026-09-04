@@ -38,6 +38,14 @@ describe("Role C staged hidden-case repair prompt", () => {
     expect(prompt).toContain("不得原样返回 previous_output")
   })
 
+  test("assessment secure repair replaces leaked cases without changing the function contract", () => {
+    const prompt = stagedRepairPrompt("BASE", ["hidden_test_input_leak"])
+    expect(prompt).toContain("对于 tiered-evaluator.secure")
+    expect(prompt).toContain("code_test_suites[].hidden_tests[].input")
+    expect(prompt).toContain("保留冻结函数签名")
+    expect(prompt).toContain("同步重算 expected")
+  })
+
   test("requires form-level repair to follow a distinct task contract", () => {
     expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("current_form_distinctions")
     expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("required_task_shape")
