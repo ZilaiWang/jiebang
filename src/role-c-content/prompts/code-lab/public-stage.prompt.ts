@@ -104,6 +104,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - stdin_stdout 的公开测试按精确输出设计：除非提示文字本身就是学习目标，否则使用不带提示参数的 input()；starter、instruction 或题目要求产生的每一段输出都必须出现在 output_contract 与 expected_behavior 中，不能只描述其中一部分
 - stdin_layout=single_line_text 时，public_test.input 必须是单行文本（末尾可带一个换行），所有案例使用同一字段顺序。
 - 多目标实验仍然只是一个连贯任务：所有 objectives 共用同一个外部输入协议、输出协议和 starter，每个 public_test 只用不同数据检查该任务中的不同目标。不得把每个 objective 写成不同函数、不同输入形状或彼此无关的小题
+- 所有公开样例的 input 必须两两不同（含每个 objective 的 public_test.input 与 additional_public_examples 的 input）。fault_localization 尤其要避免用同一个输入重复展示：每个公开样例用不同输入复现不同目标对应的可观察现象；多个目标确实共用同一组输入时，只保留一个 objective 的 public_test，其余目标改用能各自复现其缺陷的输入，或合并为一个 additional_public_example 并保证其余 input 互不相同。
 - stdin_stdout 多目标时，各测试的输入行数、字段含义和输出形式必须一致；不得通过“输入一行做判断、两行做加法、三行做平均值”这类分支把多道题塞进一个程序
 
 【hints 提示层级】

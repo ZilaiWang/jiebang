@@ -48,4 +48,12 @@ describe("role c prompt manifest version", () => {
     expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("必须删除该机制并改为锚定 cited_facts")
     expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("不得为保留 troubleshooting 的“原因”而继续编造证据外机制")
   })
+
+  test("公开样例 input 必须两两不同，repair 提供专门指导", () => {
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("所有公开样例的 input 必须两两不同")
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("fault_localization 尤其要避免用同一个输入重复展示")
+    const repair = stagedRepairPrompt("base", ["programming_task 公开样例输入不得重复"])
+    expect(repair).toContain("每个 objective 的 public_test.input 与 additional_public_examples 的 input 必须两两不同")
+    expect(repair).toContain("不同公开样例要用不同输入触发不同目标对应的可观察现象")
+  })
 })
