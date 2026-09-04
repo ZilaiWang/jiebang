@@ -26,6 +26,18 @@ describe("Role C staged hidden-case repair prompt", () => {
     expect(prompt).toContain("只换数字、变量名")
   })
 
+  test("requires args-envelope rewrite for function-mode hidden test inputs", () => {
+    const prompt = stagedRepairPrompt("base", [
+      'code_test_suites[0].hidden_tests[0].input 必须使用 {"args": [...], "kwargs"?: {...}} 调用封装',
+    ])
+    expect(prompt).toContain("调用封装")
+    expect(prompt).toContain('{"args')
+    expect(prompt).toContain("execution_mode 已由编排器冻结为 function")
+    expect(prompt).toContain("input()、sys.stdin")
+    expect(prompt).toContain("按 entry_point 的位置参数顺序")
+    expect(prompt).toContain("不得原样返回 previous_output")
+  })
+
   test("requires form-level repair to follow a distinct task contract", () => {
     expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("current_form_distinctions")
     expect(ASSESSMENT_NOVELTY_REPAIR_SYSTEM_PROMPT).toContain("required_task_shape")
