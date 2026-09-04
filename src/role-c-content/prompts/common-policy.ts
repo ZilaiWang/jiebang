@@ -1,4 +1,4 @@
-export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.96.0" as const
+export const ROLE_C_PROMPT_MANIFEST_VERSION = "c-prompts-1.97.0" as const
 
 export const ROLE_C_FACT_PARAPHRASE_POLICY = `【可见讲解的等义边界】
 可见讲解允许不增加前提的同义展开和直接逻辑否定，审核不是逐字匹配。例如“通用编程语言”可解释为“不局限于单一特定用途的编程语言”，但不能据此列举任何具体行业能力；“用缩进表示代码块”可解释为“用缩进区分语句所属的块”，但不能据此增加固定空格数、混用 Tab 的后果或错误类型。

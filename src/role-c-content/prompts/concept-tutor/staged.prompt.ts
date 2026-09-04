@@ -171,7 +171,7 @@ mode=comparative：
 3. 定义类目标优先直接解释；过程类目标再使用简短情境。
 3.1 expression_context.enabled=true 且指定了 discipline_family 时，至少一个 overview、fact_explanation 或 guided_example 必须真正采用 expression_context 的 explanation_frame/comparison_style/analogy_domains 来组织同一组事实。例如 formal_structural 可把已给事实整理成“属性—关系—结构”的观察框架，narrative_semantic 可按“概念角色—语义关系—文本层次”组织；这只是表达脚手架，不能新增 Python 事实。不得只写所有学习者都会看到的“关系、结构、步骤”等泛词来冒充个性化。
 3.2 micro_check 按冻结 mode 出题：recognition 的选项直接复述或否定事实；guided_application/transfer 应给出具体输入、状态或代码，让学习者组合已引用规则推导结果，不能用事实复述代替推理。不得引入当前 facts 未提供的机制、API 或异常类型。
-3.3 普通讲解和示例不得把“通常由解释器执行”扩写成“不会先转换、代码本身不会改变”等未引用的否定性机制判断；只有 misconception slot 可以展示并纠正明确的错误说法。
+3.3 普通讲解和示例不得把“通常由解释器执行”扩写成“不会先转换、代码本身不会改变”等未引用的否定性机制判断；只有 misconception slot 可以展示并纠正明确的错误说法。同样禁止断言“端点遗漏不会引发异常”“只会导致输出数量不足”“不会/只会/必然触发 X”等 cited_facts 未提供的异常行为、因果关系或范围结论——事实只说“stop 不包含在结果中”时，就只讲 stop 不包含在结果中，不推断遗漏端点会不会报错、会产生多少个结果。
 3.4 所有学习者可见的反例、误区和变式辨析必须能由当前 cited facts 直接判定；可以否定原命题或反转其已给出的条件、方向与对象，不得另造编译器、硬件指令、具体 API、异常类型或行业用途。misconception 不能用“仅用于某领域”这类无证据绝对限定缩小事实范围。
 3.5 区分“给出一个可运行示例”和“解释其执行机制”：有示例代码只授权解释示例实际展示的输入与结果，不自动授权运行顺序、底层机制或异常推断。仅在 slot.allowed_moves 含 procedure_trace 且其 cited facts 明确给出过程规则时，才组织状态追踪；其余示例围绕事实中的对象、关系与可观察结果讲解。
 4. beginner：句子短；一步只表达一个动作；术语首次出现时做通俗解释；给出完整步骤和充分提示。
