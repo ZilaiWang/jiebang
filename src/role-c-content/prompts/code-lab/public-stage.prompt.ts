@@ -52,7 +52,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 - readiness_checks 每项写“检查什么、何时算就绪”；steps 每项必须同时写 action、input、expected_result、verification，形成可执行闭环，不能只写概念说明。
 - 程序填空题可以在指南中明确提到题面可见的 TODO 或待填写区域；这类文字是在说明学习者操作，不是未完成的占位正文。
 - 指南最终会原样显示给学习者，只能使用“完整代码预览”“待填写位置”“公开样例”“预期输出”等界面用语。不得写 starter_code、expected_behavior、public_test、TODO_FILL_FACT 等内部字段或占位标记；指向已给代码时，变量名必须与本次实际 starter_code / gap_template 一致。学习者需要自行定义的中间变量要先说明“定义/保存为”，后续步骤使用同一名称，不得假称已在骨架中提供。
-- troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。
+- troubleshooting 必须针对本任务可能出现的可观察症状，给出原因、恢复步骤和恢复后验证；不得写“检查代码”“按需调整”等泛化句。原因只能指向当前 cited_facts 直接陈述的内容：症状表述为“学习者输出/结果与某条 cited_fact 描述不符”，原因是“没有正确体现该 cited_fact”，恢复步骤是“对照该 cited_fact 核对并修正”。不得写 print 函数用法、语法错误触发条件、缩进对齐规则、循环体归属、异常类型等 cited_facts 未提供的语言机制或 API 知识；对 explain/recognize 且 facts 为介绍性陈述的目标，troubleshooting 的可写空间就是 cited_facts 本身，不得为凑“原因”而补充证据外机制。
 - extension_task 必须改变输入规模、任务结构或约束中的一个维度，并给出验证方法；不得提前给出完整答案。若扩展任务要新增变量，必须明确写“新增/定义变量”，不得把新变量写成当前代码已存在的变量。
 - 扩展任务仍使用当前任务已经引用的操作规则。输入值或数量变化不等于新增操作规则：新的参数语义、运算符、反向执行、异常路径需要各自的当前证据；没有相应事实时，通过组合已有操作或更换合法数据形成变式。不能仅引用一般定义来支持新的边界行为。
 - extension_task、troubleshooting 和提示中的事实反例只能直接否定当前 cited fact，不得另造具体行业用途、API、语法或运行机制。程序填空的学习者区域称为“填写框”或“空位”，不得称为“空格”，避免与空格字符混淆。
@@ -149,5 +149,6 @@ export const CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT = `${CODE_LAB_PUBLIC_
 4. instruction、三级提示和 practical_guide 只教学习者如何复现、追踪、定位和验证，不直接给出修复后的关键代码；
 5. contract.artifact_task.lab.learner_owned_dependent_steps 个核心调试动作仍由学习者完成。
 6. 若 reviewer 指出“题面声称的缺陷在实际 starter 中不存在或与实际代码不符”，二选一修复：把该缺陷真实注入 starter 并同步修正题面现象，或把题面现象改为 starter 实际能复现的现象；禁止保留一个代码中不存在的缺陷描述。缺陷描述仍只能用“给定输入 X → 错误输出/状态 Y”的可观察现象，不得写源码机制。
+7. 若 reviewer 指出 troubleshooting（或任何指南/说明）包含 cited_facts 未提供的语言机制断言（print 用法、语法错误触发条件、缩进对齐规则、循环体归属、异常类型等），必须删除该机制并改为锚定 cited_facts：症状写“学习者输出/结果与某条 cited_fact 描述不符”，原因写“没有正确体现该 cited_fact”，恢复写“对照该 cited_fact 核对并修正”。不得为保留 troubleshooting 的“原因”而继续编造证据外机制；若 cited_facts 不足以支撑“原因”，只保留可观察症状与对照核对动作即可。
 
 只输出修订后的完整 Schema JSON。`

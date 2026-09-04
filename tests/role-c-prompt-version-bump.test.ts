@@ -40,4 +40,12 @@ describe("role c prompt manifest version", () => {
     expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("二选一修复")
     expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("禁止保留一个代码中不存在的缺陷描述")
   })
+
+  test("troubleshooting 的原因必须锚定 cited_facts，不得编造证据外语言机制", () => {
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("原因只能指向当前 cited_facts 直接陈述的内容")
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("不得写 print 函数用法、语法错误触发条件、缩进对齐规则")
+    expect(CODE_LAB_PUBLIC_STAGE_SYSTEM_PROMPT).toContain("不得为凑“原因”而补充证据外机制")
+    expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("必须删除该机制并改为锚定 cited_facts")
+    expect(CODE_LAB_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("不得为保留 troubleshooting 的“原因”而继续编造证据外机制")
+  })
 })
