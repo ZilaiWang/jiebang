@@ -20,6 +20,7 @@ ${issues.map((issue, index) => `${index + 1}. ${issue}`).join("\n")}
 若失败项包含 STDIN_FUNCTION_CONTRACT_MISMATCH：execution_mode 已由编排器冻结为 stdin_stdout，不得改为 function。必须删除 entry_point，任务、starter 和公开测试须统一为完整程序的标准输入/标准输出语义，不得要求只提交函数或把函数返回值作为判题结果。完整程序内可以使用 def/return 定义辅助函数，但主程序必须读取 stdin 并写入 stdout。不得删除证据要求的正常函数知识。
 若失败项指出 items[n] 与已发布题目重复：必须完整重写这些下标对应的题目，不保留原题干骨架；选择/判断题改用新的判断角度和具体情境，追踪题改变控制流或数据流结构，简答题改用新的错误诊断、比较或迁移任务，代码题改变函数任务、参数组织和输出行为。只换数字、变量名、选项顺序、干扰项或背景名仍视为重复。严格执行输入中的 repair_directive.required_change_indices 和 variation_token。
 若失败项包含「公开样例输入不得重复」：每个 objective 的 public_test.input 与 additional_public_examples 的 input 必须两两不同。fault_localization 任务中，不同公开样例要用不同输入触发不同目标对应的可观察现象，不得用同一个输入反复展示；若多个目标天然共享同一组输入，就只保留其中一个 objective 的 public_test 展示该现象，其余 objective 改用能各自复现其缺陷的其它输入，或把重复样例合并为一个 additional_public_example 并让其余输入各不相同。改写后仍必须满足 public_test_minimum 的数量要求。
+若失败项包含「token 类型序列」或 stdin_token_shape_mismatch：stdin_layout=single_line_text 时，hidden_tests[].input 的 token 类型必须与公开输入逐个对齐——public 每个 token 是整数就只能用整数、是小数就只能用小数、是文本就只能用文本，只换数值不换类型、不增删 token。把每个失败的 hidden input 改成与 public 同序、同 token 类型的其它数值/文本，同时避开 public 已用过的具体值。
 修复必须产生与 previous_output 不同的相关字段；若原隐藏输入是公开输入的轻微改写，不得只调整顺序或包装层。
 修复期间若输入含 revision_objections，不得撤销已经完成的外审修订，也不得把审核消息、定位信息或建议动作复制到公开产物。`
 }

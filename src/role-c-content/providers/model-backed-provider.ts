@@ -67,7 +67,7 @@ import {
   ROLE_C_PROMPT_MANIFEST_VERSION,
   stagedRepairPrompt,
 } from "../prompts"
-import { isTrustedExpectedDerivationIssue, validateCodeLabDraftStructure, validateCodeLabPublicStage } from "../validators/code-lab-validator"
+import { isTrustedExpectedDerivationIssue, validateCodeLabDraftStructure, validateCodeLabPublicStage, validateFrozenStdinTokenShapes } from "../validators/code-lab-validator"
 import { validateAssessmentDraftStructure, validateAssessmentPublicStage } from "../validators/assessment-validator"
 import { validateConceptLesson } from "../validators/concept-validator"
 import {
@@ -1062,10 +1062,22 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
                     validateFunctionInvocationAgainstInterface(test.input, functionInterface)
                       .map((message) => `hidden_tests[${index}].input：${message}`))
                 : []
-              if (!programmingProblem) return planIssues
+              // stdin_layout=single_line_text 时，隐藏输入的 token 类型序列必须与公开输入一致。
+              // 提前在 secure test-inputs 阶段校验，让 token 形状不一致走本阶段的 repair 循环
+              // （stagedRepairPrompt），而不是拖到 compose 阶段直接 throw 无修复机会。
+              const stdinShapeIssues = validateFrozenStdinTokenShapes(
+                request,
+                publicInputRecords.map((entry, index) => ({ id: `public-${index}`, input: entry.input })),
+                normalized.hidden_tests.map((test, index) => ({
+                  id: securePlan.hidden_tests[index]?.test_id ?? `hidden-${index + 1}`,
+                  input: test.input,
+                })),
+              ).map((entry) => `${entry.path}: ${entry.message}`)
+              if (!programmingProblem) return [...planIssues, ...stdinShapeIssues]
               return [
                 ...planIssues,
                 ...invocationIssues,
+                ...stdinShapeIssues,
                 ...validateInputCandidates(
                   programmingProblem,
                   publicInputRecords,

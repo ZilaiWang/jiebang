@@ -424,7 +424,7 @@ type StdinTokenKind = "integer" | "decimal" | "boolean" | "text"
  * parser failed only in Docker.  Freeze the lexical token shape before trusted
  * execution while still allowing variable-length homogeneous lists.
  */
-function validateFrozenStdinTokenShapes(
+export function validateFrozenStdinTokenShapes(
   request: CodeLabRequest,
   publicTests: Array<{ id: string; input: unknown }>,
   hiddenTests: Array<{ id: string; input: unknown }>,
