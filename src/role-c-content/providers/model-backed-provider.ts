@@ -3671,14 +3671,19 @@ function normalizeAssessmentSecureAuthorPayload(
       )
     }
   })
-  normalized.code_test_suites.forEach((suite) => {
+  const publicCodeItems = publicPayload.items.filter((item) => item.modality === "code")
+  normalized.code_test_suites.forEach((suite, suiteIndex) => {
     if (suite.execution_contract.execution_mode === "function") {
       suite.reference_solution = normalizeFunctionReturnSemantics(
         suite.reference_solution,
       )
+      const entryPoint = suite.execution_contract.entry_point
       const functionInterface = describePythonEntryPoint(
         suite.reference_solution,
-        suite.execution_contract.entry_point,
+        entryPoint,
+      ) ?? describePythonEntryPoint(
+        publicCodeItems[suiteIndex]?.starter_code ?? "",
+        entryPoint,
       )
       suite.hidden_tests.forEach((test) => {
         test.input = functionInterface
@@ -3687,7 +3692,7 @@ function normalizeAssessmentSecureAuthorPayload(
       })
       suite.reference_solution = ensureZeroArgumentEntryPoint(
         suite.reference_solution,
-        suite.execution_contract.entry_point,
+        entryPoint,
         suite.hidden_tests.map((test) => test.input),
       )
     } else {
