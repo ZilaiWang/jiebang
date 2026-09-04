@@ -80,6 +80,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - code 题给出明确的任务边界、输入输出约束和示例；只把当前 objective/facts 对应的行为留给学习者完成
 - code 题统一使用函数模式：public 必须提供明确函数签名和输入输出合同；starter_code 只保留函数签名、参数以及显式 TODO / pass / raise NotImplementedError 待完成区域，不得包含能直接满足题意的完整实现，也不得把任务改成 stdin_stdout。判题器不会提供 stdin，因此题面、starter_code 和未来参考实现都不得调用 input()/sys.stdin；包括“读取用户输入”在内的目标必须改写为接收字符串或数值参数并返回结果的函数任务
 - code/trace 题不得声称某段“当前代码”会返回或输出某个值，除非该值已根据题面中的实际控制流逐步核算且与代码一致。优先只陈述目标输入输出合同，让学习者补全 starter_code；若需要诊断错误，必须保证所展示的故障代码确实违反至少一个题面验收案例，不能凭空编造“问题现象”
+- code 题的任务场景必须锚定 cited_facts：不得编造 cited_facts 未提及的日志解析、字符串前缀匹配、文件格式解析、数据清洗等场景或语言机制。observable_behavior=debug 的 code 题应设计为 error_diagnosis——给一段违反当前 cited_facts（如 if/elif/else 分支归属、循环条件）的错误代码让学习者定位并修复，而不是 construct_solution（实现一个处理新场景的函数）。需要字符串前缀判断、空字符串分支行为等 cited_facts 未提供的机制时，要么改考 cited_facts 已直接支持的分支/循环语义，要么把这些旁支机制整体放进 starter 作为已给胶水，只留当前 facts 对应部分让学习者完成。
 - observable_behavior 为 recognize 或 explain 时，优先使用选择、判断或短答直接测量事实；若冻结 item_plan 要求 code，旁支语法必须由 starter 提供，只把当前事实对应的最小部分留给学习者
 - 定义事实只能考识别、判断或原意复述。若 evidence 只说“X 是 Y”，不得继续追问 Y 体现在哪些方面、具体用途、应用场景、原因、优点或例子，除非这些内容本身也在 cited facts 中
 - 单条原子定义优先用 true_false 直接判断。若冻结计划要求 mcq，item_plan 会提供至少两条 citations；将两个已引用关系设计为简短的类别匹配、状态追踪或对照选项。不得把 evidence 整句复制为正确项，再只加“不/未/并非”制造唯一干扰项；这种题会直接泄露答案且没有区分度。
