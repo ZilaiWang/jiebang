@@ -4,7 +4,7 @@ import { ROLE_C_SCENARIO_EVIDENCE_POLICY } from "../prompts/common-policy"
 import type { ModelGateway } from "../contracts/model-gateway"
 import type { PublicArtifactKind, PublicCandidateEvaluation } from "./contracts"
 
-const CRITIC_POLICY_VERSION = "role-c-public-candidate-critic-v7"
+const CRITIC_POLICY_VERSION = "role-c-public-candidate-critic-v8"
 
 const OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -59,7 +59,9 @@ ${ROLE_C_SCENARIO_EVIDENCE_POLICY}
 11. code_lab 的外围骨架、输入胶水、变量名和平台约定不是学习目标事实。不要要求 evidence 逐字提供这些胶水；但学习者负责的核心专业操作仍须由 objective citations 支撑。
 12. contract.artifact_task 存在时，按资源的具体任务要求检查实际教学工作：讲义是否提供规定数量的示例、首次术语解释和追踪/排错/设计取舍；实验是否把 learner_owned_dependent_steps 个相互依赖的核心步骤留给学习者，starter 已完成部分占核心解题工作的比例是否超过 starter_completion_ratio_ceiling，故障实验是否真的给出可定位错误，开放任务是否有验收标准；测评是否实际考查要求的独立编程或边界反例。不要把导入、签名、输入胶水算作核心解题步骤；不要按代码行数比例冒充完成比例。明确缺失一项冻结的必做学习任务时列 instructional_contract_mismatch 并指明缺失位置；不确定的比例估计或仅文风偏好只影响 instructional_value，不列 critical issue。
 13. concept_lesson 的教学功能不是另一套必填 JSON：worked_example 可由 worked_example/guided_example/procedure_steps/comparison 槽承载；step_trace 可由 procedure_steps 中逐步状态承载；guided_practice 由 micro_check 与 hints 承载；debugging_clinic 由 boundary/misconception 承载；recap_check 由 recap 与 micro_check 承载。检查实际语义，不因没有同名字段判缺失。独立编程属于 code_lab，迁移测量属于 assessment，先修衔接由程序单独物化，不要求讲义候选重复其他资源的任务。
-14. 每个 candidate_index 恰好返回一次，按升序排列。分数使用 0 到 1。只输出 Schema JSON。`
+14. 场景包装不得被升级为现实统计结论。若候选声称某问题在工程、行业、课堂或特定人群中“高频、最常见、普遍存在、排名靠前”，而 evidence 没有频率或调查数据，必须报告 unsupported_prevalence。把场景写成“本例中请检查……”属于教学任务，不属于频率断言。
+15. assessment 的 code/trace 题若同时给出代码和“当前返回/输出/状态”，必须逐行执行或追踪该具体输入；陈述结果与代码实际语义不一致时必须报告 execution_contradiction。不能因为后面的目标规则或参考解正确，就忽略题干对现有代码现象的错误描述。
+16. 每个 candidate_index 恰好返回一次，按升序排列。分数使用 0 到 1。只输出 Schema JSON。`
 
 export async function reviewPublicCandidatesWithModel<T>(input: {
   gateway: ModelGateway

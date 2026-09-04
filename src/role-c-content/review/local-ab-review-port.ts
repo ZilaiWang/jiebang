@@ -446,6 +446,7 @@ async function auditSemanticBlocks(
       support_gap: result.support_gap,
       objective_behavior: objectiveBehavior(block.locator.objective_id),
       suggested_scope: result.suggested_scope,
+      replaceable_generated_surface: block.cited_facts.length > 0,
     })
     return [{
       source: "fact_audit",

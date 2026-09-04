@@ -20,6 +20,15 @@ describe("改进方案4 第九节：失败责任归属 resolver", () => {
       .toEqual({ owner: "A", fix_scope: "new_evidence", action: "request_supporting_fact" })
   })
 
+  test("已有可行引用的生成题选错命题角度 → C 局部重写，不反向要求 A 补事实", () => {
+    expect(resolveFindingDisposition({
+      code: "semantic_unsupported",
+      support_gap: "essential_fact_missing",
+      locator: { field: "assessment_item", ref_id: "ITEM-1" },
+      replaceable_generated_surface: true,
+    })).toEqual({ owner: "C", fix_scope: "artifact", action: "rewrite_with_current_facts" })
+  })
+
   test("讲义即时题或实验反思选了证据外角度 → C 局部重写", () => {
     expect(resolveFindingDisposition({
       code: "semantic_unsupported",

@@ -31,6 +31,8 @@ export interface ResolveDispositionInput {
   support_gap?: "none" | "optional_overreach" | "essential_fact_missing" | "objective_evidence_mismatch"
   objective_behavior?: ObservableBehavior
   suggested_scope?: "artifact" | "new_evidence" | "new_spec"
+  /** The generated block already has a feasible cited-fact surface and can be rewritten without changing B/A contracts. */
+  replaceable_generated_surface?: boolean
 }
 
 const PROVIDER_CODE = /provider|docker|runtime|transport|network|timeout|socket|ECONN|ENOENT/i
@@ -53,6 +55,9 @@ export function resolveFindingDisposition(input: ResolveDispositionInput): Revie
 
   // 语义不支持：按 support_gap 分类路由
   if (input.support_gap === "essential_fact_missing") {
+    if (input.replaceable_generated_surface) {
+      return { owner: "C", fix_scope: "artifact", action: "rewrite_with_current_facts" }
+    }
     // A generated teaching surface is normally replaceable.  A quiz, hint,
     // example, reflection or public task that chose an evidence-external angle
     // is C overreach, not proof that the frozen objective itself needs another
