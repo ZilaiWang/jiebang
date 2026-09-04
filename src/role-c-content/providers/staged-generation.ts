@@ -2149,9 +2149,17 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
   const baseItems = tiers.map((tier, index) => {
     const objective = assignments[index]
     const modality = modalities[index]
-    const objectiveOccurrence = assignments
+    // Rotate evidence within the same observable question family. Counting all
+    // questions for an objective made a later repeated modality wrap back to
+    // the same fact set (for example true/false #2 and #5 both received F002),
+    // so two independent authors were effectively given the same task. The
+    // family-local occurrence makes repeated modalities consume distinct fact
+    // relations before any model call.
+    const objectiveModalityOccurrence = assignments
       .slice(0, index)
-      .filter((entry) => entry.objective_id === objective.objective_id)
+      .filter((entry, priorIndex) =>
+        entry.objective_id === objective.objective_id
+        && modalities[priorIndex] === modality)
       .length
     const cognitiveOperation = cognitiveOperationFor(
       objective.observable_behavior,
@@ -2173,7 +2181,7 @@ export function buildAssessmentItemPlan(spec: GenerationSpec, evidence?: RagEvid
     const plannedFactIds = assessmentFactIdsForItem(
       objective.required_fact_ids,
       evidenceTier,
-      objectiveOccurrence,
+      objectiveModalityOccurrence,
       evidenceFacts,
       cognitiveOperation,
     )

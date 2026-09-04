@@ -46,6 +46,7 @@ describe("B observable behavior controls C assessment modalities", () => {
       objectives: [{ objective_id: "O2B", source_id: "K001", required_fact_ids: ["F001", "F002", "F004"], observable_behavior: "explain", importance: "core" }],
       assessment_blueprint: { tier_1_count: 3, tier_2_count: 2, tier_3_count: 0, required_modalities: ["short_answer"] },
     }
+    const facts = ["F001", "F002", "F004"]
     const plan = buildAssessmentItemPlan({
       spec_id: "S2B", run_id: "R2B", path_node: node, targets: node.objectives,
       learner_adaptation: {
@@ -55,9 +56,25 @@ describe("B observable behavior controls C assessment modalities", () => {
         },
       },
       assessment_blueprint: node.assessment_blueprint, policies: { seed: 1 },
+    } as any, {
+      results: [{
+        source_id: "K001",
+        facts: facts.map((fact_id) => ({ fact_id, capabilities: ["definition"] })),
+      }],
     } as any)
     expect(plan.map((item) => item.modality)).toEqual([
       "mcq", "true_false", "mcq", "short_answer", "true_false",
+    ])
+    const trueFalseFacts = plan
+      .filter((item) => item.modality === "true_false")
+      .map((item) => item.citations.map((citation) => citation.fact_id))
+    expect(trueFalseFacts).toEqual([["F001"], ["F002"]])
+    const mcqFacts = plan
+      .filter((item) => item.modality === "mcq")
+      .map((item) => item.citations.map((citation) => citation.fact_id))
+    expect(mcqFacts).toEqual([
+      ["F001", "F002"],
+      ["F002", "F004"],
     ])
   })
 
