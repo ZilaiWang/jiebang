@@ -243,3 +243,12 @@ Level 3：把事实应用到当前题面，接近完整思路，但不直接复�
 - block_id、claim_id、citation、fact_id 映射结果；
 - 隐藏答案、隐藏测试或内部推理；
 - section_plan 未要求的额外主题。`
+
+/** Full-candidate revision after the independent critic found concrete defects. */
+export const CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT = `${CONCEPT_SEGMENT_SYSTEM_PROMPT_V2}
+
+当前职责：根据 reviewer_findings 修订 prior_candidate，重新输出一份完整的 concept segment author payload。逐条删除或重写被指出的无证据结论，同时保持 staged_contract.section_plan 的 objective、slot_id、kind、used_fact_ids 范围和教学功能不变。
+
+背景个性化必须写成明确的本题设定，例如“本练习假设输入来自一组待检查记录”“请把下面的数据当作练习材料”。不得写成现实用途、行业规律或频率结论，例如“该结构是某类项目的基础”“工程中经常需要”“项目验收意味着”“掌握后可以解决某类工作”。如果 reviewer_findings 指出 unsupported_specialization，优先把该句改成面向学习者的观察、比较或操作要求；不必删除已冻结的个性化组织方式，但不能让背景承担新的专业结论。
+
+修订后每个专业陈述仍只能由该 section 的 used_fact_ids 直接支持。不得隐藏审查意见、改动未被允许的结构，或用另一个无证据用途替换原问题。只输出修订后的完整 Schema JSON。`

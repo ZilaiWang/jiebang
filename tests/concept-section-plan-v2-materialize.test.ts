@@ -13,7 +13,10 @@ import { ModelBackedRoleCContentProvider } from "../src/role-c-content/providers
 import { validateConceptLesson } from "../src/role-c-content/validators/concept-validator"
 import type { ConceptTutorRequest } from "../src/role-c-content/agents/types"
 import type { ModelGateway, StructuredModelRequest } from "../src/role-c-content/contracts/model-gateway"
-import { ROLE_C_PROMPT_MANIFEST_VERSION } from "../src/role-c-content/prompts"
+import {
+  CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT,
+  ROLE_C_PROMPT_MANIFEST_VERSION,
+} from "../src/role-c-content/prompts"
 
 function segmentRequest(targets: Array<{ objective_id: string; source_id: string; fact_ids: string[]; behavior: string }>, facts: Array<{ source_id: string; fact_id: string; content: string; capabilities?: string[] }>): ConceptTutorRequest {
   return {
@@ -81,6 +84,11 @@ const payloadV2 = {
 }
 
 describe("改进方案5 审查修复：Section Plan V2 真实链路", () => {
+  test("概念候选复审把个性化背景改为练习设定而非行业结论", () => {
+    expect(CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("本题设定")
+    expect(CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("unsupported_specialization")
+    expect(CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT).toContain("不得写成现实用途、行业规律或频率结论")
+  })
   test("即时检查与三级提示保留完整的应用事实闭包，不在物化前截成四条", () => {
     const contents = ["列表保存有序元素。", "元素通过索引访问。", "append 向末尾添加元素。", "方括号创建列表。", "索引从 0 开始。", "列表可变。", "越界引发 IndexError。"]
     for (const behavior of ["apply", "create"]) {

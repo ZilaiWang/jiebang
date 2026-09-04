@@ -61,6 +61,7 @@ import {
   CODE_LAB_PUBLIC_SAFETY_REPAIR_SYSTEM_PROMPT,
   CODE_LAB_STARTER_REPAIR_SYSTEM_PROMPT,
   CONCEPT_SEGMENT_SYSTEM_PROMPT_V2,
+  CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT,
   STAGED_AUTHOR_PROMPT_VERSION,
   ROLE_C_PROMPT_MANIFEST_VERSION,
   stagedRepairPrompt,
@@ -561,6 +562,99 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             section_plan: sectionPlanContract,
           },
         }),
+        revise_rejected: ({ candidate, variant_index, evaluation }) =>
+          this.generateStage<ConceptSegmentAuthorPayloadV2>({
+            task: "role-c.concept-tutor.segment-v2.review-revision",
+            system_prompt: CONCEPT_PUBLIC_REVIEW_REVISION_SYSTEM_PROMPT,
+            input: {
+              ...modelInput,
+              evidence: modelInput.evidence.filter((source) =>
+                segment.generation_spec.targets.some((target) =>
+                  target.source_id === source.source_id)),
+              author_scope: { prerequisite_bridge: "materialized_by_program" },
+              upstream: { ...modelInput.upstream, round_semantic_plan: undefined },
+              learning_design: learningDesign,
+              candidate_context: publicCandidateContext("concept_lesson", variant_index),
+              staged_contract: {
+                objective_ids: segment.generation_spec.targets.map((target) =>
+                  target.objective_id),
+                section_plan: sectionPlanContract,
+              },
+              segment: {
+                index: segment.segment_index,
+                count: segment.segment_count,
+                objective_ids: segment.generation_spec.targets.map((target) =>
+                  target.objective_id),
+              },
+              prior_candidate: candidate,
+              reviewer_findings: evaluation.critical_findings,
+            },
+            output_schema_id: "role_c_concept_segment_author_payload_v2",
+            output_schema: fragment(
+              "concept_lesson_payload.schema.json",
+              "/$defs/author_payload_v2",
+            ),
+            temperature: 0.1,
+            max_tokens: this.conceptSegmentMaxTokens,
+            idempotency_identity: {
+              spec_id: segment.generation_spec.spec_id,
+              evidence_ref: segment.generation_spec.evidence_ref,
+              stage: "segment-v2-review-revision",
+              prompt_version: STAGED_AUTHOR_PROMPT_VERSION,
+              prior_candidate_hash: contentHash(candidate),
+              findings_hash: contentHash(evaluation.critical_findings),
+            },
+            max_repairs: maxRepairs,
+            normalize_output: (payload) => anchorConceptFactsInVisibleText({
+              payload,
+              request: segment,
+              plans: sectionPlans,
+            }),
+            diagnostic_sink: this.stageFailureDiagnosticSink,
+            validate: (payload) => {
+              const schema = validateRoleCSchemaFragment(
+                "concept_lesson_payload.schema.json",
+                "/$defs/author_payload_v2",
+                payload,
+              )
+              if (!schema.ok) return validationIssues(schema)
+              const planIssues = validateConceptSegmentV2AgainstPlans(
+                payload,
+                sectionPlans,
+              )
+              if (planIssues.length > 0) return planIssues
+              const factTextByObjective = new Map(
+                segment.generation_spec.targets.map((target) => {
+                  const source = segment.evidence_pack.results.find((entry) =>
+                    entry.source_id === target.source_id)
+                  const required = new Set(target.required_fact_ids)
+                  return [
+                    target.objective_id,
+                    (source?.facts ?? [])
+                      .filter((fact) => required.has(fact.fact_id))
+                      .map((fact) => fact.content),
+                  ] as const
+                }),
+              )
+              const microCheckIssues = validateConceptMicroCheckEvidenceDiscipline(
+                payload,
+                sectionPlans,
+                factTextByObjective,
+              )
+              if (microCheckIssues.length > 0) return microCheckIssues
+              const visibleCoverageIssues = validateConceptVisibleFactCoverage(
+                segment,
+                payload,
+                sectionPlans,
+              )
+              if (visibleCoverageIssues.length > 0) return visibleCoverageIssues
+              return validationIssues(validateConceptLesson({
+                payload: materialize(payload),
+                spec: segment.generation_spec,
+                evidence: segment.evidence_pack,
+              }))
+            },
+          }),
         on_rejected: (evaluations, rejectedGenerationCount) => this.recordRejectedCandidates(
           "role-c.concept-tutor.segment-v2", evaluations, rejectedGenerationCount,
         ),
