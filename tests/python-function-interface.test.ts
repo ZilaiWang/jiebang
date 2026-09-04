@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   describePythonEntryPoint,
+  normalizeFunctionInvocationAgainstInterface,
   validateFunctionInvocationAgainstInterface,
 } from "../src/role-c-content/programming/python-function-interface"
 
@@ -50,5 +51,32 @@ describe("Python function invocation contract", () => {
     expect(validateFunctionInvocationAgainstInterface({ args: [1], kwargs: {} }, contract))
       .toEqual(["run 缺少必填关键字参数 mode"])
     expect(validateFunctionInvocationAgainstInterface({ args: [1], kwargs: { mode: "fast" } }, contract)).toEqual([])
+  })
+
+  test("wraps raw data when a one-parameter signature makes the call unambiguous", () => {
+    const contract = describePythonEntryPoint(
+      "def classify(command):\n    return command\n",
+      "classify",
+    )!
+    expect(normalizeFunctionInvocationAgainstInterface("ADD 2 3", contract)).toEqual({
+      args: ["ADD 2 3"],
+      kwargs: {},
+    })
+    expect(normalizeFunctionInvocationAgainstInterface([1, 2, 3], contract)).toEqual({
+      args: [[1, 2, 3]],
+      kwargs: {},
+    })
+  })
+
+  test("maps an array to multiple arguments only when its arity matches", () => {
+    const contract = describePythonEntryPoint(
+      "def add(left, right):\n    return left + right\n",
+      "add",
+    )!
+    expect(normalizeFunctionInvocationAgainstInterface([2, 3], contract)).toEqual({
+      args: [2, 3],
+      kwargs: {},
+    })
+    expect(normalizeFunctionInvocationAgainstInterface("2 3", contract)).toBe("2 3")
   })
 })

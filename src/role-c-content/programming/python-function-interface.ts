@@ -112,6 +112,38 @@ export function validateFunctionInvocationAgainstInterface(
   return issues
 }
 
+/**
+ * Add the args/kwargs transport envelope when the public function signature
+ * makes the model-authored test value unambiguous. The test data itself stays
+ * unchanged; only the invocation protocol is normalized.
+ */
+export function normalizeFunctionInvocationAgainstInterface(
+  invocation: unknown,
+  contract: PythonFunctionInterface,
+): unknown {
+  if (invocation && typeof invocation === "object" && !Array.isArray(invocation)) {
+    const record = invocation as Record<string, unknown>
+    if (Array.isArray(record.args)) return invocation
+  }
+  if (contract.required_keyword_only.length > 0) return invocation
+  if (contract.maximum_positional_count === 0) {
+    return { args: [], kwargs: {} }
+  }
+  // An array or object can itself be the value of a single parameter. Do not
+  // accidentally expand it into several positional arguments.
+  if (contract.maximum_positional_count === 1
+    && contract.required_positional_count <= 1) {
+    return { args: [structuredClone(invocation)], kwargs: {} }
+  }
+  if (Array.isArray(invocation)
+    && invocation.length >= contract.required_positional_count
+    && (contract.maximum_positional_count === null
+      || invocation.length <= contract.maximum_positional_count)) {
+    return { args: structuredClone(invocation), kwargs: {} }
+  }
+  return invocation
+}
+
 function splitTopLevel(value: string): string[] {
   const result: string[] = []
   let start = 0

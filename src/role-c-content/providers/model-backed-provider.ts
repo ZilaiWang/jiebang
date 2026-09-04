@@ -155,6 +155,7 @@ import {
 import { validateInputCandidates } from "../programming/test-plan"
 import {
   describePythonEntryPoint,
+  normalizeFunctionInvocationAgainstInterface,
   validateFunctionInvocationAgainstInterface,
 } from "../programming/python-function-interface"
 import type { ProgrammingProblemBlueprint } from "../programming/contracts"
@@ -3658,8 +3659,14 @@ function normalizeAssessmentSecureAuthorPayload(
       suite.reference_solution = normalizeFunctionReturnSemantics(
         suite.reference_solution,
       )
+      const functionInterface = describePythonEntryPoint(
+        suite.reference_solution,
+        suite.execution_contract.entry_point,
+      )
       suite.hidden_tests.forEach((test) => {
-        test.input = normalizeEmptyFunctionInvocation(test.input)
+        test.input = functionInterface
+          ? normalizeFunctionInvocationAgainstInterface(test.input, functionInterface)
+          : normalizeEmptyFunctionInvocation(test.input)
       })
       suite.reference_solution = ensureZeroArgumentEntryPoint(
         suite.reference_solution,
