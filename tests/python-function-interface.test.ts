@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import {
   describePythonEntryPoint,
+  inferPythonEntryPoint,
   normalizeFunctionInvocationAgainstInterface,
   validateFunctionInvocationAgainstInterface,
 } from "../src/role-c-content/programming/python-function-interface"
 
 describe("Python function invocation contract", () => {
+  test("infers the entry point frozen by the public starter", () => {
+    expect(inferPythonEntryPoint("# starter\ndef classify(value, mode):\n    # TODO\n    pass\n"))
+      .toBe("classify")
+  })
   test("extracts a simple generated entry-point signature", () => {
     expect(describePythonEntryPoint("def solve(logs):\n    return logs\n", "solve")).toEqual({
       entry_point: "solve",
@@ -78,5 +83,16 @@ describe("Python function invocation contract", () => {
       kwargs: {},
     })
     expect(normalizeFunctionInvocationAgainstInterface("2 3", contract)).toBe("2 3")
+  })
+
+  test("maps named model inputs to kwargs when they satisfy the public signature", () => {
+    const contract = describePythonEntryPoint(
+      "def classify(value, mode):\n    return value\n",
+      "classify",
+    )!
+    expect(normalizeFunctionInvocationAgainstInterface(
+      { value: 3, mode: "strict" },
+      contract,
+    )).toEqual({ args: [], kwargs: { value: 3, mode: "strict" } })
   })
 })

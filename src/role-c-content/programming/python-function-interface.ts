@@ -8,6 +8,11 @@ export interface PythonFunctionInterface {
   accepts_arbitrary_keywords: boolean
 }
 
+/** Return the callable name already frozen by a public Python starter. */
+export function inferPythonEntryPoint(source: string): string | undefined {
+  return source.match(/^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/mu)?.[1]
+}
+
 /**
  * Extract the callable surface only; test authors do not need the reference
  * implementation body. Generated Role C functions deliberately use a single,
@@ -124,6 +129,15 @@ export function normalizeFunctionInvocationAgainstInterface(
   if (invocation && typeof invocation === "object" && !Array.isArray(invocation)) {
     const record = invocation as Record<string, unknown>
     if (Array.isArray(record.args)) return invocation
+    const keys = Object.keys(record)
+    const accepted = new Set(contract.accepted_keyword_parameters)
+    if (keys.length > 0
+      && keys.every((key) => accepted.has(key))
+      && contract.positional_parameters
+        .slice(0, contract.required_positional_count)
+        .every((name) => keys.includes(name))) {
+      return { args: [], kwargs: structuredClone(record) }
+    }
   }
   if (contract.required_keyword_only.length > 0) return invocation
   if (contract.maximum_positional_count === 0) {
