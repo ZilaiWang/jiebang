@@ -68,6 +68,7 @@ ${EVALUATOR_NEXT_ROUND_VARIANT_POLICY}
 - upstream.novelty_brief 存在时，按其中的 required_design_moves 设计新题；variant_id 是本轮多样性身份，不是知识来源。新题必须改变认知操作或任务结构，不能只做表面改写
 - staged_contract.novelty_design_brief 存在时，逐题执行对应 index 的设计要求：按 planned_task_shape 采用不同的真实任务结构，避开 forbidden_history 中的题干骨架和 structure_meta 组合，并优先实质改变 variation_axis 指定的维度。in_form_role=direct_foundation 只测直接基础，guided_application 用典型情境应用，integrated_transfer 在 item_plan 引用至少两条 facts 时做比较、决策或迁移；同卷高低 Tier 不得只是换人名或改写同一误解。先确定新任务，再撰写题干和如实填写 structure_meta
 - staged_contract.form_design_outline 存在时，当前单题还必须结合 current_form_index 查看全卷其他题的 modality、in_form_role 与 planned_task_shape。当前题只承担自己对应的职责，题干骨架不得与 outline 中其他题的职责混同；即使引用同一事实，也要使用本题冻结的任务形状形成可观察的不同作答动作
+- 每道单题必须先从 staged_contract.evidence_authoring_boundary[0].cited_fact_statements 提取“主语—关系—对象”，再让题干、选择项或要求作答的内容直接测量这组关系。不得因为属于同一个 source_id，就借用该知识点中未列入当前 citations 的另一条事实；例如当前引用只说明执行方式时，不能改问语言类别
 - 学习者读一遍就能理解要做什么，避免嵌套否定或过度复杂的句式
 - 每道题的正确判断必须只依赖 evidence.facts；不得从知识库示例、既往讲义或模型常识引入 facts 未说明的函数、运算符、返回格式、执行顺序或边界行为
 - 每道题只允许使用 staged_contract.item_plan 同一下标 citations 指向的 facts。即使本轮 evidence 还含其他 objective 的事实，也不能让单目标题暗中依赖它们；只有 item_plan 明确给出多来源 citations 时才可设计跨目标综合题。

@@ -1247,6 +1247,12 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         evidence: request.evidence_pack,
         assessment_plan: plan,
       })
+    const assessmentEvidenceFacts = modelInput.evidence.flatMap((source) =>
+      source.facts.map((fact) => ({
+        source_id: source.source_id,
+        fact_id: fact.fact_id,
+        content: fact.content,
+      })))
     // Author each public item against only its own frozen citations.  A
     // monolithic form prompt exposed every target fact to every question and
     // repeatedly produced hidden cross-objective dependencies (for example a
@@ -1401,7 +1407,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
             const evidenceIssues = validateAssessmentAuthorEvidenceDiscipline(
               authored,
               [itemPlan],
-              itemFacts,
+              assessmentEvidenceFacts,
             )
             if (evidenceIssues.length > 0) {
               return evidenceIssues.map((issue) =>
@@ -1495,7 +1501,7 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               const evidenceIssues = validateAssessmentAuthorEvidenceDiscipline(
                 authored,
                 [itemPlan],
-                itemFacts,
+                assessmentEvidenceFacts,
               )
               if (evidenceIssues.length > 0) return evidenceIssues.map((issue) =>
                 `[${issue.code}] ${issue.path}: ${issue.message}`)
@@ -1520,12 +1526,6 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
         return itemTournament.winner
       },
     )
-    const assessmentEvidenceFacts = modelInput.evidence.flatMap((source) =>
-      source.facts.map((fact) => ({
-        source_id: source.source_id,
-        fact_id: fact.fact_id,
-        content: fact.content,
-      })))
     let publicAuthorPayload: AssessmentPublicAuthorPayload = normalizeEvidenceBoundedAssessmentChoices({
       title: publicItemAuthors[0]?.title?.trim() || "本轮学习测评",
       items: publicItemAuthors.map((author) =>

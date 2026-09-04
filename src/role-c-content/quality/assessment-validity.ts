@@ -130,8 +130,7 @@ export function validateAssessmentAuthorEvidenceDiscipline(
   ]))
   payload.items.forEach((item, index) => {
     const expected = plan[index]
-    if (!expected
-      || (expected.modality !== "mcq" && expected.modality !== "true_false")) return
+    if (!expected) return
     const citedFacts = expected.citations.flatMap((citation) => {
       const content = factsByKey.get(`${citation.source_id}:${citation.fact_id}`)
       return content ? [content] : []
@@ -140,13 +139,26 @@ export function validateAssessmentAuthorEvidenceDiscipline(
       `${citation.source_id}:${citation.fact_id}`))
     const citedSourceIds = new Set(expected.citations.map((citation) => citation.source_id))
     const citedSurface = normalize(citedFacts.join(" "))
+    const uncitedFacts = evidence.filter((fact) => citedSourceIds.has(fact.source_id)
+      && !citedKeys.has(`${fact.source_id}:${fact.fact_id}`))
+    const authoredSurface = normalize([item.prompt, ...(item.options ?? [])].join(" "))
+    const uncitedRelationHits = distinctiveUncitedFactHits(
+      authoredSurface,
+      citedSurface,
+      uncitedFacts,
+    )
+    if (uncitedRelationHits.length > 0) issues.push(issue(
+      "ASSESSMENT_UNCITED_FACT_RELATION",
+      `$.items[${index}]`,
+      `题面使用了同一知识点中未被本题引用的事实关系：${uncitedRelationHits.join("、")}；请围绕本题 cited_fact_statements 的主语、关系和对象重新命题`,
+    ))
+    if (expected.modality !== "mcq" && expected.modality !== "true_false") return
     const uncitedTerms = [...new Set(evidence
       .filter((fact) => citedSourceIds.has(fact.source_id)
         && !citedKeys.has(`${fact.source_id}:${fact.fact_id}`))
       .flatMap((fact) => TECHNICAL_MECHANISM_TERMS.filter((term) =>
         normalize(fact.content).includes(normalize(term))
         && !citedSurface.includes(normalize(term)))))]
-    const authoredSurface = normalize([item.prompt, ...(item.options ?? [])].join(" "))
     const leakedTerms = uncitedTerms.filter((term) => authoredSurface.includes(normalize(term)))
     if (leakedTerms.length > 0) issues.push(issue(
       "ASSESSMENT_UNCITED_MECHANISM",
@@ -197,6 +209,38 @@ export function validateAssessmentAuthorEvidenceDiscipline(
     }
   })
   return issues
+}
+
+function distinctiveUncitedFactHits(
+  authoredSurface: string,
+  citedSurface: string,
+  uncitedFacts: AssessmentEvidenceFactView[],
+): string[] {
+  const hits = new Set<string>()
+  for (const fact of uncitedFacts) {
+    const normalizedFact = normalize(fact.content)
+    const candidates: string[] = []
+    for (const run of normalizedFact.match(/[\p{Script=Han}]{5,}/gu) ?? []) {
+      const maxLength = Math.min(12, run.length)
+      for (let length = maxLength; length >= 5; length -= 1) {
+        for (let start = 0; start + length <= run.length; start += 1) {
+          candidates.push(run.slice(start, start + length))
+        }
+      }
+    }
+    const latinWords = normalizedFact.match(/[a-z_][a-z0-9_]*/gu) ?? []
+    for (let width = Math.min(4, latinWords.length); width >= 2; width -= 1) {
+      for (let start = 0; start + width <= latinWords.length; start += 1) {
+        candidates.push(latinWords.slice(start, start + width).join(""))
+      }
+    }
+    const hit = candidates
+      .filter((candidate) => !citedSurface.includes(candidate)
+        && authoredSurface.includes(candidate))
+      .sort((left, right) => right.length - left.length)[0]
+    if (hit) hits.add(hit)
+  }
+  return [...hits].slice(0, 3)
 }
 
 export function validateAssessmentPairValidity(

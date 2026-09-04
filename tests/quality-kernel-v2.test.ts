@@ -580,6 +580,26 @@ describe("quality kernel v2", () => {
     expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_UNCITED_MECHANISM")
   })
 
+  test("单题只引用执行方式时不能借用同知识点未引用的语言类别事实", () => {
+    const issues = validateAssessmentAuthorEvidenceDiscipline({
+      title: "Python 基础",
+      items: [{
+        prompt: "判断以下说法是否正确：Python 不是一种通用编程语言。",
+        options: ["正确", "错误"],
+        starter_code: null,
+        structure_meta: { operation: "judge_explicitly_negated_claim" },
+      }],
+    } as any, [{
+      tier: 1,
+      modality: "true_false",
+      citations: [{ source_id: "K001", fact_id: "F002", relation: "derived_from" }],
+    }] as any, [
+      { source_id: "K001", fact_id: "F001", content: "Python 是一种通用编程语言。" },
+      { source_id: "K001", fact_id: "F002", content: "Python 程序通常由解释器执行。" },
+    ])
+    expect(issues.map((entry) => entry.code)).toContain("ASSESSMENT_UNCITED_FACT_RELATION")
+  })
+
   test("选择题拒绝选否定项的双重反转题干", () => {
     const issues = validateAssessmentAuthorEvidenceDiscipline({
       title: "Python 语法",
