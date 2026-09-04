@@ -22,6 +22,8 @@ describe("Role C hidden-test semantic integrity", () => {
         input: { args: [10], kwargs: {} },
         expected: 20,
         comparison: { kind: "exact" },
+        partition_id: "nominal",
+        note: "裸 except 会捕获所有异常，所以这个用例可验证异常机制。",
         misconception_tag: "returns_input",
       }],
       mutation_variants: [],
@@ -37,5 +39,8 @@ describe("Role C hidden-test semantic integrity", () => {
 
     expect(normalized.hidden_tests[0]!.input).toEqual({ args: [10], kwargs: {} })
     expect(normalized.hidden_tests[0]!.expected).toBe(20)
+    expect(normalized.hidden_tests[0]!.partition_id).toBe("nominal")
+    expect(normalized.hidden_tests[0]!.note).toBe("典型输入：验证当前目标的主流程可正常完成。")
+    expect(normalized.hidden_tests[0]!.note).not.toContain("except")
   })
 })

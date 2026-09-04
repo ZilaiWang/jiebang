@@ -23,4 +23,5 @@ export const CODE_LAB_TEST_INPUT_STAGE_SYSTEM_PROMPT = `${ROLE_C_COMMON_SYSTEM_P
 4. hidden 与 public 输入不得结构化重复，hidden 内部也不得重复。
 5. 不得增加题面未声明的字段、协议或数据类型；每个输入都必须能被参考实现正常执行。
 5.1 function 模式必须遵守 reference_contract.function_interface：args 的数量不得超过 maximum_positional_count，必须提供全部必填参数；例如入口只有一个 logs 参数时，一组或多组日志都必须作为同一个列表参数放在 args[0]，不得误写成多个位置参数。
-6. 不返回 reference_solution、mutation、expected、comparison、评分组、隐藏 ID 或内部推理。标准答案由可信 Docker 执行参考解后物化。`
+6. note 只描述“典型/边界/防硬编码/错误路径”的测试意图和可观察结果，不得解释 Python 语法、异常捕获范围、类型转换机制或其他专业结论。note 是内部测试元数据，不承担教学内容。
+7. 不返回 reference_solution、mutation、expected、comparison、评分组、隐藏 ID 或内部推理。标准答案由可信 Docker 执行参考解后物化。`

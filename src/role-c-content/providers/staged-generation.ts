@@ -1697,7 +1697,16 @@ export function normalizeCodeLabSecureAuthorPayloadLenient(
   if (normalized.hidden_tests.length > plan.hidden_tests.length) {
     normalized.hidden_tests = normalized.hidden_tests.slice(0, plan.hidden_tests.length)
   }
-  for (const test of normalized.hidden_tests) {
+  normalized.hidden_tests.forEach((test, index) => {
+    const planned = plan.hidden_tests[index]
+    if (planned) {
+      const partition = planned.case_kind === "normal" ? "nominal" : planned.case_kind
+      test.partition_id = partition
+      // Hidden-test notes are operational metadata, not a teaching surface.
+      // Keep them deterministic and evidence-neutral so a test author cannot
+      // introduce new language/runtime claims while merely describing a case.
+      test.note = hiddenTestPartitionNote(partition)
+    }
     test.comparison ??= { kind: "exact" }
     if (test.expected !== undefined) {
       const outputKind = outputContract ? classifyOutputContract(outputContract) : undefined
@@ -1726,8 +1735,17 @@ export function normalizeCodeLabSecureAuthorPayloadLenient(
       // 否则 harness 无输入、reference 无输出，可信执行必然失败。
       test.input = asStandardInput(test.input)
     }
-  }
+  })
   return normalized
+}
+
+function hiddenTestPartitionNote(
+  partition: "nominal" | "boundary" | "anti_hardcode" | "error_path",
+): string {
+  if (partition === "nominal") return "典型输入：验证当前目标的主流程可正常完成。"
+  if (partition === "boundary") return "边界输入：验证题面已声明边界下的可观察结果。"
+  if (partition === "anti_hardcode") return "替换公开常量：验证实现未依赖公开样例硬编码。"
+  return "错误路径输入：验证题面已声明的无效输入处理结果。"
 }
 
 /** Maps model-authored comparison shapes onto the strict TestComparison contract. */
