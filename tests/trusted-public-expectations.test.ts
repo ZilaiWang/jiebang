@@ -100,4 +100,36 @@ describe("trusted public expectations", () => {
     expect(result.public_tests[0]!.expected_behavior).not.toBe(result.public_tests[1]!.expected_behavior)
     expect((result.instructions[0] as { text: string }).text).toContain(stale)
   })
+
+  test("never rewrites cited claims or executable code during trusted projection", () => {
+    const input = payload()
+    const stale = input.public_tests[0]!.expected_behavior
+    input.instructions = [{
+      block_id: "B-CLAIM",
+      block_type: "paragraph",
+      text: `运行后应看到：${stale}`,
+      claims: [{
+        claim_id: "CLAIM-1",
+        text: stale,
+        citations: [{ source_id: "K001", fact_id: "F001", relation: "supports" }],
+      }],
+    }, {
+      block_id: "B-CODE",
+      block_type: "code",
+      language: "python",
+      code: `print(${JSON.stringify(stale)})`,
+      caption: `输出示例：${stale}`,
+      claims: [],
+    }]
+
+    const result = materializeTrustedPublicExpectations(input, [{ ok: true }])
+    const paragraph = result.instructions[0]
+    const code = result.instructions[1]
+    expect(paragraph?.block_type).toBe("paragraph")
+    expect(paragraph?.block_type === "paragraph" ? paragraph.claims[0]?.text : "").toBe(stale)
+    expect(paragraph?.block_type === "paragraph" ? paragraph.text : "").not.toContain(stale)
+    expect(code?.block_type).toBe("code")
+    expect(code?.block_type === "code" ? code.code : "").toContain(stale)
+    expect(code?.block_type === "code" ? code.caption : "").not.toContain(stale)
+  })
 })

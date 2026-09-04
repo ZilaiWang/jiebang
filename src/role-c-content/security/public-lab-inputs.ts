@@ -1,4 +1,8 @@
-import type { CodeLabPublicPayload } from "../contracts/artifacts"
+import type {
+  CodeLabPublicPayload,
+  RenderBlock,
+} from "../contracts/artifacts"
+import type { PracticalGuidePublicPayload } from "../planning/practical-guide-plan"
 import {
   executeTrustedReferenceWithRetry,
   type CodeRunner,
@@ -61,16 +65,34 @@ export function materializeTrustedPublicExpectations(
     criterion.expected_behavior = expected
   })
 
-  result.instructions = replaceExpectedText(result.instructions, replacements)
-  result.hint_ladders = replaceExpectedText(result.hint_ladders, replacements)
-  result.reflection_questions = replaceExpectedText(result.reflection_questions, replacements)
+  // Only refresh learner-facing expectation prose. A former generic recursive
+  // replacement also rewrote Claim.text and code whenever they happened to be
+  // equal to an authored expected_behavior. That broke the immutable
+  // claim/citation relation after trusted execution and could even corrupt a
+  // valid code sample. Claims, citations, code and contract identity are never
+  // projection targets.
+  result.instructions = replaceExpectedInRenderBlocks(result.instructions, replacements)
+  result.hint_ladders = result.hint_ladders.map((ladder) => ({
+    ...ladder,
+    hints: ladder.hints.map((hint) => ({
+      ...hint,
+      text: replaceExpectedProse(hint.text, replacements),
+    })),
+  }))
+  result.reflection_questions = result.reflection_questions.map((question) =>
+    replaceExpectedProse(question, replacements))
   if (result.practical_guide) {
-    result.practical_guide = replaceExpectedText(result.practical_guide, replacements)
+    result.practical_guide = replaceExpectedInPracticalGuide(
+      result.practical_guide,
+      replacements,
+    )
   }
   if (result.programming_task) {
-    result.programming_task.hint_ladders = replaceExpectedText(
-      result.programming_task.hint_ladders,
-      replacements,
+    result.programming_task.hint_ladders = result.programming_task.hint_ladders.map(
+      (ladder) => ({
+        ...ladder,
+        text: replaceExpectedProse(ladder.text, replacements),
+      }),
     )
   }
   return result
@@ -84,20 +106,117 @@ function trustedExpectedBehavior(payload: CodeLabPublicPayload, output: unknown)
     : `标准输出应为：${serialized}`
 }
 
-function replaceExpectedText<T>(value: T, replacements: Map<string, string | undefined>): T {
-  if (typeof value === "string") {
-    let text: string = value
-    for (const [before, after] of replacements) {
-      if (before && after && before !== after) text = text.split(before).join(after)
+function replaceExpectedProse(
+  value: string,
+  replacements: Map<string, string | undefined>,
+): string {
+  let text = value
+  for (const [before, after] of replacements) {
+    if (before && after && before !== after) text = text.split(before).join(after)
+  }
+  return text
+}
+
+function replaceExpectedInRenderBlocks(
+  blocks: RenderBlock[],
+  replacements: Map<string, string | undefined>,
+): RenderBlock[] {
+  return blocks.map((block) => {
+    switch (block.block_type) {
+      case "heading":
+        return { ...block, text: replaceExpectedProse(block.text, replacements) }
+      case "paragraph":
+        return { ...block, text: replaceExpectedProse(block.text, replacements) }
+      case "code":
+        return {
+          ...block,
+          ...(block.caption
+            ? { caption: replaceExpectedProse(block.caption, replacements) }
+            : {}),
+        }
+      case "callout":
+        return {
+          ...block,
+          title: replaceExpectedProse(block.title, replacements),
+          text: replaceExpectedProse(block.text, replacements),
+        }
+      case "comparison":
+        return {
+          ...block,
+          title: replaceExpectedProse(block.title, replacements),
+          columns: block.columns.map((column) => ({
+            heading: replaceExpectedProse(column.heading, replacements),
+            content: replaceExpectedProse(column.content, replacements),
+          })),
+        }
+      case "quiz":
+        return {
+          ...block,
+          prompt: replaceExpectedProse(block.prompt, replacements),
+          options: block.options?.map((option) => ({
+            ...option,
+            text: replaceExpectedProse(option.text, replacements),
+          })),
+          ...(block.answer_explanation
+            ? {
+                answer_explanation: replaceExpectedProse(
+                  block.answer_explanation,
+                  replacements,
+                ),
+              }
+            : {}),
+        }
+      case "hint":
+        return { ...block, text: replaceExpectedProse(block.text, replacements) }
+      case "citation":
+        return block
     }
-    return text as T
+  })
+}
+
+function replaceExpectedInPracticalGuide(
+  guide: PracticalGuidePublicPayload,
+  replacements: Map<string, string | undefined>,
+): PracticalGuidePublicPayload {
+  return {
+    ...guide,
+    practice_goal: replaceExpectedProse(guide.practice_goal, replacements),
+    deliverable: replaceExpectedProse(guide.deliverable, replacements),
+    readiness_checks: guide.readiness_checks.map((entry) => ({
+      ...entry,
+      title: replaceExpectedProse(entry.title, replacements),
+      check: replaceExpectedProse(entry.check, replacements),
+      ready_when: replaceExpectedProse(entry.ready_when, replacements),
+    })),
+    steps: guide.steps.map((entry) => ({
+      ...entry,
+      title: replaceExpectedProse(entry.title, replacements),
+      action: replaceExpectedProse(entry.action, replacements),
+      input: replaceExpectedProse(entry.input, replacements),
+      expected_result: replaceExpectedProse(entry.expected_result, replacements),
+      verification: replaceExpectedProse(entry.verification, replacements),
+    })),
+    troubleshooting: guide.troubleshooting.map((entry) => ({
+      ...entry,
+      symptom: replaceExpectedProse(entry.symptom, replacements),
+      likely_cause: replaceExpectedProse(entry.likely_cause, replacements),
+      recovery_steps: entry.recovery_steps.map((step) =>
+        replaceExpectedProse(step, replacements)),
+      verification: replaceExpectedProse(entry.verification, replacements),
+    })),
+    extension_task: {
+      ...guide.extension_task,
+      task: replaceExpectedProse(guide.extension_task.task, replacements),
+      changed_dimension: replaceExpectedProse(
+        guide.extension_task.changed_dimension,
+        replacements,
+      ),
+      verification: replaceExpectedProse(
+        guide.extension_task.verification,
+        replacements,
+      ),
+    },
   }
-  if (Array.isArray(value)) return value.map((entry) => replaceExpectedText(entry, replacements)) as T
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .map(([key, entry]) => [key, replaceExpectedText(entry, replacements)])) as T
-  }
-  return value
 }
 
 /** Probe the real reference on public inputs as well as hidden tests. No private output is published. */
