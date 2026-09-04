@@ -3860,12 +3860,19 @@ function stdoutSafeStarter(
 }
 
 export function ensureZeroArgumentFunctionIsInvoked(source: string): string {
-  const definition = source.match(/^def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*:/mu)
-  if (!definition) return source
-  const functionName = definition[1]!
-  if (hasPythonModuleEntryInvocation(source, functionName)) {
+  const definitions = [...source.matchAll(/^def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*:/gmu)]
+    .map((match) => match[1]!)
+  if (definitions.length === 0) return source
+
+  // A complete stdin/stdout program may define helpers before main.  If any
+  // zero-argument function is already invoked at module entry, the program is
+  // complete; appending a call to the first helper would consume stdin twice.
+  if (definitions.some((name) => hasPythonModuleEntryInvocation(source, name))) {
     return source
   }
+  const functionName = ["main", "solve", "run"]
+    .find((preferred) => definitions.includes(preferred))
+    ?? definitions[definitions.length - 1]!
   const invocation = /(?:^|\n)[ \t]+print\s*\(/u.test(source)
     ? `${functionName}()`
     : `print(${functionName}())`

@@ -55,6 +55,34 @@ if __name__ == "__main__":
     expect(validatePythonProgramEntry(ensureZeroArgumentFunctionIsInvoked(source))).toEqual([])
   })
 
+  test("normalization does not append an earlier helper when main already owns module entry", () => {
+    const source = `
+def parse_input():
+    return input().strip()
+
+def main():
+    print(parse_input())
+
+if __name__ == "__main__":
+    main()
+`
+    expect(ensureZeroArgumentFunctionIsInvoked(source)).toBe(source)
+    expect(ensureZeroArgumentFunctionIsInvoked(source)).not.toContain("\nparse_input()\n")
+    expect(validatePythonProgramEntry(ensureZeroArgumentFunctionIsInvoked(source))).toEqual([])
+  })
+
+  test("normalization prefers a conventional main function over earlier helpers", () => {
+    const normalized = ensureZeroArgumentFunctionIsInvoked(`
+def parse_input():
+    return input().strip()
+
+def main():
+    print(parse_input())
+`)
+    expect(normalized.match(/^main\(\)$/gmu)).toHaveLength(1)
+    expect(normalized).not.toContain("\nparse_input()\n")
+  })
+
   test("normalization appends one entry only when the program has none", () => {
     const normalized = ensureZeroArgumentFunctionIsInvoked(`
 def solve():
