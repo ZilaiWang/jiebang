@@ -46,6 +46,10 @@ import {
 } from "../planning/practical-guide-plan"
 import { failClosedStarterCode, validateGapLearnerContract, validateGapTemplate } from "../programming/gap-template"
 import type { ProgrammingProblemBlueprint } from "../programming/contracts"
+import {
+  describePythonEntryPoint,
+  validateFunctionInvocationAgainstInterface,
+} from "../programming/python-function-interface"
 
 export interface ConceptSegmentRequest extends ConceptTutorRequest {
   segment_index: number
@@ -989,6 +993,22 @@ export function validateCodeLabPublicAuthorAgainstPlan(
   }
   if (programmingProblem?.task_kind === "debugging_repair") {
     issues.push(...debuggingRepairDisclosureIssues(payload))
+  }
+  if (payload.execution_contract.execution_mode === "function") {
+    const entryPoint = payload.execution_contract.entry_point
+    const functionInterface = describePythonEntryPoint(payload.starter_code, entryPoint)
+    if (!functionInterface) {
+      issues.push(`starter_code 必须声明冻结入口函数 ${entryPoint ?? "（缺失）"} 的可解析签名`)
+    } else {
+      const publicInputs = [
+        ...payload.objectives.map((objective) => objective.public_test.input),
+        ...(payload.programming_task?.additional_public_examples ?? []).map((example) => example.input),
+      ]
+      publicInputs.forEach((input, index) => {
+        validateFunctionInvocationAgainstInterface(input, functionInterface)
+          .forEach((message) => issues.push(`公开测试 ${index + 1}：${message}`))
+      })
+    }
   }
   issues.push(...codeLabExecutionContractIssues(
     payload.execution_contract,

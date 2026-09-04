@@ -14,7 +14,7 @@ export const CODE_LAB_REFERENCE_STAGE_SYSTEM_PROMPT = `${ROLE_C_COMMON_SYSTEM_PO
 }
 
 硬约束：
-1. 严格遵守冻结 execution_contract。function 模式实现 entry_point 并 return；stdin_stdout 模式读取冻结 stdin 并输出完整 stdout。
+1. 严格遵守冻结 execution_contract。function 模式实现 entry_point 并 return，且入口函数签名（参数名、顺序、必填性）必须与 public_payload.starter_code 完全一致；stdin_stdout 模式读取冻结 stdin 并输出完整 stdout。
 2. require_secondary_oracle=true 时必须给出算法组织明显不同、但语义等价的第二参考实现；否则省略。
 3. mutation_variants 数量、顺序、misconception_tag 与 secure_plan 一致；错误实现必须可编译运行，且只植入对应误区。
 4. import 只可来自 allowed_imports；allowed_imports=[] 时不得出现任何 import。

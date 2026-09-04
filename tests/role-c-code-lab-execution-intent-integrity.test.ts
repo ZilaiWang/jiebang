@@ -47,6 +47,54 @@ describe("Role C code-lab execution intent integrity", () => {
     )
   })
 
+  test("function 公开样例在公开阶段就必须匹配 starter 的真实参数签名", () => {
+    const payload: CodeLabPublicAuthorPayload = {
+      title: "日志汇总函数",
+      execution_contract: {
+        language: "python",
+        execution_mode: "function",
+        entry_point: "solve",
+        input_contract: { type: "function arguments", constraints: ["传入一个日志列表"] },
+        output_contract: { type: "string", constraints: [] },
+        allowed_imports: [],
+        resource_limits: { timeout_ms: 1000, memory_mb: 64, max_output_bytes: 4096 },
+      },
+      starter_code: 'def solve(logs):\n    raise NotImplementedError("TODO")\n',
+      objectives: [{
+        instruction_text: "实现 solve(logs) 并返回汇总结果。",
+        public_test: {
+          description: "传入一组日志",
+          input: { args: [["ok", "warn"]], kwargs: {} },
+          expected_behavior: "返回汇总文本",
+        },
+        hints: ["观察 logs", "遍历列表", "返回文本"],
+        reflection_question: "参数是一条日志还是日志列表？",
+      }],
+      programming_task: {
+        statement: "实现日志汇总。",
+        input_description: "一个日志列表。",
+        output_description: "汇总文本。",
+        constraints: ["不得读取 stdin", "必须返回结果"],
+        additional_public_examples: [{
+          description: "遗漏必填参数的错误样例",
+          input: { args: [], kwargs: {} },
+          expected_behavior: "返回空汇总",
+        }],
+      },
+    }
+    const plan: CodeLabObjectivePlan[] = [{
+      objective_id: "OBJ-1",
+      source_id: "K009",
+      instruction_block_id: "BLOCK-1",
+      public_test_id: "TEST-1",
+      citations: [],
+    }]
+
+    expect(validateCodeLabPublicAuthorAgainstPlan(payload, plan)).toContain(
+      "公开测试 2：solve 至少需要 1 个必填参数，当前调用未完整提供",
+    )
+  })
+
   test("allows an input builtin return-value fact in stdin/stdout teaching text", () => {
     const payload: CodeLabPublicAuthorPayload = {
       title: "输入输出",

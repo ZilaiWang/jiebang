@@ -122,7 +122,7 @@ ${ROLE_C_NEXT_ROUND_CONTEXT_POLICY}
 ══════════════════════════════════════════
 
 1. 输出只含 title、execution_contract、starter_code、objectives、practical_guide、programming_task。objectives 数量、顺序必须与 staged_contract.objective_plan 一致；每项只含 instruction_text、public_test、hints、reflection_question。programming_task 只含 statement、input_description、output_description、constraints、必要时的 additional_public_examples，以及 code_completion 必需的 gap_template；其他题型不得返回 gap_template。
-2. function 模式下每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}；即使只有一个参数也放入 args，不能用参数名直接组成普通对象。
+2. function 模式下每个 public_test.input（包括 additional_public_examples）必须统一写成 {"args": [...], "kwargs": {...}}，并逐个严格匹配 starter_code 的入口函数签名：不得遗漏必填参数、不得增加多余位置参数；即使只有一个参数也放入 args，不能用参数名直接组成普通对象。若 solve 只有一个列表参数，多组数据必须作为 args[0] 的一个列表传入，不能拆成多个位置参数。
 3. execution_mode 已经冻结（见 staged_contract.execution_mode），你只需严格遵守，不得混用另一模式的措辞、输入封装或 starter 结构：
    - function：instruction、starter、公开测试都围绕 entry_point；不得把 print/标准输出当评分结果；每个 public_test.input 必须统一写成 {"args": [...], "kwargs": {...}}。
    - stdin_stdout：instruction、starter、公开测试都围绕完整程序的标准输入和标准输出；不得要求学习者提交入口函数或把入口函数的返回值作为评分结果。

@@ -974,6 +974,16 @@ export class ModelBackedRoleCContentProvider implements RoleCContentProvider {
               const schema = validateRoleCSchemaFragment("code_lab_draft.schema.json", "/$defs/secure_reference_author_payload", payload)
               if (!schema.ok) return validationIssues(schema)
               const issues: string[] = []
+              if (normalizedPublic.execution_contract.execution_mode === "function") {
+                const entryPoint = normalizedPublic.execution_contract.entry_point
+                const publicInterface = describePythonEntryPoint(normalizedPublic.starter_code, entryPoint)
+                const referenceInterface = describePythonEntryPoint(payload.reference_solution, entryPoint)
+                if (!referenceInterface) {
+                  issues.push(`reference_solution 必须声明冻结入口函数 ${entryPoint ?? "（缺失）"} 的可解析签名`)
+                } else if (publicInterface && JSON.stringify(referenceInterface) !== JSON.stringify(publicInterface)) {
+                  issues.push("reference_solution 的入口函数签名必须与已发布 starter_code 完全一致")
+                }
+              }
               if (Boolean(payload.secondary_reference_solution) !== Boolean(programmingProblem?.require_secondary_oracle)) {
                 issues.push(programmingProblem?.require_secondary_oracle
                   ? "高难任务必须提供 secondary_reference_solution"
